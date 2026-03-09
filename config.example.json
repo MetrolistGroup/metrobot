@@ -1,0 +1,17 @@
+{
+  "discord_token": "MTQ...",
+  "telegram_token": "1234:ABCD",
+  "github_token": "github_pat",
+  "discord_guild_id": "123",
+  "telegram_chat_id": -100,
+  "permaadmin_discord_ids": ["123"],
+  "permaadmin_telegram_ids": ["123"],
+  "github_owner": "MetrolistGroup",
+  "github_repo": "Metrolist",
+  "actions_workflow_file": "build.yml",
+  "actions_artifact_names": {
+    "foss": "app-release",
+    "gms": "app-with-Google-cast"
+  },
+  "log_file": "bot.log"
+}
