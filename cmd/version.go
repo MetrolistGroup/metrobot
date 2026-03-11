@@ -6,9 +6,25 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	gh "github.com/MetrolistGroup/metrobot/github"
 )
+
+// titleCase returns s with first rune in title case and the rest lowercased (e.g. "WARNING" -> "Warning").
+func titleCase(s string) string {
+	if s == "" {
+		return s
+	}
+	runes := []rune(strings.ToLower(s))
+	for i, r := range runes {
+		if unicode.IsLetter(r) {
+			runes[i] = unicode.ToTitle(r)
+			return string(runes)
+		}
+	}
+	return string(runes)
+}
 
 type VersionHandler struct {
 	Releases *gh.ReleasesClient
@@ -170,7 +186,7 @@ func formatDiscordReleaseBody(body string) string {
 		}
 
 		if matches := githubCalloutPattern.FindStringSubmatch(trimmed); len(matches) == 2 {
-			pendingCallout = strings.Title(strings.ToLower(matches[1]))
+			pendingCallout = titleCase(matches[1])
 			continue
 		}
 

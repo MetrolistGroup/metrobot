@@ -1,0 +1,7 @@
+.git
+.github
+*.md
+.gitignore
+.dockerignore
+*_test.go
+**/*_test.go

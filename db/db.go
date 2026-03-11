@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -99,7 +100,7 @@ func (d *DB) migrate() error {
 func (d *DB) GetNote(name string) (string, error) {
 	var content string
 	err := d.conn.QueryRow("SELECT content FROM notes WHERE name = ?", name).Scan(&content)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	return content, err
@@ -295,7 +296,19 @@ func (d *DB) GetWarningCount(platform, userID string) (int, error) {
 // --- Warn Thresholds ---
 
 func (d *DB) GetWarnThreshold(platform, userID string) (int, error) {
-	return 3, nil
+	const defaultThreshold = 3
+	var extra int
+	err := d.conn.QueryRow(
+		"SELECT extra_warns FROM user_warn_thresholds WHERE platform = ? AND user_id = ?",
+		platform, userID,
+	).Scan(&extra)
+	if errors.Is(err, sql.ErrNoRows) {
+		return defaultThreshold, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return defaultThreshold + extra, nil
 }
 
 func (d *DB) IncrementWarnThreshold(platform, userID string) error {

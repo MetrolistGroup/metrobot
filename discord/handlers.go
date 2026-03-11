@@ -87,7 +87,11 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	content := strings.TrimSpace(m.Content)
 
 	if strings.HasPrefix(content, "#") && len(content) > 1 && content[1] != ' ' {
-		noteName := strings.Fields(content[1:])[0]
+		fields := strings.Fields(content[1:])
+		if len(fields) == 0 {
+			return
+		}
+		noteName := fields[0]
 		text, err := b.Notes.GetNote(noteName)
 		if err != nil {
 			b.Logger.Error("note lookup error", zap.Error(err))
