@@ -209,10 +209,20 @@ func (h *ModerationHandler) dehoistDryRun(banner PlatformBanner, targetID string
 
 func stripHoistChars(s string) string {
 	var b strings.Builder
+	seenNormal := false
+
 	for _, r := range s {
+		// Normal (allowed) base characters
 		if (r >= 'A' && r <= 'Z') ||
 			(r >= 'a' && r <= 'z') ||
 			(r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			seenNormal = true
+			continue
+		}
+
+		// Secondary allowed chars: only AFTER we've seen at least one normal char
+		if seenNormal && (r == ' ' || r == '.' || r == '-' || r == '_') {
 			b.WriteRune(r)
 		}
 	}
