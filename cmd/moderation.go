@@ -222,7 +222,7 @@ func stripHoistChars(s string) string {
 		}
 
 		// Secondary allowed chars: only AFTER we've seen at least one normal char
-		if seenNormal && (r == ' ' || r == '.' || r == '-' || r == '_') {
+		if seenNormal && (r == ' ' || r == '.' || r == '-' || r == '_' || r == ',' || r == ':' || r == '(' || r == ')' || r == '[' || r == ']' || r == '{' || r == '}' || r == '|' || r == '\'' || r == '#') {
 			b.WriteRune(r)
 		}
 	}
