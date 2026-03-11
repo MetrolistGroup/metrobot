@@ -450,10 +450,19 @@ func (d *DiscordBanner) GetDisplayName(userID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
+	// 1) Server-specific display name (nickname)
 	if member.Nick != "" {
 		return member.Nick, nil
 	}
-	return member.User.Username, nil
+
+	// 2) Global display name
+	if member.User.GlobalName != "" {
+		return member.User.GlobalName, nil
+	}
+
+	// 3) No usable display name; do NOT fall back to username
+	return "", nil
 }
 
 func (d *DiscordBanner) GetAllMembers() ([]cmd.MemberInfo, error) {
@@ -470,10 +479,14 @@ func (d *DiscordBanner) GetAllMembers() ([]cmd.MemberInfo, error) {
 		}
 
 		for _, m := range members {
-			displayName := m.Nick
-			if displayName == "" {
-				displayName = m.User.Username
+			// Prefer server display name, then global display name; never use username
+			displayName := ""
+			if m.Nick != "" {
+				displayName = m.Nick
+			} else if m.User.GlobalName != "" {
+				displayName = m.User.GlobalName
 			}
+
 			all = append(all, cmd.MemberInfo{
 				UserID:      m.User.ID,
 				Username:    m.User.Username,

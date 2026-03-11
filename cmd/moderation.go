@@ -141,6 +141,11 @@ func (h *ModerationHandler) Dehoist(banner PlatformBanner, targetID string, dry 
 		return "", fmt.Errorf("getting display name: %w", err)
 	}
 
+	// If there is no display name (server or global), there is nothing to dehoist.
+	if displayName == "" {
+		return "✅ No members need dehoisting.", nil
+	}
+
 	newName := stripHoistChars(displayName)
 	if newName == displayName {
 		return fmt.Sprintf("@%s does not need dehoisting.", targetID), nil
@@ -163,6 +168,9 @@ func (h *ModerationHandler) dehoistDryRun(banner PlatformBanner, targetID string
 		if err != nil {
 			return "", fmt.Errorf("getting display name: %w", err)
 		}
+		if displayName == "" {
+			return "✅ No members need dehoisting.", nil
+		}
 		newName := stripHoistChars(displayName)
 		if newName == displayName {
 			return "✅ No members need dehoisting.", nil
@@ -178,12 +186,13 @@ func (h *ModerationHandler) dehoistDryRun(banner PlatformBanner, targetID string
 	var results []string
 	for _, m := range members {
 		name := m.DisplayName
+		// Only consider display names for dehoisting; usernames are ignored.
 		if name == "" {
-			name = m.Username
+			continue
 		}
 		newName := stripHoistChars(name)
 		if newName != name {
-			results = append(results, fmt.Sprintf("@%s - \"%s\" → \"%s\"", m.Username, name, newName))
+			results = append(results, fmt.Sprintf("%s → %s", name, newName))
 		}
 	}
 
@@ -191,7 +200,8 @@ func (h *ModerationHandler) dehoistDryRun(banner PlatformBanner, targetID string
 		return "✅ No members need dehoisting.", nil
 	}
 
-	result := strings.Join(results, "\n")
+	list := strings.Join(results, "\n")
+	result := fmt.Sprintf("```\n%s\n```", list)
 	if banner.Platform() == "telegram" {
 		result += "\n\n⚠️ Note: Telegram bots cannot rename users. This is informational only."
 	}
