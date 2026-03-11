@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/MetrolistGroup/metrobot/db"
 )
@@ -186,7 +185,6 @@ func (h *ModerationHandler) dehoistDryRun(banner PlatformBanner, targetID string
 	var results []string
 	for _, m := range members {
 		name := m.DisplayName
-		// Only consider display names for dehoisting; usernames are ignored.
 		if name == "" {
 			continue
 		}
@@ -210,34 +208,21 @@ func (h *ModerationHandler) dehoistDryRun(banner PlatformBanner, targetID string
 }
 
 func stripHoistChars(s string) string {
-	runes := []rune(s)
-	i := 0
-	for i < len(runes) {
-		r := runes[i]
-		if isHoistChar(r) {
-			i++
-			continue
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'A' && r <= 'Z') ||
+			(r >= 'a' && r <= 'z') ||
+			(r >= '0' && r <= '9') {
+			b.WriteRune(r)
 		}
-		break
 	}
 
-	result := string(runes[i:])
-	result = strings.TrimSpace(result)
+	result := b.String()
 
 	if result == "" {
 		return "change your username"
 	}
 	return result
-}
-
-func isHoistChar(r rune) bool {
-	// Treat anything that is NOT a letter or digit as a hoisting character.
-	// This means we strip all leading spaces, punctuation, symbols, and emojis
-	// until we hit the first letter/digit, then keep the rest of the name.
-	if unicode.IsLetter(r) || unicode.IsDigit(r) {
-		return false
-	}
-	return true
 }
 
 func formatDuration(d time.Duration) string {
