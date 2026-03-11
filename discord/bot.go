@@ -448,6 +448,12 @@ func (d *DiscordBanner) DMUser(userID, message string) error {
 func (d *DiscordBanner) GetDisplayName(userID string) (string, error) {
 	member, err := d.session.GuildMember(d.guildID, userID)
 	if err != nil {
+		// If the user is not found (left the guild, etc.), treat it as
+		// "no display name" instead of a hard error so moderation flows
+		// like dehoist can continue gracefully.
+		if restErr, ok := err.(*discordgo.RESTError); ok && restErr.Response != nil && restErr.Response.StatusCode == 404 {
+			return "", nil
+		}
 		return "", err
 	}
 
