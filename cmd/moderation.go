@@ -44,11 +44,8 @@ func (h *ModerationHandler) Ban(banner PlatformBanner, callerID, targetID, reaso
 
 	h.DB.LogModAction(banner.Platform(), callerID, targetID, "ban", reason)
 
-	reasonText := ""
-	if reason != "" {
-		reasonText = " Reason: " + reason
-	}
-	return fmt.Sprintf("🔨 <@%s> has been permanently banned.%s", targetID, reasonText), nil
+	reasonText := " Reason: " + reason
+	return fmt.Sprintf("🔨 %s has been permanently banned.%s", formatUserRef(banner.Platform(), targetID), reasonText), nil
 }
 
 func (h *ModerationHandler) DBan(banner PlatformBanner, callerID, targetID, reason string, cfg db.PermaAdminProvider) (string, error) {
@@ -66,11 +63,8 @@ func (h *ModerationHandler) DBan(banner PlatformBanner, callerID, targetID, reas
 
 	h.DB.LogModAction(banner.Platform(), callerID, targetID, "dban", reason)
 
-	reasonText := ""
-	if reason != "" {
-		reasonText = " Reason: " + reason
-	}
-	return fmt.Sprintf("🔨 <@%s> has been banned and their messages deleted.%s", targetID, reasonText), nil
+	reasonText := " Reason: " + reason
+	return fmt.Sprintf("🔨 %s has been banned and their messages deleted.%s", formatUserRef(banner.Platform(), targetID), reasonText), nil
 }
 
 func (h *ModerationHandler) TBan(banner PlatformBanner, callerID, targetID string, duration time.Duration, reason string, cfg db.PermaAdminProvider) (string, error) {
@@ -92,11 +86,8 @@ func (h *ModerationHandler) TBan(banner PlatformBanner, callerID, targetID strin
 
 	h.DB.LogModAction(banner.Platform(), callerID, targetID, "tban", reason)
 
-	reasonText := ""
-	if reason != "" {
-		reasonText = " Reason: " + reason
-	}
-	return fmt.Sprintf("⏱️ <@%s> has been banned for %s.%s", targetID, formatDuration(duration), reasonText), nil
+	reasonText := " Reason: " + reason
+	return fmt.Sprintf("⏱️ %s has been banned for %s.%s", formatUserRef(banner.Platform(), targetID), formatDuration(duration), reasonText), nil
 }
 
 func (h *ModerationHandler) SBan(banner PlatformBanner, callerID, targetID, reason string, cfg db.PermaAdminProvider) (string, error) {
@@ -124,11 +115,8 @@ func (h *ModerationHandler) SBan(banner PlatformBanner, callerID, targetID, reas
 
 	h.DB.LogModAction(banner.Platform(), callerID, targetID, "sban", reason)
 
-	reasonText := ""
-	if reason != "" {
-		reasonText = " Reason: " + reason
-	}
-	return fmt.Sprintf("🧹 <@%s> has been softbanned.%s", targetID, reasonText), nil
+	reasonText := " Reason: " + reason
+	return fmt.Sprintf("🧹 %s has been softbanned.%s", formatUserRef(banner.Platform(), targetID), reasonText), nil
 }
 
 func (h *ModerationHandler) Dehoist(banner PlatformBanner, targetID string, dry bool, cfg db.PermaAdminProvider) (string, error) {
@@ -302,6 +290,19 @@ func stripHoistChars(s string) string {
 		return "change your username"
 	}
 	return result
+}
+
+func formatUserRef(platform, userID string) string {
+	switch platform {
+	case "discord":
+		return "<@" + userID + ">"
+	case "telegram":
+		// Telegram bots cannot mention by numeric ID in plain text without a username.
+		// Show the raw ID to avoid broken @username links.
+		return userID
+	default:
+		return "<@" + userID + ">"
+	}
 }
 
 func formatDuration(d time.Duration) string {

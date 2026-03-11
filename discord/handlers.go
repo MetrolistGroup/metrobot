@@ -117,11 +117,11 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 
 	if args == "" {
 		usageMap := map[string]string{
-			"ban":  "ban - usage: ban [user] [reason:optional]",
-			"dban": "dban - usage: dban [user] [reason:optional]",
-			"tban": "tban - usage: tban [user] [duration] [reason:optional]",
-			"sban": "sban - usage: sban [user] [reason:optional]",
-			"warn": "warn - usage: warn [user] [reason:optional]",
+			"ban":  "ban - usage: ban [user] [reason]",
+			"dban": "dban - usage: dban [user] [reason]",
+			"tban": "tban - usage: tban [user] [duration] [reason]",
+			"sban": "sban - usage: sban [user] [reason]",
+			"warn": "warn - usage: warn [user] [reason]",
 		}
 		sendReply(s, m.ChannelID, m.ID, usageMap[action], false, b.Logger)
 		return
@@ -143,6 +143,10 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		if len(parts) > 1 {
 			reason = strings.Join(parts[1:], " ")
 		}
+		if reason == "" {
+			sendReply(s, m.ChannelID, m.ID, "ban - usage: ban [user] [reason]", false, b.Logger)
+			return
+		}
 		resp, err := b.Moderation.Ban(banner, callerID, targetID, reason, b.Config)
 		if err != nil {
 			b.Logger.Error("ban failed", zap.Error(err))
@@ -154,6 +158,10 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		if len(parts) > 1 {
 			reason = strings.Join(parts[1:], " ")
 		}
+		if reason == "" {
+			sendReply(s, m.ChannelID, m.ID, "dban - usage: dban [user] [reason]", false, b.Logger)
+			return
+		}
 		resp, err := b.Moderation.DBan(banner, callerID, targetID, reason, b.Config)
 		if err != nil {
 			b.Logger.Error("dban failed", zap.Error(err))
@@ -162,8 +170,8 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		sendReply(s, m.ChannelID, m.ID, resp, false, b.Logger)
 
 	case "tban":
-		if len(parts) < 2 {
-			sendReply(s, m.ChannelID, m.ID, "tban - usage: tban [user] [duration] [reason:optional]", false, b.Logger)
+		if len(parts) < 3 {
+			sendReply(s, m.ChannelID, m.ID, "tban - usage: tban [user] [duration] [reason]", false, b.Logger)
 			return
 		}
 		dur, err := util.ParseDuration(parts[1])
@@ -173,6 +181,10 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		}
 		if len(parts) > 2 {
 			reason = strings.Join(parts[2:], " ")
+		}
+		if reason == "" {
+			sendReply(s, m.ChannelID, m.ID, "tban - usage: tban [user] [duration] [reason]", false, b.Logger)
+			return
 		}
 		resp, err := b.Moderation.TBan(banner, callerID, targetID, dur, reason, b.Config)
 		if err != nil {
@@ -185,6 +197,10 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		if len(parts) > 1 {
 			reason = strings.Join(parts[1:], " ")
 		}
+		if reason == "" {
+			sendReply(s, m.ChannelID, m.ID, "sban - usage: sban [user] [reason]", false, b.Logger)
+			return
+		}
 		resp, err := b.Moderation.SBan(banner, callerID, targetID, reason, b.Config)
 		if err != nil {
 			b.Logger.Error("sban failed", zap.Error(err))
@@ -195,6 +211,10 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	case "warn":
 		if len(parts) > 1 {
 			reason = strings.Join(parts[1:], " ")
+		}
+		if reason == "" {
+			sendReply(s, m.ChannelID, m.ID, "warn - usage: warn [user] [reason]", false, b.Logger)
+			return
 		}
 		resp, extras, err := b.Warn.Warn(banner, callerID, targetID, reason, b.Config)
 		if err != nil {
