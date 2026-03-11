@@ -530,7 +530,7 @@ func (b *Bot) tgHandleDehoist(msg *tgbotapi.Message, args string, callerID strin
 	}
 
 	banner := b.newBanner()
-	resp, err := b.Moderation.Dehoist(banner, targetID, dry)
+	resp, err := b.Moderation.Dehoist(banner, targetID, dry, b.Config)
 	if err != nil {
 		b.Logger.Error("dehoist error", zap.Error(err))
 		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, fmt.Sprintf("Error: %s", err), "", false, b.Logger)

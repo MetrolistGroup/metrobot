@@ -26,6 +26,7 @@ type MemberInfo struct {
 	UserID      string
 	Username    string
 	DisplayName string
+	IsBot       bool
 }
 
 type ModerationHandler struct {
@@ -130,9 +131,69 @@ func (h *ModerationHandler) SBan(banner PlatformBanner, callerID, targetID, reas
 	return fmt.Sprintf("🧹 <@%s> has been softbanned.%s", targetID, reasonText), nil
 }
 
-func (h *ModerationHandler) Dehoist(banner PlatformBanner, targetID string, dry bool) (string, error) {
+func (h *ModerationHandler) Dehoist(banner PlatformBanner, targetID string, dry bool, cfg db.PermaAdminProvider) (string, error) {
+	// Never touch admins (permaadmins + DB-defined admins)
+	if targetID != "" && h.DB.IsAdmin(banner.Platform(), targetID, cfg) {
+		return "I will not dehoist an admin.", nil
+	}
+
 	if dry {
-		return h.dehoistDryRun(banner, targetID)
+		return h.dehoistDryRun(banner, targetID, cfg)
+	}
+
+	// Bulk dehoist: targetID empty, non-dry run
+	if targetID == "" {
+		// Telegram cannot rename users; fall back to dry-run output.
+		if banner.Platform() == "telegram" {
+			return h.dehoistDryRun(banner, targetID, cfg)
+		}
+
+		members, err := banner.GetAllMembers()
+		if err != nil {
+			return "", fmt.Errorf("getting members: %w", err)
+		}
+
+		var results []string
+		successCount := 0
+		failedCount := 0
+
+		for _, m := range members {
+			// Skip admins and bots entirely
+			if h.DB.IsAdmin(banner.Platform(), m.UserID, cfg) || m.IsBot {
+				continue
+			}
+
+			name := m.DisplayName
+			if name == "" {
+				continue
+			}
+
+			newName := stripHoistChars(name)
+			if newName == name {
+				continue
+			}
+
+			if err := banner.SetNickname(m.UserID, newName); err != nil {
+				// Best-effort: record failure but continue with other members.
+				failedCount++
+				continue
+			}
+
+			successCount++
+			results = append(results, fmt.Sprintf("@%s - \"%s\" → \"%s\"", m.UserID, name, newName))
+		}
+
+		if len(results) == 0 {
+			return "✅ No members need dehoisting.", nil
+		}
+
+		list := strings.Join(results, "\n")
+		result := fmt.Sprintf("```\n%s\n```", list)
+		if failedCount > 0 {
+			result += fmt.Sprintf("\n\n⚠️ %d members could not be renamed (likely due to Discord permissions or role hierarchy).", failedCount)
+		}
+
+		return result, nil
 	}
 
 	displayName, err := banner.GetDisplayName(targetID)
@@ -161,8 +222,12 @@ func (h *ModerationHandler) Dehoist(banner PlatformBanner, targetID string, dry 
 	return fmt.Sprintf("@%s - \"%s\" → \"%s\"", targetID, displayName, newName), nil
 }
 
-func (h *ModerationHandler) dehoistDryRun(banner PlatformBanner, targetID string) (string, error) {
+func (h *ModerationHandler) dehoistDryRun(banner PlatformBanner, targetID string, cfg db.PermaAdminProvider) (string, error) {
 	if targetID != "" {
+		if h.DB.IsAdmin(banner.Platform(), targetID, cfg) {
+			return "I will not dehoist an admin.", nil
+		}
+
 		displayName, err := banner.GetDisplayName(targetID)
 		if err != nil {
 			return "", fmt.Errorf("getting display name: %w", err)
@@ -184,6 +249,10 @@ func (h *ModerationHandler) dehoistDryRun(banner PlatformBanner, targetID string
 
 	var results []string
 	for _, m := range members {
+		if h.DB.IsAdmin(banner.Platform(), m.UserID, cfg) || m.IsBot {
+			continue
+		}
+
 		name := m.DisplayName
 		if name == "" {
 			continue

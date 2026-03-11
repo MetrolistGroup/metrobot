@@ -468,7 +468,7 @@ func (b *Bot) handleDehoist(s *discordgo.Session, i *discordgo.InteractionCreate
 	}
 
 	banner := b.newBanner()
-	resp, err := b.Moderation.Dehoist(banner, targetID, dry)
+	resp, err := b.Moderation.Dehoist(banner, targetID, dry, b.Config)
 	if err != nil {
 		b.Logger.Error("dehoist error", zap.Error(err))
 		respondEphemeral(s, i, "Error executing dehoist.")

@@ -499,6 +499,7 @@ func (d *DiscordBanner) GetAllMembers() ([]cmd.MemberInfo, error) {
 				UserID:      m.User.ID,
 				Username:    m.User.Username,
 				DisplayName: displayName,
+				IsBot:       m.User.Bot,
 			})
 		}
 
