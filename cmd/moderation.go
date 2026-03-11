@@ -231,22 +231,13 @@ func stripHoistChars(s string) string {
 }
 
 func isHoistChar(r rune) bool {
-	if r >= '!' && r <= '/' {
-		return true
+	// Treat anything that is NOT a letter or digit as a hoisting character.
+	// This means we strip all leading spaces, punctuation, symbols, and emojis
+	// until we hit the first letter/digit, then keep the rest of the name.
+	if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		return false
 	}
-	if r >= ':' && r <= '@' {
-		return true
-	}
-	if r >= '[' && r <= '`' {
-		return true
-	}
-	if r >= '{' && r <= '~' {
-		return true
-	}
-	if !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsSpace(r) {
-		return true
-	}
-	return false
+	return true
 }
 
 func formatDuration(d time.Duration) string {
