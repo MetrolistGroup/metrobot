@@ -137,7 +137,11 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, resp, "", false, b.Logger)
 
 	case "warn":
-		if len(parts) > 1 {
+		// When warning via reply, treat the entire args string as the reason.
+		// When not replying, the first arg is the target and the rest is the reason.
+		if msg.ReplyToMessage != nil {
+			reason = args
+		} else if len(parts) > 1 {
 			reason = strings.Join(parts[1:], " ")
 		}
 		resp, extras, err := b.Warn.Warn(banner, callerID, targetID, reason, b.Config)
@@ -437,18 +441,30 @@ func (b *Bot) tgHandleWarn(msg *tgbotapi.Message, args string, callerID string) 
 		return
 	}
 	parts := strings.Fields(args)
-	if len(parts) == 0 {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "warn - usage: warn [user] [reason:optional]", "", false, b.Logger)
-		return
+
+	// Support two forms:
+	// 1) Reply + /warn [reason...]  -> target is reply user, reason is whole args
+	// 2) /warn [user] [reason...]  -> target from first arg, reason from the rest
+	var targetID string
+	var reason string
+
+	if msg.ReplyToMessage != nil {
+		targetID = extractTelegramUserID(msg, "")
+		reason = strings.TrimSpace(args)
+	} else {
+		if len(parts) == 0 {
+			sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "warn - usage: warn [user] [reason:optional]", "", false, b.Logger)
+			return
+		}
+		targetID = extractTelegramUserID(msg, parts[0])
+		if len(parts) > 1 {
+			reason = strings.Join(parts[1:], " ")
+		}
 	}
-	targetID := extractTelegramUserID(msg, parts[0])
+
 	if targetID == "" {
 		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Could not resolve user.", "", false, b.Logger)
 		return
-	}
-	var reason string
-	if len(parts) > 1 {
-		reason = strings.Join(parts[1:], " ")
 	}
 	banner := b.newBanner()
 	resp, extras, err := b.Warn.Warn(banner, callerID, targetID, reason, b.Config)
