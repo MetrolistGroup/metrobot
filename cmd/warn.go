@@ -41,8 +41,6 @@ func (h *WarnHandler) Warn(banner PlatformBanner, callerID, targetID, reason str
 		reasonText = "no reason provided"
 	}
 
-	var extraMessages []string
-
 	banner.DMUser(targetID, fmt.Sprintf(
 		"You have been warned in Metrolist for: %s. This is warning %d of %d.",
 		reasonText, count, threshold,
@@ -55,12 +53,10 @@ func (h *WarnHandler) Warn(banner PlatformBanner, callerID, targetID, reason str
 			return "", nil, fmt.Errorf("auto-banning user: %w", err)
 		}
 		h.DB.LogModAction(banner.Platform(), "system", targetID, "ban", "Auto-ban: warning threshold reached")
-
-		extraMessages = append(extraMessages,
-			fmt.Sprintf("⚠️ <@%s> has been permanently banned after reaching %d warnings.", targetID, threshold))
+		response = fmt.Sprintf("⚠️ %s has been warned. Reason: %s (%d/%d). Auto-action: permanently banned for reaching %d warnings.", formatUserRef(platform, targetID), reasonText, count, threshold, threshold)
 	}
 
-	return response, extraMessages, nil
+	return response, nil, nil
 }
 
 func (h *WarnHandler) Warnings(platform, targetID string) (string, error) {

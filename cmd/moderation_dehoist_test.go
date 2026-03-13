@@ -24,19 +24,25 @@ type fakeDehoistBanner struct {
 	setCalls map[string]string
 }
 
-func (b *fakeDehoistBanner) Ban(userID, reason string) error            { return nil }
-func (b *fakeDehoistBanner) Unban(userID string) error                  { return nil }
-func (b *fakeDehoistBanner) DeleteMessages(userID string) error         { return nil }
+func (b *fakeDehoistBanner) Ban(userID, reason string) error    { return nil }
+func (b *fakeDehoistBanner) Unban(userID string) error          { return nil }
+func (b *fakeDehoistBanner) DeleteMessages(userID string) error { return nil }
 func (b *fakeDehoistBanner) Restrict(userID string, untilDate int64) error {
 	return nil
 }
-func (b *fakeDehoistBanner) Unrestrict(userID string) error                 { return nil }
-func (b *fakeDehoistBanner) SetNickname(userID, nickname string) error      { if b.setCalls == nil { b.setCalls = make(map[string]string) }; b.setCalls[userID] = nickname; return nil }
-func (b *fakeDehoistBanner) DMUser(userID, message string) error            { return nil }
-func (b *fakeDehoistBanner) GetDisplayName(userID string) (string, error)   { return "", nil }
-func (b *fakeDehoistBanner) GetAllMembers() ([]MemberInfo, error)           { return b.members, nil }
-func (b *fakeDehoistBanner) Platform() string                               { return b.platform }
-func (b *fakeDehoistBanner) ChatID() string                                 { return "test-chat" }
+func (b *fakeDehoistBanner) Unrestrict(userID string) error { return nil }
+func (b *fakeDehoistBanner) SetNickname(userID, nickname string) error {
+	if b.setCalls == nil {
+		b.setCalls = make(map[string]string)
+	}
+	b.setCalls[userID] = nickname
+	return nil
+}
+func (b *fakeDehoistBanner) DMUser(userID, message string) error          { return nil }
+func (b *fakeDehoistBanner) GetDisplayName(userID string) (string, error) { return "", nil }
+func (b *fakeDehoistBanner) GetAllMembers() ([]MemberInfo, error)         { return b.members, nil }
+func (b *fakeDehoistBanner) Platform() string                             { return b.platform }
+func (b *fakeDehoistBanner) ChatID() string                               { return "test-chat" }
 
 func openModerationTestDB(t *testing.T) *db.DB {
 	t.Helper()
@@ -89,11 +95,9 @@ func TestDehoistBulkSkipsAdminsAndBots(t *testing.T) {
 		t.Fatalf("user-2 should not be renamed (no hoist chars)")
 	}
 
-	if !strings.Contains(resp, "@user-1") {
-		t.Fatalf("response should mention dehoisted user, got: %q", resp)
-	}
-	if strings.Contains(resp, "@admin-1") {
-		t.Fatalf("response should not mention admin user, got: %q", resp)
+	wantResp := "Successfully dehoisted 1 members out of 4 server members."
+	if resp != wantResp {
+		t.Fatalf("response = %q, want %q", resp, wantResp)
 	}
 }
 
@@ -118,4 +122,3 @@ func TestDehoistSkipsAdminTarget(t *testing.T) {
 		t.Fatalf("response should explain admin is not dehoisted, got: %q", resp)
 	}
 }
-

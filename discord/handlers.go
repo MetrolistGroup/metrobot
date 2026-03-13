@@ -487,11 +487,18 @@ func (b *Bot) handleDehoist(s *discordgo.Session, i *discordgo.InteractionCreate
 		targetID = opt.UserValue(s).ID
 	}
 
+	if err := deferResponse(s, i, dry); err != nil {
+		b.Logger.Error("failed to defer dehoist interaction", zap.Error(err))
+		return
+	}
+
 	banner := b.newBanner()
 	resp, err := b.Moderation.Dehoist(banner, targetID, dry, b.Config)
 	if err != nil {
 		b.Logger.Error("dehoist error", zap.Error(err))
-		respondEphemeral(s, i, "Error executing dehoist.")
+		if editErr := editDeferredResponse(s, i, "Error executing dehoist."); editErr != nil {
+			b.Logger.Error("failed to edit deferred dehoist response", zap.Error(editErr))
+		}
 		return
 	}
 
@@ -500,14 +507,14 @@ func (b *Bot) handleDehoist(s *discordgo.Session, i *discordgo.InteractionCreate
 		for _, chunk := range chunks {
 			dmUser(s, callerID, chunk)
 		}
-		respondEphemeral(s, i, "Output too large - sent to your DMs.")
+		if err := editDeferredResponse(s, i, "Output too large - sent to your DMs."); err != nil {
+			b.Logger.Error("failed to edit deferred dehoist response", zap.Error(err))
+		}
 		return
 	}
 
-	if dry {
-		respondEphemeral(s, i, resp)
-	} else {
-		respondPublic(s, i, resp)
+	if err := editDeferredResponse(s, i, resp); err != nil {
+		b.Logger.Error("failed to edit deferred dehoist response", zap.Error(err))
 	}
 }
 

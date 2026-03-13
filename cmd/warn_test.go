@@ -8,6 +8,30 @@ import (
 	"github.com/MetrolistGroup/metrobot/db"
 )
 
+type fakeWarnConfig struct{}
+
+func (fakeWarnConfig) GetPermaAdminIDs(platform string) []string { return nil }
+
+type fakeWarnBanner struct {
+	platform string
+	chatID   string
+	banCalls int
+}
+
+func (b *fakeWarnBanner) Ban(userID, reason string) error    { b.banCalls++; return nil }
+func (b *fakeWarnBanner) Unban(userID string) error          { return nil }
+func (b *fakeWarnBanner) DeleteMessages(userID string) error { return nil }
+func (b *fakeWarnBanner) Restrict(userID string, untilDate int64) error {
+	return nil
+}
+func (b *fakeWarnBanner) Unrestrict(userID string) error               { return nil }
+func (b *fakeWarnBanner) SetNickname(userID, nickname string) error    { return nil }
+func (b *fakeWarnBanner) DMUser(userID, message string) error          { return nil }
+func (b *fakeWarnBanner) GetDisplayName(userID string) (string, error) { return "", nil }
+func (b *fakeWarnBanner) GetAllMembers() ([]MemberInfo, error)         { return nil, nil }
+func (b *fakeWarnBanner) Platform() string                             { return b.platform }
+func (b *fakeWarnBanner) ChatID() string                               { return b.chatID }
+
 func TestWarningsAreOneIndexed(t *testing.T) {
 	database := openWarnTestDB(t)
 	handler := &WarnHandler{DB: database}
@@ -61,6 +85,36 @@ func TestUnwarnUsesOneBasedIDs(t *testing.T) {
 
 	if _, err := handler.Unwarn("discord", "caller", "target", 0); err == nil {
 		t.Fatal("Unwarn() with id 0 should fail")
+	}
+}
+
+func TestWarnThresholdReturnsSingleCombinedMessage(t *testing.T) {
+	database := openWarnTestDB(t)
+	handler := &WarnHandler{DB: database}
+	banner := &fakeWarnBanner{platform: "discord", chatID: "test-chat"}
+
+	for i := 0; i < 2; i++ {
+		if _, _, err := handler.Warn(banner, "mod", "target", "reason", fakeWarnConfig{}); err != nil {
+			t.Fatalf("Warn pre-threshold #%d: %v", i+1, err)
+		}
+	}
+
+	resp, extras, err := handler.Warn(banner, "mod", "target", "third reason", fakeWarnConfig{})
+	if err != nil {
+		t.Fatalf("Warn threshold: %v", err)
+	}
+
+	if !strings.Contains(resp, "(3/3)") {
+		t.Fatalf("response should include third warning count, got: %q", resp)
+	}
+	if !strings.Contains(resp, "Auto-action: permanently banned") {
+		t.Fatalf("response should include auto-ban notice, got: %q", resp)
+	}
+	if len(extras) != 0 {
+		t.Fatalf("expected no extra messages, got: %#v", extras)
+	}
+	if banner.banCalls != 1 {
+		t.Fatalf("expected one auto-ban call, got %d", banner.banCalls)
 	}
 }
 

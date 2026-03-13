@@ -31,6 +31,26 @@ func respondPublic(s *discordgo.Session, i *discordgo.InteractionCreate, content
 	})
 }
 
+func deferResponse(s *discordgo.Session, i *discordgo.InteractionCreate, ephemeral bool) error {
+	flags := discordgo.MessageFlagsSuppressEmbeds
+	if ephemeral {
+		flags |= discordgo.MessageFlagsEphemeral
+	}
+
+	return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Flags: flags,
+		},
+	})
+}
+
+func editDeferredResponse(s *discordgo.Session, i *discordgo.InteractionCreate, content string) error {
+	sanitized := suppressDiscordEmbeds(content)
+	_, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &sanitized})
+	return err
+}
+
 func respondPublicAutoDelete(s *discordgo.Session, i *discordgo.InteractionCreate, content string, logger *zap.Logger) {
 	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,

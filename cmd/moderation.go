@@ -141,9 +141,8 @@ func (h *ModerationHandler) Dehoist(banner PlatformBanner, targetID string, dry 
 			return "", fmt.Errorf("getting members: %w", err)
 		}
 
-		var results []string
+		totalMembers := len(members)
 		successCount := 0
-		failedCount := 0
 
 		for _, m := range members {
 			// Skip admins and bots entirely
@@ -162,26 +161,14 @@ func (h *ModerationHandler) Dehoist(banner PlatformBanner, targetID string, dry 
 			}
 
 			if err := banner.SetNickname(m.UserID, newName); err != nil {
-				// Best-effort: record failure but continue with other members.
-				failedCount++
+				// Best-effort: continue with other members when one rename fails.
 				continue
 			}
 
 			successCount++
-			results = append(results, fmt.Sprintf("@%s - \"%s\" → \"%s\"", m.UserID, name, newName))
 		}
 
-		if len(results) == 0 {
-			return "✅ No members need dehoisting.", nil
-		}
-
-		list := strings.Join(results, "\n")
-		result := fmt.Sprintf("```\n%s\n```", list)
-		if failedCount > 0 {
-			result += fmt.Sprintf("\n\n⚠️ %d members could not be renamed (likely due to Discord permissions or role hierarchy).", failedCount)
-		}
-
-		return result, nil
+		return fmt.Sprintf("Successfully dehoisted %d members out of %d server members.", successCount, totalMembers), nil
 	}
 
 	displayName, err := banner.GetDisplayName(targetID)
