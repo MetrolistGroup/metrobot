@@ -80,6 +80,10 @@ func (b *Bot) Stop() {
 func (b *Bot) registerCommands() error {
 	commands := []*discordgo.ApplicationCommand{
 		{
+			Name:        "help",
+			Description: "Show available commands",
+		},
+		{
 			Name:        "notes",
 			Description: "List all available notes",
 		},

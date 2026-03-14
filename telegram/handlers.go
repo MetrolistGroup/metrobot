@@ -13,7 +13,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var chatModPattern = regexp.MustCompile(`(?i)^(ban|dban|tban|sban|warn)\s*(.*)$`)
+var chatModPattern = regexp.MustCompile(`(?i)^!(ban|dban|tban|sban|warn)\s*(.*)$`)
 var telegramBoldPattern = regexp.MustCompile(`\*\*([^*\n][^\n]*?)\*\*`)
 var telegramInlineCodePattern = regexp.MustCompile("`([^`\\n]+)`")
 
@@ -51,7 +51,6 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	args := strings.TrimSpace(matches[2])
 
 	if !b.DB.IsAdmin("telegram", callerID, b.Config) {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "You don't have ban permissions.", "", false, b.Logger)
 		return
 	}
 
@@ -209,6 +208,8 @@ func (b *Bot) handleCommand(msg *tgbotapi.Message, callerID string) {
 	)
 
 	switch command {
+	case "help":
+		b.tgHandleHelp(msg)
 	case "notes":
 		b.tgHandleNotes(msg, stay)
 	case "note":
@@ -246,6 +247,41 @@ func (b *Bot) handleCommand(msg *tgbotapi.Message, callerID string) {
 	case "removeadmin":
 		b.tgHandleRemoveAdmin(msg, args, callerID)
 	}
+}
+
+func (b *Bot) tgHandleHelp(msg *tgbotapi.Message) {
+	help := `<b>Available Commands:</b>
+
+<b>Notes:</b>
+• /notes - List all available notes
+• /note - Show a specific note
+• /addnote - Add a new note (admin only)
+• /editnote - Edit a note (admin only)
+• /delnote - Delete a note (admin only)
+
+<b>Bot Info:</b>
+• /version - Show release info
+• /latest - Show the latest release
+• /actions - GitHub Actions build status
+
+<b>Moderation (admin only):</b>
+• /ban - Permanently ban a user
+• /dban - Ban and delete messages
+• /tban - Temporarily ban a user
+• /sban - Softban a user
+• /warn - Warn a user
+• /warnings - Show warnings for a user
+• /unwarn - Remove a warning from a user
+• /dehoist - Remove hoisting characters from name
+
+<b>Admin Management (permaadmin only):</b>
+• /addadmin - Add a bot admin
+• /removeadmin - Remove a bot admin
+
+<b>Prefix Commands:</b>
+Moderation actions can also be triggered via message prefix: !<code>action</code> [user] [args]
+Example: <code>!ban @user spam</code>`
+	sendEphemeralReply(b.API, msg.Chat.ID, msg.MessageID, help, "HTML", false, b.Logger)
 }
 
 func (b *Bot) tgHandleNotes(msg *tgbotapi.Message, stay bool) {

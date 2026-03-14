@@ -95,6 +95,7 @@ func (b *Bot) Stop() {
 
 func (b *Bot) registerCommands() {
 	commands := []tgbotapi.BotCommand{
+		{Command: "help", Description: "Show available commands"},
 		{Command: "notes", Description: "List all available notes"},
 		{Command: "note", Description: "Show a specific note"},
 		{Command: "addnote", Description: "Add a new note (admin)"},

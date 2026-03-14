@@ -12,7 +12,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var chatModPattern = regexp.MustCompile(`(?i)^(ban|dban|tban|sban|warn)\s*(.*)$`)
+var chatModPattern = regexp.MustCompile(`(?i)^!(ban|dban|tban|sban|warn)\s*(.*)$`)
 
 func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	if i.Type == discordgo.InteractionApplicationCommandAutocomplete {
@@ -40,6 +40,8 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 	stay := getOptBool(opts, "stay") && b.DB.IsAdmin("discord", callerID, b.Config)
 
 	switch data.Name {
+	case "help":
+		b.handleHelp(s, i)
 	case "notes":
 		b.handleNotes(s, i)
 	case "note":
@@ -111,7 +113,6 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	callerID := m.Author.ID
 
 	if !b.DB.IsAdmin("discord", callerID, b.Config) {
-		sendReply(s, m.ChannelID, m.ID, "You don't have ban permissions.", false, b.Logger)
 		return
 	}
 
@@ -229,6 +230,36 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 }
 
 // --- Slash command handlers ---
+
+func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	help := "**Available Commands:**\n\n" +
+		"**Notes:**\n" +
+		"• /notes - List all available notes\n" +
+		"• /note [name] - Show a specific note\n" +
+		"• /addnote [name] [content] - Add a new note (admin only)\n" +
+		"• /editnote [name] [content] - Edit a note (admin only)\n" +
+		"• /delnote [name] - Delete a note (admin only)\n\n" +
+		"**Bot Info:**\n" +
+		"• /version [version] - Show release info\n" +
+		"• /latest - Show the latest release\n" +
+		"• /actions - Show GitHub Actions build status\n\n" +
+		"**Moderation (admin only):**\n" +
+		"• /ban [user] [reason] - Permanently ban a user\n" +
+		"• /dban [user] [reason] - Ban and delete messages\n" +
+		"• /tban [user] [duration] [reason] - Temporarily ban a user\n" +
+		"• /sban [user] [reason] - Softban a user\n" +
+		"• /warn [user] [reason] - Warn a user\n" +
+		"• /warnings [user] - Show warnings for a user\n" +
+		"• /unwarn [user] [id] - Remove a warning from a user\n" +
+		"• /dehoist [user] [dry] - Remove hoisting characters from name\n\n" +
+		"**Admin Management (permaadmin only):**\n" +
+		"• /addadmin [user] - Add a bot admin\n" +
+		"• /removeadmin [user] - Remove a bot admin\n\n" +
+		"**Prefix Commands:**\n" +
+		"Moderation actions can also be triggered via message prefix: !action [user] [args]\n" +
+		"Example: !ban @user spam"
+	respondEphemeral(s, i, help)
+}
 
 func (b *Bot) handleNotes(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	text, err := b.Notes.ListNotes()
