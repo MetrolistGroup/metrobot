@@ -22,11 +22,12 @@ type Bot struct {
 	Moderation *cmd.ModerationHandler
 	Warn       *cmd.WarnHandler
 	Admin      *cmd.AdminHandler
+	Ping       *cmd.PingHandler
 }
 
 func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 	notes *cmd.NotesHandler, version *cmd.VersionHandler, actions *cmd.ActionsHandler,
-	moderation *cmd.ModerationHandler, warn *cmd.WarnHandler, admin *cmd.AdminHandler,
+	moderation *cmd.ModerationHandler, warn *cmd.WarnHandler, admin *cmd.AdminHandler, ping *cmd.PingHandler,
 ) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(cfg.TelegramToken)
 	if err != nil {
@@ -44,6 +45,7 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		Moderation: moderation,
 		Warn:       warn,
 		Admin:      admin,
+		Ping:       ping,
 	}
 
 	return bot, nil
@@ -114,6 +116,7 @@ func (b *Bot) registerCommands() {
 		{Command: "dehoist", Description: "Remove hoisting chars (admin)"},
 		{Command: "addadmin", Description: "Add a bot admin (permaadmin)"},
 		{Command: "removeadmin", Description: "Remove a bot admin (permaadmin)"},
+		{Command: "ping", Description: "Check latency to services"},
 	}
 
 	cfg := tgbotapi.NewSetMyCommandsWithScope(

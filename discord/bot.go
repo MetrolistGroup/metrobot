@@ -21,13 +21,14 @@ type Bot struct {
 	Moderation *cmd.ModerationHandler
 	Warn       *cmd.WarnHandler
 	Admin      *cmd.AdminHandler
+	Ping       *cmd.PingHandler
 
 	TimedBanRestorer func()
 }
 
 func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 	notes *cmd.NotesHandler, version *cmd.VersionHandler, actions *cmd.ActionsHandler,
-	moderation *cmd.ModerationHandler, warn *cmd.WarnHandler, admin *cmd.AdminHandler,
+	moderation *cmd.ModerationHandler, warn *cmd.WarnHandler, admin *cmd.AdminHandler, ping *cmd.PingHandler,
 ) (*Bot, error) {
 	session, err := discordgo.New("Bot " + cfg.DiscordToken)
 	if err != nil {
@@ -47,6 +48,7 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		Moderation: moderation,
 		Warn:       warn,
 		Admin:      admin,
+		Ping:       ping,
 	}
 
 	session.AddHandler(bot.onInteractionCreate)
@@ -355,6 +357,10 @@ func (b *Bot) registerCommands() error {
 					Required:    true,
 				},
 			},
+		},
+		{
+			Name:        "ping",
+			Description: "Check latency to various services",
 		},
 	}
 

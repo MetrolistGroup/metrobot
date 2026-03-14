@@ -78,6 +78,8 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 		b.handleAddAdmin(s, i, opts, callerID)
 	case "removeadmin":
 		b.handleRemoveAdmin(s, i, opts, callerID)
+	case "ping":
+		b.handlePing(s, i)
 	}
 }
 
@@ -242,7 +244,8 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		"**Bot Info:**\n" +
 		"• /version [version] - Show release info\n" +
 		"• /latest - Show the latest release\n" +
-		"• /actions - Show GitHub Actions build status\n\n" +
+		"• /actions - Show GitHub Actions build status\n" +
+		"• /ping - Check latency to various services\n\n" +
 		"**Moderation (admin only):**\n" +
 		"• /ban [user] [reason] - Permanently ban a user\n" +
 		"• /dban [user] [reason] - Ban and delete messages\n" +
@@ -283,7 +286,7 @@ func (b *Bot) handleNote(s *discordgo.Session, i *discordgo.InteractionCreate, o
 	if stay {
 		respondPublic(s, i, text)
 	} else {
-		respondEphemeral(s, i, text)
+		respondPublicAutoDelete(s, i, text, b.Logger)
 	}
 }
 
@@ -569,6 +572,16 @@ func (b *Bot) handleRemoveAdmin(s *discordgo.Session, i *discordgo.InteractionCr
 		return
 	}
 	respondPublic(s, i, resp)
+}
+
+func (b *Bot) handlePing(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	text, err := b.Ping.Ping()
+	if err != nil {
+		b.Logger.Error("ping error", zap.Error(err))
+		respondEphemeral(s, i, "Error checking ping.")
+		return
+	}
+	respondPublicAutoDelete(s, i, text, b.Logger)
 }
 
 // --- Helpers ---

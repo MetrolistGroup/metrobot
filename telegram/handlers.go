@@ -246,6 +246,8 @@ func (b *Bot) handleCommand(msg *tgbotapi.Message, callerID string) {
 		b.tgHandleAddAdmin(msg, args, callerID)
 	case "removeadmin":
 		b.tgHandleRemoveAdmin(msg, args, callerID)
+	case "ping":
+		b.tgHandlePing(msg)
 	}
 }
 
@@ -263,6 +265,7 @@ func (b *Bot) tgHandleHelp(msg *tgbotapi.Message) {
 • /version - Show release info
 • /latest - Show the latest release
 • /actions - GitHub Actions build status
+• /ping - Check latency to services
 
 <b>Moderation (admin only):</b>
 • /ban - Permanently ban a user
@@ -732,6 +735,16 @@ func (b *Bot) tgHandleRemoveAdmin(msg *tgbotapi.Message, args string, callerID s
 		return
 	}
 	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, resp, "", false, b.Logger)
+}
+
+func (b *Bot) tgHandlePing(msg *tgbotapi.Message) {
+	text, err := b.Ping.Ping()
+	if err != nil {
+		b.Logger.Error("ping error", zap.Error(err))
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Error checking ping.", "", false, b.Logger)
+		return
+	}
+	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, text, "", false, b.Logger)
 }
 
 func extractTelegramUserID(msg *tgbotapi.Message, mention string) string {

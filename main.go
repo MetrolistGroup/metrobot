@@ -50,12 +50,13 @@ func main() {
 	moderationHandler := &cmd.ModerationHandler{DB: database}
 	warnHandler := &cmd.WarnHandler{DB: database}
 	adminHandler := &cmd.AdminHandler{DB: database}
+	pingHandler := &cmd.PingHandler{}
 
 	restoreTimedBans(database, logger)
 
 	discordBot, err := discord.New(cfg, database, logger,
 		notesHandler, versionHandler, actionsHandler,
-		moderationHandler, warnHandler, adminHandler,
+		moderationHandler, warnHandler, adminHandler, pingHandler,
 	)
 	if err != nil {
 		logger.Fatal("failed to create discord bot", zap.Error(err))
@@ -67,7 +68,7 @@ func main() {
 
 	telegramBot, err := telegram.New(cfg, database, logger,
 		notesHandler, versionHandler, actionsHandler,
-		moderationHandler, warnHandler, adminHandler,
+		moderationHandler, warnHandler, adminHandler, pingHandler,
 	)
 	if err != nil {
 		logger.Fatal("failed to create telegram bot", zap.Error(err))
