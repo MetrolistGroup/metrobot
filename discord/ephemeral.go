@@ -1,6 +1,7 @@
 package discord
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -91,6 +92,24 @@ func sendReply(s *discordgo.Session, channelID, messageID, content string, autoD
 			s.ChannelMessageDelete(channelID, msg.ID)
 		})
 	}
+}
+
+// sendPermissionError sends an error message about missing permissions and deletes both messages after 5 seconds
+func sendPermissionError(s *discordgo.Session, channelID, originalMsgID string, permission string, logger *zap.Logger) {
+	content := fmt.Sprintf("❌ I don't have the required permission: **%s**", permission)
+	msg, err := s.ChannelMessageSend(channelID, suppressDiscordEmbeds(content))
+	if err != nil {
+		logger.Error("failed to send permission error", zap.Error(err))
+		return
+	}
+
+	// Delete both messages after 5 seconds
+	time.AfterFunc(5*time.Second, func() {
+		s.ChannelMessageDelete(channelID, msg.ID)
+		if originalMsgID != "" {
+			s.ChannelMessageDelete(channelID, originalMsgID)
+		}
+	})
 }
 
 func dmUser(s *discordgo.Session, userID, content string) error {

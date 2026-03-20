@@ -13,7 +13,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var chatModPattern = regexp.MustCompile(`(?i)^!(ban|dban|tban|sban|warn)\s*(.*)$`)
+var chatModPattern = regexp.MustCompile(`(?i)^!(ban|dban|tban|sban|mute|warn)\s*(.*)$`)
 var telegramBoldPattern = regexp.MustCompile(`\*\*([^*\n][^\n]*?)\*\*`)
 var telegramInlineCodePattern = regexp.MustCompile("`([^`\\n]+)`")
 
@@ -66,130 +66,40 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		return
 	}
 
-	parts := strings.Fields(args)
-	targetID := extractTelegramUserID(msg, parts[0])
+	var targetID string
+	var commandArgs string
+
+	// Check if this is a reply
+	if msg.ReplyToMessage != nil {
+		// Use the replied-to user as target
+		targetID = extractTelegramUserID(msg, "")
+		// Full args string is the reason
+		commandArgs = args
+	} else {
+		// Normal mode: first arg is target, rest is reason
+		parts := strings.Fields(args)
+		if len(parts) == 0 {
+			sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Please specify a target user or reply to a message.", "", false, b.Logger)
+			return
+		}
+		targetID = extractTelegramUserID(msg, parts[0])
+		if len(parts) > 1 {
+			commandArgs = strings.Join(parts[1:], " ")
+		}
+	}
+
 	if targetID == "" {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Could not resolve user.", "", false, b.Logger)
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Could not resolve target user.", "", false, b.Logger)
 		return
 	}
 
 	if b.DB.IsAdmin("telegram", targetID, b.Config) {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "I will not ban an admin.", "", false, b.Logger)
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "I will not take action against an admin.", "", false, b.Logger)
 		return
 	}
 
-	banner := b.newBanner()
-	var reason string
-
-	switch action {
-	case "ban":
-		if msg.ReplyToMessage != nil {
-			reason = strings.TrimSpace(args)
-		} else if len(parts) > 1 {
-			reason = strings.Join(parts[1:], " ")
-		}
-		if reason == "" {
-			sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "ban - usage: ban [user] [reason]", "", false, b.Logger)
-			return
-		}
-		resp, err := b.Moderation.Ban(banner, callerID, targetID, reason, b.Config)
-		if err != nil {
-			b.Logger.Error("ban failed", zap.Error(err))
-			return
-		}
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, resp, "", false, b.Logger)
-
-	case "dban":
-		if msg.ReplyToMessage != nil {
-			reason = strings.TrimSpace(args)
-		} else if len(parts) > 1 {
-			reason = strings.Join(parts[1:], " ")
-		}
-		if reason == "" {
-			sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "dban - usage: dban [user] [reason]", "", false, b.Logger)
-			return
-		}
-		resp, err := b.Moderation.DBan(banner, callerID, targetID, reason, b.Config)
-		if err != nil {
-			b.Logger.Error("dban failed", zap.Error(err))
-			return
-		}
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, resp, "", false, b.Logger)
-
-	case "tban":
-		if len(parts) < 2 {
-			sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "tban - usage: tban [user] [duration] [reason]", "", false, b.Logger)
-			return
-		}
-		dur, err := util.ParseDuration(parts[1])
-		if err != nil {
-			sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, fmt.Sprintf("Invalid duration: %s", err), "", false, b.Logger)
-			return
-		}
-		if msg.ReplyToMessage != nil {
-			// In reply form, treat everything after duration as reason.
-			if len(parts) < 2 {
-				sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "tban - usage: tban [user] [duration] [reason]", "", false, b.Logger)
-				return
-			}
-			if len(parts) > 2 {
-				reason = strings.Join(parts[2:], " ")
-			}
-		} else if len(parts) > 2 {
-			reason = strings.Join(parts[2:], " ")
-		}
-		if reason == "" {
-			sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "tban - usage: tban [user] [duration] [reason]", "", false, b.Logger)
-			return
-		}
-		resp, err := b.Moderation.TBan(banner, callerID, targetID, dur, reason, b.Config)
-		if err != nil {
-			b.Logger.Error("tban failed", zap.Error(err))
-			return
-		}
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, resp, "", false, b.Logger)
-
-	case "sban":
-		if msg.ReplyToMessage != nil {
-			reason = strings.TrimSpace(args)
-		} else if len(parts) > 1 {
-			reason = strings.Join(parts[1:], " ")
-		}
-		if reason == "" {
-			sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "sban - usage: sban [user] [reason]", "", false, b.Logger)
-			return
-		}
-		resp, err := b.Moderation.SBan(banner, callerID, targetID, reason, b.Config)
-		if err != nil {
-			b.Logger.Error("sban failed", zap.Error(err))
-			return
-		}
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, resp, "", false, b.Logger)
-
-	case "warn":
-		// When warning via reply, treat the entire args string as the reason.
-		// When not replying, the first arg is the target and the rest is the reason.
-		if msg.ReplyToMessage != nil {
-			reason = strings.TrimSpace(args)
-		} else if len(parts) > 1 {
-			reason = strings.Join(parts[1:], " ")
-		}
-		if reason == "" {
-			sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "warn - usage: warn [user] [reason]", "", false, b.Logger)
-			return
-		}
-		resp, extras, err := b.Warn.Warn(banner, callerID, targetID, reason, b.Config)
-		if err != nil {
-			b.Logger.Error("warn failed", zap.Error(err))
-			return
-		}
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, resp, "", false, b.Logger)
-		for _, extra := range extras {
-			reply := tgbotapi.NewMessage(msg.Chat.ID, extra)
-			reply.DisableWebPagePreview = true
-			b.API.Send(reply)
-		}
-	}
+	// Request confirmation before executing prefix command
+	b.requestPrefixConfirmation(msg, action, commandArgs, targetID)
 }
 
 func (b *Bot) handleCommand(msg *tgbotapi.Message, callerID string) {
@@ -234,9 +144,14 @@ func (b *Bot) handleCommand(msg *tgbotapi.Message, callerID string) {
 		b.tgHandleTBan(msg, args, callerID)
 	case "sban":
 		b.tgHandleSBan(msg, args, callerID)
+	case "mute":
+		b.tgHandleMute(msg, args, callerID)
 	case "warn":
 		b.tgHandleWarn(msg, args, callerID)
 	case "warnings":
+		b.tgHandleWarnings(msg, args)
+	case "warns":
+		b.tgHandleWarnings(msg, args)
 		b.tgHandleWarnings(msg, args)
 	case "unwarn":
 		b.tgHandleUnwarn(msg, args, callerID)
@@ -272,8 +187,10 @@ func (b *Bot) tgHandleHelp(msg *tgbotapi.Message) {
 • /dban - Ban and delete messages
 • /tban - Temporarily ban a user
 • /sban - Softban a user
+• /mute - Mute a user
 • /warn - Warn a user
 • /warnings - Show warnings for a user
+• /warns - Show warnings (alias)
 • /unwarn - Remove a warning from a user
 • /dehoist - Remove hoisting characters from name
 
@@ -424,7 +341,7 @@ func (b *Bot) tgHandleBan(msg *tgbotapi.Message, args string, callerID string) {
 		return
 	}
 	banner := b.newBanner()
-	resp, err := b.Moderation.Ban(banner, callerID, targetID, reason, b.Config)
+	resp, _, err := b.Moderation.Ban(banner, callerID, targetID, reason, b.Config)
 	if err != nil {
 		b.Logger.Error("ban failed", zap.Error(err))
 		return
@@ -464,7 +381,7 @@ func (b *Bot) tgHandleDBan(msg *tgbotapi.Message, args string, callerID string) 
 		return
 	}
 	banner := b.newBanner()
-	resp, err := b.Moderation.DBan(banner, callerID, targetID, reason, b.Config)
+	resp, _, err := b.Moderation.DBan(banner, callerID, targetID, reason, b.Config)
 	if err != nil {
 		b.Logger.Error("dban failed", zap.Error(err))
 		return
@@ -512,7 +429,7 @@ func (b *Bot) tgHandleTBan(msg *tgbotapi.Message, args string, callerID string) 
 		return
 	}
 	banner := b.newBanner()
-	resp, err := b.Moderation.TBan(banner, callerID, targetID, dur, reason, b.Config)
+	resp, _, err := b.Moderation.TBan(banner, callerID, targetID, dur, reason, b.Config)
 	if err != nil {
 		b.Logger.Error("tban failed", zap.Error(err))
 		return
@@ -552,9 +469,57 @@ func (b *Bot) tgHandleSBan(msg *tgbotapi.Message, args string, callerID string) 
 		return
 	}
 	banner := b.newBanner()
-	resp, err := b.Moderation.SBan(banner, callerID, targetID, reason, b.Config)
+	resp, _, err := b.Moderation.SBan(banner, callerID, targetID, reason, b.Config)
 	if err != nil {
 		b.Logger.Error("sban failed", zap.Error(err))
+		return
+	}
+	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, resp, "", false, b.Logger)
+}
+
+func (b *Bot) tgHandleMute(msg *tgbotapi.Message, args string, callerID string) {
+	if !b.DB.IsAdmin("telegram", callerID, b.Config) {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "You don't have mute permissions.", "", false, b.Logger)
+		return
+	}
+	parts := strings.Fields(args)
+	var targetID string
+	var reason string
+
+	if msg.ReplyToMessage != nil {
+		if len(parts) < 2 {
+			sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "mute - usage: mute [user] [duration] [reason]", "", false, b.Logger)
+			return
+		}
+		targetID = extractTelegramUserID(msg, "")
+	} else {
+		if len(parts) < 2 {
+			sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "mute - usage: mute [user] [duration] [reason]", "", false, b.Logger)
+			return
+		}
+		targetID = extractTelegramUserID(msg, parts[0])
+	}
+
+	if targetID == "" {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Could not resolve user.", "", false, b.Logger)
+		return
+	}
+	dur, err := util.ParseDuration(parts[1])
+	if err != nil {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, fmt.Sprintf("Invalid duration: %s", err), "", false, b.Logger)
+		return
+	}
+	if len(parts) > 2 {
+		reason = strings.Join(parts[2:], " ")
+	}
+	if reason == "" {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "mute - usage: mute [user] [duration] [reason]", "", false, b.Logger)
+		return
+	}
+	banner := b.newBanner()
+	resp, _, err := b.Moderation.Mute(banner, callerID, targetID, dur, reason, b.Config)
+	if err != nil {
+		b.Logger.Error("mute failed", zap.Error(err))
 		return
 	}
 	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, resp, "", false, b.Logger)
@@ -596,7 +561,7 @@ func (b *Bot) tgHandleWarn(msg *tgbotapi.Message, args string, callerID string) 
 		return
 	}
 	banner := b.newBanner()
-	resp, extras, err := b.Warn.Warn(banner, callerID, targetID, reason, b.Config)
+	resp, extras, _, err := b.Warn.Warn(banner, callerID, targetID, reason, b.Config)
 	if err != nil {
 		b.Logger.Error("warn failed", zap.Error(err))
 		return
@@ -648,7 +613,8 @@ func (b *Bot) tgHandleUnwarn(msg *tgbotapi.Message, args string, callerID string
 		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Invalid warning index.", "", false, b.Logger)
 		return
 	}
-	resp, err := b.Warn.Unwarn("telegram", callerID, targetID, index)
+	banner := b.newBanner()
+	resp, _, err := b.Warn.Unwarn("telegram", callerID, targetID, index, banner)
 	if err != nil {
 		b.Logger.Error("unwarn error", zap.Error(err))
 		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, fmt.Sprintf("Error: %s", err), "", false, b.Logger)

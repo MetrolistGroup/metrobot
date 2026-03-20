@@ -84,6 +84,29 @@ func (d *DB) migrate() error {
 			reason         TEXT,
 			timestamp      INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS cases (
+			id             INTEGER PRIMARY KEY AUTOINCREMENT,
+			case_number    INTEGER NOT NULL UNIQUE,
+			action_type    TEXT NOT NULL,
+			platform       TEXT NOT NULL,
+			target_id      TEXT NOT NULL,
+			moderator_id   TEXT NOT NULL,
+			reason         TEXT,
+			timestamp      INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS excluded_channels (
+			guild_id       TEXT NOT NULL,
+			channel_id     TEXT NOT NULL,
+			PRIMARY KEY (guild_id, channel_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS mutes (
+			id             INTEGER PRIMARY KEY AUTOINCREMENT,
+			platform       TEXT NOT NULL,
+			chat_id        TEXT NOT NULL,
+			user_id        TEXT NOT NULL,
+			expires_at     INTEGER NOT NULL,
+			reason         TEXT
+		)`,
 	}
 
 	for _, m := range migrations {
@@ -329,6 +352,171 @@ func (d *DB) LogModAction(platform, moderatorID, targetID, action, reason string
 		platform, moderatorID, targetID, action, reason, time.Now().Unix(),
 	)
 	return err
+}
+
+// --- Cases ---
+
+type Case struct {
+	ID          int64
+	CaseNumber  int64
+	ActionType  string
+	Platform    string
+	TargetID    string
+	ModeratorID string
+	Reason      string
+	Timestamp   int64
+}
+
+func (d *DB) CreateCase(platform, actionType, targetID, moderatorID, reason string) (*Case, error) {
+	now := time.Now().Unix()
+
+	// Get next case number
+	var nextNum int64
+	err := d.conn.QueryRow("SELECT COALESCE(MAX(case_number), 0) + 1 FROM cases").Scan(&nextNum)
+	if err != nil {
+		return nil, fmt.Errorf("getting next case number: %w", err)
+	}
+
+	res, err := d.conn.Exec(
+		"INSERT INTO cases (case_number, action_type, platform, target_id, moderator_id, reason, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		nextNum, actionType, platform, targetID, moderatorID, reason, now,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("inserting case: %w", err)
+	}
+
+	id, _ := res.LastInsertId()
+
+	return &Case{
+		ID:          id,
+		CaseNumber:  nextNum,
+		ActionType:  actionType,
+		Platform:    platform,
+		TargetID:    targetID,
+		ModeratorID: moderatorID,
+		Reason:      reason,
+		Timestamp:   now,
+	}, nil
+}
+
+func (d *DB) GetCase(caseNumber int64) (*Case, error) {
+	var c Case
+	err := d.conn.QueryRow(
+		"SELECT id, case_number, action_type, platform, target_id, moderator_id, reason, timestamp FROM cases WHERE case_number = ?",
+		caseNumber,
+	).Scan(&c.ID, &c.CaseNumber, &c.ActionType, &c.Platform, &c.TargetID, &c.ModeratorID, &c.Reason, &c.Timestamp)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (d *DB) GetCasesForUser(platform, userID string) ([]Case, error) {
+	rows, err := d.conn.Query(
+		"SELECT id, case_number, action_type, platform, target_id, moderator_id, reason, timestamp FROM cases WHERE platform = ? AND target_id = ? ORDER BY case_number DESC",
+		platform, userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cases []Case
+	for rows.Next() {
+		var c Case
+		if err := rows.Scan(&c.ID, &c.CaseNumber, &c.ActionType, &c.Platform, &c.TargetID, &c.ModeratorID, &c.Reason, &c.Timestamp); err != nil {
+			return nil, err
+		}
+		cases = append(cases, c)
+	}
+	return cases, rows.Err()
+}
+
+// --- Mutes ---
+
+type Mute struct {
+	ID        int64
+	Platform  string
+	ChatID    string
+	UserID    string
+	ExpiresAt int64
+	Reason    string
+}
+
+func (d *DB) AddMute(platform, chatID, userID string, expiresAt int64, reason string) (int64, error) {
+	res, err := d.conn.Exec(
+		"INSERT INTO mutes (platform, chat_id, user_id, expires_at, reason) VALUES (?, ?, ?, ?, ?)",
+		platform, chatID, userID, expiresAt, reason,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (d *DB) DeleteMute(id int64) error {
+	_, err := d.conn.Exec("DELETE FROM mutes WHERE id = ?", id)
+	return err
+}
+
+func (d *DB) GetPendingMutes() ([]Mute, error) {
+	rows, err := d.conn.Query("SELECT id, platform, chat_id, user_id, expires_at, COALESCE(reason, '') FROM mutes")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var mutes []Mute
+	for rows.Next() {
+		var m Mute
+		if err := rows.Scan(&m.ID, &m.Platform, &m.ChatID, &m.UserID, &m.ExpiresAt, &m.Reason); err != nil {
+			return nil, err
+		}
+		mutes = append(mutes, m)
+	}
+	return mutes, rows.Err()
+}
+
+// --- Excluded Channels ---
+
+func (d *DB) AddExcludedChannel(guildID, channelID string) error {
+	_, err := d.conn.Exec("INSERT OR IGNORE INTO excluded_channels (guild_id, channel_id) VALUES (?, ?)", guildID, channelID)
+	return err
+}
+
+func (d *DB) RemoveExcludedChannel(guildID, channelID string) error {
+	_, err := d.conn.Exec("DELETE FROM excluded_channels WHERE guild_id = ? AND channel_id = ?", guildID, channelID)
+	return err
+}
+
+func (d *DB) IsChannelExcluded(guildID, channelID string) (bool, error) {
+	var count int
+	err := d.conn.QueryRow("SELECT COUNT(*) FROM excluded_channels WHERE guild_id = ? AND channel_id = ?", guildID, channelID).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (d *DB) ListExcludedChannels(guildID string) ([]string, error) {
+	rows, err := d.conn.Query("SELECT channel_id FROM excluded_channels WHERE guild_id = ?", guildID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var channels []string
+	for rows.Next() {
+		var ch string
+		if err := rows.Scan(&ch); err != nil {
+			return nil, err
+		}
+		channels = append(channels, ch)
+	}
+	return channels, rows.Err()
 }
 
 // --- Interface for config dependency ---

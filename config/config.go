@@ -25,7 +25,8 @@ type Config struct {
 		GMS  string `json:"gms"`
 	} `json:"actions_artifact_names"`
 
-	LogFile string `json:"log_file"`
+	LogFile           string `json:"log_file"`
+	DiscordLogChannel string `json:"discord_log_channel"`
 }
 
 // Load reads config.json from the given path and validates all required fields.

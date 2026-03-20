@@ -30,83 +30,110 @@ type MemberInfo struct {
 }
 
 type ModerationHandler struct {
-	DB *db.DB
+	DB          *db.DB
+	CaseHandler *CaseHandler
 }
 
-func (h *ModerationHandler) Ban(banner PlatformBanner, callerID, targetID, reason string, cfg db.PermaAdminProvider) (string, error) {
+// SetCaseHandler sets the case handler for moderation actions
+func (h *ModerationHandler) SetCaseHandler(ch *CaseHandler) {
+	h.CaseHandler = ch
+}
+
+func (h *ModerationHandler) Ban(banner PlatformBanner, callerID, targetID, reason string, cfg db.PermaAdminProvider) (string, *db.Case, error) {
 	if h.DB.IsAdmin(banner.Platform(), targetID, cfg) {
-		return "I will not ban an admin.", nil
+		return "I will not ban an admin.", nil, nil
 	}
 
 	if err := banner.Ban(targetID, reason); err != nil {
-		return "", fmt.Errorf("banning user: %w", err)
+		return "", nil, fmt.Errorf("banning user: %w", err)
 	}
 
 	h.DB.LogModAction(banner.Platform(), callerID, targetID, "ban", reason)
 
+	// Create case
+	var c *db.Case
+	if h.CaseHandler != nil {
+		targetName, _ := banner.GetDisplayName(targetID)
+		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "ban", targetID, callerID, reason, targetName, "")
+	}
+
 	reasonText := " Reason: " + reason
-	return fmt.Sprintf("🔨 %s has been permanently banned.%s", formatUserRef(banner.Platform(), targetID), reasonText), nil
+	return fmt.Sprintf("🔨 %s has been permanently banned.%s", formatUserRef(banner.Platform(), targetID), reasonText), c, nil
 }
 
-func (h *ModerationHandler) DBan(banner PlatformBanner, callerID, targetID, reason string, cfg db.PermaAdminProvider) (string, error) {
+func (h *ModerationHandler) DBan(banner PlatformBanner, callerID, targetID, reason string, cfg db.PermaAdminProvider) (string, *db.Case, error) {
 	if h.DB.IsAdmin(banner.Platform(), targetID, cfg) {
-		return "I will not ban an admin.", nil
+		return "I will not ban an admin.", nil, nil
 	}
 
 	if err := banner.DeleteMessages(targetID); err != nil {
-		return "", fmt.Errorf("deleting messages: %w", err)
+		return "", nil, fmt.Errorf("deleting messages: %w", err)
 	}
 
 	if err := banner.Ban(targetID, reason); err != nil {
-		return "", fmt.Errorf("banning user: %w", err)
+		return "", nil, fmt.Errorf("banning user: %w", err)
 	}
 
 	h.DB.LogModAction(banner.Platform(), callerID, targetID, "dban", reason)
 
+	// Create case
+	var c *db.Case
+	if h.CaseHandler != nil {
+		targetName, _ := banner.GetDisplayName(targetID)
+		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "dban", targetID, callerID, reason, targetName, "")
+	}
+
 	reasonText := " Reason: " + reason
-	return fmt.Sprintf("🔨 %s has been banned and their messages deleted.%s", formatUserRef(banner.Platform(), targetID), reasonText), nil
+	return fmt.Sprintf("🔨 %s has been banned and their messages deleted.%s", formatUserRef(banner.Platform(), targetID), reasonText), c, nil
 }
 
-func (h *ModerationHandler) TBan(banner PlatformBanner, callerID, targetID string, duration time.Duration, reason string, cfg db.PermaAdminProvider) (string, error) {
+func (h *ModerationHandler) TBan(banner PlatformBanner, callerID, targetID string, duration time.Duration, reason string, cfg db.PermaAdminProvider) (string, *db.Case, error) {
 	if h.DB.IsAdmin(banner.Platform(), targetID, cfg) {
-		return "I will not ban an admin.", nil
+		return "I will not ban an admin.", nil, nil
 	}
 
 	expiresAt := time.Now().Add(duration).Unix()
 
 	if err := banner.Ban(targetID, reason); err != nil {
-		return "", fmt.Errorf("banning user: %w", err)
+		return "", nil, fmt.Errorf("banning user: %w", err)
 	}
 
 	banID, err := h.DB.AddTimedBan(banner.Platform(), banner.ChatID(), targetID, expiresAt, reason)
 	if err != nil {
-		return "", fmt.Errorf("storing timed ban: %w", err)
+		return "", nil, fmt.Errorf("storing timed ban: %w", err)
 	}
 	_ = banID
 
 	h.DB.LogModAction(banner.Platform(), callerID, targetID, "tban", reason)
 
+	// Create case
+	var c *db.Case
+	if h.CaseHandler != nil {
+		targetName, _ := banner.GetDisplayName(targetID)
+		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "tban", targetID, callerID, reason, targetName, "")
+	}
+
 	reasonText := " Reason: " + reason
-	return fmt.Sprintf("⏱️ %s has been banned for %s.%s", formatUserRef(banner.Platform(), targetID), formatDuration(duration), reasonText), nil
+	return fmt.Sprintf("⏱️ %s has been banned for %s.%s", formatUserRef(banner.Platform(), targetID), formatDuration(duration), reasonText), c, nil
 }
 
-func (h *ModerationHandler) SBan(banner PlatformBanner, callerID, targetID, reason string, cfg db.PermaAdminProvider) (string, error) {
+func (h *ModerationHandler) SBan(banner PlatformBanner, callerID, targetID, reason string, cfg db.PermaAdminProvider) (string, *db.Case, error) {
 	if h.DB.IsAdmin(banner.Platform(), targetID, cfg) {
-		return "I will not ban an admin.", nil
+		return "I will not ban an admin.", nil, nil
 	}
 
 	banner.DMUser(targetID, fmt.Sprintf("You have been softbanned from Metrolist. Reason: %s", reason))
 
 	if banner.Platform() == "discord" {
 		if err := banner.Ban(targetID, reason); err != nil {
-			return "", fmt.Errorf("banning user: %w", err)
+			return "", nil, fmt.Errorf("banning user: %w", err)
 		}
 		if err := banner.Unban(targetID); err != nil {
-			return "", fmt.Errorf("unbanning user: %w", err)
+			return "", nil, fmt.Errorf("unbanning user: %w", err)
 		}
 	} else {
 		if err := banner.Restrict(targetID, time.Now().Add(35*time.Second).Unix()); err != nil {
-			return "", fmt.Errorf("restricting user: %w", err)
+			return "", nil, fmt.Errorf("restricting user: %w", err)
 		}
 		time.AfterFunc(35*time.Second, func() {
 			banner.Unrestrict(targetID)
@@ -115,8 +142,52 @@ func (h *ModerationHandler) SBan(banner PlatformBanner, callerID, targetID, reas
 
 	h.DB.LogModAction(banner.Platform(), callerID, targetID, "sban", reason)
 
+	// Create case
+	var c *db.Case
+	if h.CaseHandler != nil {
+		targetName, _ := banner.GetDisplayName(targetID)
+		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "sban", targetID, callerID, reason, targetName, "")
+	}
+
 	reasonText := " Reason: " + reason
-	return fmt.Sprintf("🧹 %s has been softbanned.%s", formatUserRef(banner.Platform(), targetID), reasonText), nil
+	return fmt.Sprintf("🧹 %s has been softbanned.%s", formatUserRef(banner.Platform(), targetID), reasonText), c, nil
+}
+
+func (h *ModerationHandler) Mute(banner PlatformBanner, callerID, targetID string, duration time.Duration, reason string, cfg db.PermaAdminProvider) (string, *db.Case, error) {
+	if h.DB.IsAdmin(banner.Platform(), targetID, cfg) {
+		return "I will not mute an admin.", nil, nil
+	}
+
+	expiresAt := time.Now().Add(duration).Unix()
+
+	if err := banner.Restrict(targetID, expiresAt); err != nil {
+		return "", nil, fmt.Errorf("muting user: %w", err)
+	}
+
+	// Store timed mute for restoration after restart
+	muteID, err := h.DB.AddMute(banner.Platform(), banner.ChatID(), targetID, expiresAt, reason)
+	if err != nil {
+		return "", nil, fmt.Errorf("storing timed mute: %w", err)
+	}
+	_ = muteID
+
+	h.DB.LogModAction(banner.Platform(), callerID, targetID, "mute", reason)
+
+	// Create case
+	var c *db.Case
+	if h.CaseHandler != nil {
+		targetName, _ := banner.GetDisplayName(targetID)
+		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "mute", targetID, callerID, reason, targetName, "")
+	}
+
+	// Schedule unmute
+	time.AfterFunc(duration, func() {
+		h.DB.DeleteMute(muteID)
+		h.DB.LogModAction(banner.Platform(), "system", targetID, "unmute", "timed mute expired")
+	})
+
+	reasonText := " Reason: " + reason
+	return fmt.Sprintf("🔇 %s has been muted for %s.%s", formatUserRef(banner.Platform(), targetID), formatDuration(duration), reasonText), c, nil
 }
 
 func (h *ModerationHandler) Dehoist(banner PlatformBanner, targetID string, dry bool, cfg db.PermaAdminProvider) (string, error) {

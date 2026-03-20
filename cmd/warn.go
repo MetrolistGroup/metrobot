@@ -9,31 +9,37 @@ import (
 )
 
 type WarnHandler struct {
-	DB *db.DB
+	DB          *db.DB
+	CaseHandler *CaseHandler
 }
 
-func (h *WarnHandler) Warn(banner PlatformBanner, callerID, targetID, reason string, cfg db.PermaAdminProvider) (string, []string, error) {
+// SetCaseHandler sets the case handler for warn actions
+func (h *WarnHandler) SetCaseHandler(ch *CaseHandler) {
+	h.CaseHandler = ch
+}
+
+func (h *WarnHandler) Warn(banner PlatformBanner, callerID, targetID, reason string, cfg db.PermaAdminProvider) (string, []string, *db.Case, error) {
 	platform := banner.Platform()
 
 	if h.DB.IsAdmin(platform, targetID, cfg) {
-		return "I will not warn an admin.", nil, nil
+		return "I will not warn an admin.", nil, nil, nil
 	}
 
 	_, err := h.DB.AddWarning(platform, targetID, reason, callerID)
 	if err != nil {
-		return "", nil, fmt.Errorf("adding warning: %w", err)
+		return "", nil, nil, fmt.Errorf("adding warning: %w", err)
 	}
 
 	h.DB.LogModAction(platform, callerID, targetID, "warn", reason)
 
 	count, err := h.DB.GetWarningCount(platform, targetID)
 	if err != nil {
-		return "", nil, fmt.Errorf("getting warning count: %w", err)
+		return "", nil, nil, fmt.Errorf("getting warning count: %w", err)
 	}
 
 	threshold, err := h.DB.GetWarnThreshold(platform, targetID)
 	if err != nil {
-		return "", nil, fmt.Errorf("getting warn threshold: %w", err)
+		return "", nil, nil, fmt.Errorf("getting warn threshold: %w", err)
 	}
 
 	reasonText := reason
@@ -46,17 +52,24 @@ func (h *WarnHandler) Warn(banner PlatformBanner, callerID, targetID, reason str
 		reasonText, count, threshold,
 	))
 
+	// Create case
+	var c *db.Case
+	if h.CaseHandler != nil {
+		targetName, _ := banner.GetDisplayName(targetID)
+		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "warn", targetID, callerID, reason, targetName, "")
+	}
+
 	response := fmt.Sprintf("⚠️ %s has been warned. Reason: %s (%d/%d)", formatUserRef(platform, targetID), reasonText, count, threshold)
 
 	if count >= threshold {
 		if err := banner.Ban(targetID, "Auto-ban: warning threshold reached"); err != nil {
-			return "", nil, fmt.Errorf("auto-banning user: %w", err)
+			return "", nil, nil, fmt.Errorf("auto-banning user: %w", err)
 		}
 		h.DB.LogModAction(banner.Platform(), "system", targetID, "ban", "Auto-ban: warning threshold reached")
 		response = fmt.Sprintf("⚠️ %s has been warned. Reason: %s (%d/%d). Auto-action: permanently banned for reaching %d warnings.", formatUserRef(platform, targetID), reasonText, count, threshold, threshold)
 	}
 
-	return response, nil, nil
+	return response, nil, c, nil
 }
 
 func (h *WarnHandler) Warnings(platform, targetID string) (string, error) {
@@ -91,16 +104,23 @@ func (h *WarnHandler) Warnings(platform, targetID string) (string, error) {
 	return sb.String(), nil
 }
 
-func (h *WarnHandler) Unwarn(platform, callerID, targetID string, index int) (string, error) {
+func (h *WarnHandler) Unwarn(platform, callerID, targetID string, index int, banner PlatformBanner) (string, *db.Case, error) {
 	if index < 1 {
-		return "", fmt.Errorf("warning IDs start at 1")
+		return "", nil, fmt.Errorf("warning IDs start at 1")
 	}
 
 	if err := h.DB.DeleteWarningByIndex(platform, targetID, index-1); err != nil {
-		return "", fmt.Errorf("deleting warning: %w", err)
+		return "", nil, fmt.Errorf("deleting warning: %w", err)
 	}
 
 	h.DB.LogModAction(platform, callerID, targetID, "unwarn", fmt.Sprintf("removed warning #%d", index))
 
-	return fmt.Sprintf("Warning #%d removed from %s.", index, formatUserRef(platform, targetID)), nil
+	// Create case
+	var c *db.Case
+	if h.CaseHandler != nil && banner != nil {
+		targetName, _ := banner.GetDisplayName(targetID)
+		c, _ = h.CaseHandler.CreateCaseAndLog(platform, "unwarn", targetID, callerID, fmt.Sprintf("removed warning #%d", index), targetName, "")
+	}
+
+	return fmt.Sprintf("Warning #%d removed from %s.", index, formatUserRef(platform, targetID)), c, nil
 }

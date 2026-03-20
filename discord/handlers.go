@@ -12,11 +12,16 @@ import (
 	"go.uber.org/zap"
 )
 
-var chatModPattern = regexp.MustCompile(`(?i)^!(ban|dban|tban|sban|warn)\s*(.*)$`)
+var chatModPattern = regexp.MustCompile(`(?i)^!(ban|dban|tban|sban|mute|warn)\s*(.*)$`)
 
 func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	if i.Type == discordgo.InteractionApplicationCommandAutocomplete {
 		b.handleAutocomplete(s, i)
+		return
+	}
+
+	if i.Type == discordgo.InteractionMessageComponent {
+		b.handleConfirmationButton(s, i)
 		return
 	}
 
@@ -66,6 +71,8 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 		b.handleTBan(s, i, opts, callerID)
 	case "sban":
 		b.handleSBan(s, i, opts, callerID)
+	case "mute":
+		b.handleMute(s, i, opts, callerID)
 	case "warn":
 		b.handleWarn(s, i, opts, callerID)
 	case "warnings":
@@ -124,111 +131,47 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 			"dban": "dban - usage: dban [user] [reason]",
 			"tban": "tban - usage: tban [user] [duration] [reason]",
 			"sban": "sban - usage: sban [user] [reason]",
+			"mute": "mute - usage: mute [user] [duration] [reason]",
 			"warn": "warn - usage: warn [user] [reason]",
 		}
 		sendReply(s, m.ChannelID, m.ID, usageMap[action], false, b.Logger)
 		return
 	}
 
-	parts := strings.Fields(args)
-	targetID := extractUserID(parts[0])
+	var targetID string
+	var commandArgs string
 
-	if b.DB.IsAdmin("discord", targetID, b.Config) {
-		sendReply(s, m.ChannelID, m.ID, "I will not ban an admin.", false, b.Logger)
+	// Check if this is a reply
+	if m.ReferencedMessage != nil {
+		// Use the replied-to user as target
+		targetID = m.ReferencedMessage.Author.ID
+		// Full args string is the reason
+		commandArgs = args
+	} else {
+		// Normal mode: first arg is target, rest is reason
+		parts := strings.Fields(args)
+		if len(parts) == 0 {
+			sendReply(s, m.ChannelID, m.ID, "Please specify a target user or reply to a message.", false, b.Logger)
+			return
+		}
+		targetID = extractUserID(parts[0])
+		if len(parts) > 1 {
+			commandArgs = strings.Join(parts[1:], " ")
+		}
+	}
+
+	if targetID == "" {
+		sendReply(s, m.ChannelID, m.ID, "Could not resolve target user.", false, b.Logger)
 		return
 	}
 
-	banner := b.newBanner()
-	var reason string
-
-	switch action {
-	case "ban":
-		if len(parts) > 1 {
-			reason = strings.Join(parts[1:], " ")
-		}
-		if reason == "" {
-			sendReply(s, m.ChannelID, m.ID, "ban - usage: ban [user] [reason]", false, b.Logger)
-			return
-		}
-		resp, err := b.Moderation.Ban(banner, callerID, targetID, reason, b.Config)
-		if err != nil {
-			b.Logger.Error("ban failed", zap.Error(err))
-			return
-		}
-		sendReply(s, m.ChannelID, m.ID, resp, false, b.Logger)
-
-	case "dban":
-		if len(parts) > 1 {
-			reason = strings.Join(parts[1:], " ")
-		}
-		if reason == "" {
-			sendReply(s, m.ChannelID, m.ID, "dban - usage: dban [user] [reason]", false, b.Logger)
-			return
-		}
-		resp, err := b.Moderation.DBan(banner, callerID, targetID, reason, b.Config)
-		if err != nil {
-			b.Logger.Error("dban failed", zap.Error(err))
-			return
-		}
-		sendReply(s, m.ChannelID, m.ID, resp, false, b.Logger)
-
-	case "tban":
-		if len(parts) < 3 {
-			sendReply(s, m.ChannelID, m.ID, "tban - usage: tban [user] [duration] [reason]", false, b.Logger)
-			return
-		}
-		dur, err := util.ParseDuration(parts[1])
-		if err != nil {
-			sendReply(s, m.ChannelID, m.ID, fmt.Sprintf("Invalid duration: %s", err), false, b.Logger)
-			return
-		}
-		if len(parts) > 2 {
-			reason = strings.Join(parts[2:], " ")
-		}
-		if reason == "" {
-			sendReply(s, m.ChannelID, m.ID, "tban - usage: tban [user] [duration] [reason]", false, b.Logger)
-			return
-		}
-		resp, err := b.Moderation.TBan(banner, callerID, targetID, dur, reason, b.Config)
-		if err != nil {
-			b.Logger.Error("tban failed", zap.Error(err))
-			return
-		}
-		sendReply(s, m.ChannelID, m.ID, resp, false, b.Logger)
-
-	case "sban":
-		if len(parts) > 1 {
-			reason = strings.Join(parts[1:], " ")
-		}
-		if reason == "" {
-			sendReply(s, m.ChannelID, m.ID, "sban - usage: sban [user] [reason]", false, b.Logger)
-			return
-		}
-		resp, err := b.Moderation.SBan(banner, callerID, targetID, reason, b.Config)
-		if err != nil {
-			b.Logger.Error("sban failed", zap.Error(err))
-			return
-		}
-		sendReply(s, m.ChannelID, m.ID, resp, false, b.Logger)
-
-	case "warn":
-		if len(parts) > 1 {
-			reason = strings.Join(parts[1:], " ")
-		}
-		if reason == "" {
-			sendReply(s, m.ChannelID, m.ID, "warn - usage: warn [user] [reason]", false, b.Logger)
-			return
-		}
-		resp, extras, err := b.Warn.Warn(banner, callerID, targetID, reason, b.Config)
-		if err != nil {
-			b.Logger.Error("warn failed", zap.Error(err))
-			return
-		}
-		sendReply(s, m.ChannelID, m.ID, resp, false, b.Logger)
-		for _, extra := range extras {
-			sendReply(s, m.ChannelID, m.ID, extra, false, b.Logger)
-		}
+	if b.DB.IsAdmin("discord", targetID, b.Config) {
+		sendReply(s, m.ChannelID, m.ID, "I will not take action against an admin.", false, b.Logger)
+		return
 	}
+
+	// Request confirmation before executing prefix command
+	b.requestPrefixConfirmation(s, m, action, commandArgs, targetID)
 }
 
 // --- Slash command handlers ---
@@ -251,6 +194,7 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		"• /dban [user] [reason] - Ban and delete messages\n" +
 		"• /tban [user] [duration] [reason] - Temporarily ban a user\n" +
 		"• /sban [user] [reason] - Softban a user\n" +
+		"• /mute [user] [duration] [reason] - Mute a user\n" +
 		"• /warn [user] [reason] - Warn a user\n" +
 		"• /warnings [user] - Show warnings for a user\n" +
 		"• /unwarn [user] [id] - Remove a warning from a user\n" +
@@ -390,7 +334,7 @@ func (b *Bot) handleBan(s *discordgo.Session, i *discordgo.InteractionCreate, op
 	reason := getOptString(opts, "reason")
 	banner := b.newBanner()
 
-	resp, err := b.Moderation.Ban(banner, callerID, targetUser.ID, reason, b.Config)
+	resp, _, err := b.Moderation.Ban(banner, callerID, targetUser.ID, reason, b.Config)
 	if err != nil {
 		b.Logger.Error("ban failed", zap.Error(err))
 		respondEphemeral(s, i, "Error executing ban.")
@@ -408,7 +352,7 @@ func (b *Bot) handleDBan(s *discordgo.Session, i *discordgo.InteractionCreate, o
 	reason := getOptString(opts, "reason")
 	banner := b.newBanner()
 
-	resp, err := b.Moderation.DBan(banner, callerID, targetUser.ID, reason, b.Config)
+	resp, _, err := b.Moderation.DBan(banner, callerID, targetUser.ID, reason, b.Config)
 	if err != nil {
 		b.Logger.Error("dban failed", zap.Error(err))
 		respondEphemeral(s, i, "Error executing dban.")
@@ -433,7 +377,7 @@ func (b *Bot) handleTBan(s *discordgo.Session, i *discordgo.InteractionCreate, o
 	}
 
 	banner := b.newBanner()
-	resp, err := b.Moderation.TBan(banner, callerID, targetUser.ID, dur, reason, b.Config)
+	resp, _, err := b.Moderation.TBan(banner, callerID, targetUser.ID, dur, reason, b.Config)
 	if err != nil {
 		b.Logger.Error("tban failed", zap.Error(err))
 		respondEphemeral(s, i, "Error executing tban.")
@@ -451,10 +395,35 @@ func (b *Bot) handleSBan(s *discordgo.Session, i *discordgo.InteractionCreate, o
 	reason := getOptString(opts, "reason")
 	banner := b.newBanner()
 
-	resp, err := b.Moderation.SBan(banner, callerID, targetUser.ID, reason, b.Config)
+	resp, _, err := b.Moderation.SBan(banner, callerID, targetUser.ID, reason, b.Config)
 	if err != nil {
 		b.Logger.Error("sban failed", zap.Error(err))
 		respondEphemeral(s, i, "Error executing sban.")
+		return
+	}
+	respondPublic(s, i, resp)
+}
+
+func (b *Bot) handleMute(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
+	if !b.DB.IsAdmin("discord", callerID, b.Config) {
+		respondEphemeral(s, i, "You don't have mute permissions.")
+		return
+	}
+	targetUser := opts["user"].UserValue(s)
+	durationStr := opts["duration"].StringValue()
+	reason := getOptString(opts, "reason")
+
+	dur, err := util.ParseDuration(durationStr)
+	if err != nil {
+		respondEphemeral(s, i, fmt.Sprintf("Invalid duration: %s", err))
+		return
+	}
+
+	banner := b.newBanner()
+	resp, _, err := b.Moderation.Mute(banner, callerID, targetUser.ID, dur, reason, b.Config)
+	if err != nil {
+		b.Logger.Error("mute failed", zap.Error(err))
+		respondEphemeral(s, i, "Error executing mute.")
 		return
 	}
 	respondPublic(s, i, resp)
@@ -469,7 +438,7 @@ func (b *Bot) handleWarn(s *discordgo.Session, i *discordgo.InteractionCreate, o
 	reason := getOptString(opts, "reason")
 	banner := b.newBanner()
 
-	resp, extras, err := b.Warn.Warn(banner, callerID, targetUser.ID, reason, b.Config)
+	resp, extras, _, err := b.Warn.Warn(banner, callerID, targetUser.ID, reason, b.Config)
 	if err != nil {
 		b.Logger.Error("warn failed", zap.Error(err))
 		respondEphemeral(s, i, "Error executing warn.")
@@ -499,8 +468,9 @@ func (b *Bot) handleUnwarn(s *discordgo.Session, i *discordgo.InteractionCreate,
 	}
 	targetUser := opts["user"].UserValue(s)
 	index := int(opts["id"].IntValue())
+	banner := b.newBanner()
 
-	resp, err := b.Warn.Unwarn("discord", callerID, targetUser.ID, index)
+	resp, _, err := b.Warn.Unwarn("discord", callerID, targetUser.ID, index, banner)
 	if err != nil {
 		b.Logger.Error("unwarn error", zap.Error(err))
 		respondEphemeral(s, i, fmt.Sprintf("Error: %s", err))

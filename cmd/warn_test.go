@@ -64,7 +64,7 @@ func TestUnwarnUsesOneBasedIDs(t *testing.T) {
 		t.Fatalf("AddWarning second: %v", err)
 	}
 
-	resp, err := handler.Unwarn("discord", "caller", "target", 1)
+	resp, _, err := handler.Unwarn("discord", "caller", "target", 1, nil)
 	if err != nil {
 		t.Fatalf("Unwarn: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestUnwarnUsesOneBasedIDs(t *testing.T) {
 		t.Fatalf("remaining warning should be renumbered to 1: %q", got)
 	}
 
-	if _, err := handler.Unwarn("discord", "caller", "target", 0); err == nil {
+	if _, _, err := handler.Unwarn("discord", "caller", "target", 0, nil); err == nil {
 		t.Fatal("Unwarn() with id 0 should fail")
 	}
 }
@@ -94,12 +94,12 @@ func TestWarnThresholdReturnsSingleCombinedMessage(t *testing.T) {
 	banner := &fakeWarnBanner{platform: "discord", chatID: "test-chat"}
 
 	for i := 0; i < 2; i++ {
-		if _, _, err := handler.Warn(banner, "mod", "target", "reason", fakeWarnConfig{}); err != nil {
+		if _, _, _, err := handler.Warn(banner, "mod", "target", "reason", fakeWarnConfig{}); err != nil {
 			t.Fatalf("Warn pre-threshold #%d: %v", i+1, err)
 		}
 	}
 
-	resp, extras, err := handler.Warn(banner, "mod", "target", "third reason", fakeWarnConfig{})
+	resp, extras, _, err := handler.Warn(banner, "mod", "target", "third reason", fakeWarnConfig{})
 	if err != nil {
 		t.Fatalf("Warn threshold: %v", err)
 	}

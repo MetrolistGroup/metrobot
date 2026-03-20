@@ -22,13 +22,16 @@ type Bot struct {
 	Warn       *cmd.WarnHandler
 	Admin      *cmd.AdminHandler
 	Ping       *cmd.PingHandler
+	Case       *cmd.CaseHandler
 
 	TimedBanRestorer func()
+	confirmations    *confirmationStore
 }
 
 func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 	notes *cmd.NotesHandler, version *cmd.VersionHandler, actions *cmd.ActionsHandler,
 	moderation *cmd.ModerationHandler, warn *cmd.WarnHandler, admin *cmd.AdminHandler, ping *cmd.PingHandler,
+	cases *cmd.CaseHandler,
 ) (*Bot, error) {
 	session, err := discordgo.New("Bot " + cfg.DiscordToken)
 	if err != nil {
@@ -49,10 +52,19 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		Warn:       warn,
 		Admin:      admin,
 		Ping:       ping,
+		Case:       cases,
+	}
+
+	// Set up Discord case logger if log channel is configured
+	if cfg.DiscordLogChannel != "" {
+		caseLogger := NewDiscordCaseLogger(session, cfg.DiscordLogChannel, bot.Logger)
+		cases.CaseLogger = caseLogger
 	}
 
 	session.AddHandler(bot.onInteractionCreate)
 	session.AddHandler(bot.onMessageCreate)
+
+	bot.confirmations = newConfirmationStore()
 
 	return bot, nil
 }
@@ -263,6 +275,30 @@ func (b *Bot) registerCommands() error {
 					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "reason",
 					Description: "Softban reason",
+					Required:    true,
+				},
+			},
+		},
+		{
+			Name:        "mute",
+			Description: "Temporarily mute a user (admin only)",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionUser,
+					Name:        "user",
+					Description: "User to mute",
+					Required:    true,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "duration",
+					Description: "Mute duration (e.g. 10m, 1h, 7d)",
+					Required:    true,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "reason",
+					Description: "Mute reason",
 					Required:    true,
 				},
 			},

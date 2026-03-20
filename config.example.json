@@ -13,5 +13,6 @@
     "foss": "app-release",
     "gms": "app-with-Google-cast"
   },
-  "log_file": "bot.log"
+  "log_file": "bot.log",
+  "discord_log_channel": "1234567890123456789"
 }

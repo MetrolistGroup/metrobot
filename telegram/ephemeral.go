@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"fmt"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -61,4 +62,27 @@ func dmUser(bot *tgbotapi.BotAPI, userID int64, text string) error {
 	msg.DisableWebPagePreview = true
 	_, err := bot.Send(msg)
 	return err
+}
+
+// sendPermissionError sends an error message about missing permissions and deletes both messages after 5 seconds
+func sendPermissionError(bot *tgbotapi.BotAPI, chatID int64, originalMsgID int, permission string, logger *zap.Logger) {
+	text := fmt.Sprintf("❌ I don't have the required permission: %s", permission)
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyToMessageID = originalMsgID
+
+	sent, err := bot.Send(msg)
+	if err != nil {
+		logger.Error("failed to send permission error", zap.Error(err))
+		return
+	}
+
+	// Delete both messages after 5 seconds
+	time.AfterFunc(5*time.Second, func() {
+		del := tgbotapi.NewDeleteMessage(chatID, sent.MessageID)
+		bot.Request(del)
+		if originalMsgID != 0 {
+			delOrig := tgbotapi.NewDeleteMessage(chatID, originalMsgID)
+			bot.Request(delOrig)
+		}
+	})
 }

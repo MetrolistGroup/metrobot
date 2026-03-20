@@ -23,11 +23,15 @@ type Bot struct {
 	Warn       *cmd.WarnHandler
 	Admin      *cmd.AdminHandler
 	Ping       *cmd.PingHandler
+	Case       *cmd.CaseHandler
+
+	confirmations *confirmationStore
 }
 
 func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 	notes *cmd.NotesHandler, version *cmd.VersionHandler, actions *cmd.ActionsHandler,
 	moderation *cmd.ModerationHandler, warn *cmd.WarnHandler, admin *cmd.AdminHandler, ping *cmd.PingHandler,
+	cases *cmd.CaseHandler,
 ) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(cfg.TelegramToken)
 	if err != nil {
@@ -46,7 +50,10 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		Warn:       warn,
 		Admin:      admin,
 		Ping:       ping,
+		Case:       cases,
 	}
+
+	bot.confirmations = newConfirmationStore()
 
 	return bot, nil
 }
@@ -65,6 +72,12 @@ func (b *Bot) Start() error {
 	updates := b.API.GetUpdatesChan(u)
 	go func() {
 		for update := range updates {
+			// Handle callback queries for confirmations
+			if update.CallbackQuery != nil {
+				b.handleConfirmationCallback(update.CallbackQuery)
+				continue
+			}
+
 			if update.MyChatMember != nil {
 				b.handleChatMemberUpdate(update.MyChatMember)
 				continue
@@ -110,8 +123,10 @@ func (b *Bot) registerCommands() {
 		{Command: "dban", Description: "Ban + delete messages (admin)"},
 		{Command: "tban", Description: "Temporarily ban a user (admin)"},
 		{Command: "sban", Description: "Softban a user (admin)"},
+		{Command: "mute", Description: "Mute a user (admin)"},
 		{Command: "warn", Description: "Warn a user (admin)"},
 		{Command: "warnings", Description: "Show warnings for a user"},
+		{Command: "warns", Description: "Show warnings for a user (alias)"},
 		{Command: "unwarn", Description: "Remove a warning (admin)"},
 		{Command: "dehoist", Description: "Remove hoisting chars (admin)"},
 		{Command: "addadmin", Description: "Add a bot admin (permaadmin)"},
