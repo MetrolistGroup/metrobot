@@ -679,3 +679,73 @@ func chunkString(s string, maxLen int) []string {
 	}
 	return chunks
 }
+
+// Discord event handlers for automatic dehoisting
+
+func (b *Bot) onGuildMemberAdd(s *discordgo.Session, m *discordgo.GuildMemberAdd) {
+	if m.GuildID != b.Config.DiscordGuildID {
+		return
+	}
+
+	// Run dehoisting for the new member
+	banner := b.newBanner()
+	displayName, err := banner.GetDisplayName(m.User.ID)
+	if err != nil {
+		b.Logger.Error("failed to get display name for new member",
+			zap.String("userID", m.User.ID), zap.Error(err))
+		return
+	}
+
+	// Check if dehoisting is needed
+	if needsDehoisting(displayName) {
+		b.Logger.Info("auto-dehoisting new member",
+			zap.String("userID", m.User.ID),
+			zap.String("displayName", displayName))
+
+		_, err := b.Moderation.Dehoist(banner, m.User.ID, false, b.Config)
+		if err != nil {
+			b.Logger.Error("failed to dehoist new member",
+				zap.String("userID", m.User.ID), zap.Error(err))
+		}
+	}
+}
+
+func (b *Bot) onGuildMemberUpdate(s *discordgo.Session, m *discordgo.GuildMemberUpdate) {
+	if m.GuildID != b.Config.DiscordGuildID {
+		return
+	}
+
+	// Check if the user changed their nickname (we only auto-dehoist Discord changes)
+	// We can't detect if it was a Discord vs manual change, so we'll dehoist any hoisting characters
+	banner := b.newBanner()
+	displayName, err := banner.GetDisplayName(m.User.ID)
+	if err != nil {
+		b.Logger.Error("failed to get display name for updated member",
+			zap.String("userID", m.User.ID), zap.Error(err))
+		return
+	}
+
+	// Check if dehoisting is needed
+	if needsDehoisting(displayName) {
+		b.Logger.Info("auto-dehoisting updated member",
+			zap.String("userID", m.User.ID),
+			zap.String("displayName", displayName))
+
+		_, err := b.Moderation.Dehoist(banner, m.User.ID, false, b.Config)
+		if err != nil {
+			b.Logger.Error("failed to dehoist updated member",
+				zap.String("userID", m.User.ID), zap.Error(err))
+		}
+	}
+}
+
+// needsDehoisting checks if a display name contains hoisting characters
+func needsDehoisting(name string) bool {
+	if len(name) == 0 {
+		return false
+	}
+
+	// Check if name starts with hoisting characters (anything that would put it at top of member list)
+	firstChar := rune(name[0])
+	return firstChar < 'A' || (firstChar > 'Z' && firstChar < 'a')
+}

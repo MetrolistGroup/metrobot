@@ -276,3 +276,8 @@ func (b *Bot) newBanner() *TelegramBanner {
 		logger: b.Logger,
 	}
 }
+
+// NewBanner creates a new TelegramBanner for external use
+func (b *Bot) NewBanner() *TelegramBanner {
+	return b.newBanner()
+}

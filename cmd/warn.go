@@ -56,7 +56,8 @@ func (h *WarnHandler) Warn(banner PlatformBanner, callerID, targetID, reason str
 	var c *db.Case
 	if h.CaseHandler != nil {
 		targetName, _ := banner.GetDisplayName(targetID)
-		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "warn", targetID, callerID, reason, targetName, "")
+		moderatorName, _ := banner.GetDisplayName(callerID)
+		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "warn", targetID, callerID, reason, targetName, moderatorName)
 	}
 
 	response := fmt.Sprintf("⚠️ %s has been warned. Reason: %s (%d/%d)", formatUserRef(platform, targetID), reasonText, count, threshold)
@@ -119,7 +120,8 @@ func (h *WarnHandler) Unwarn(platform, callerID, targetID string, index int, ban
 	var c *db.Case
 	if h.CaseHandler != nil && banner != nil {
 		targetName, _ := banner.GetDisplayName(targetID)
-		c, _ = h.CaseHandler.CreateCaseAndLog(platform, "unwarn", targetID, callerID, fmt.Sprintf("removed warning #%d", index), targetName, "")
+		moderatorName, _ := banner.GetDisplayName(callerID)
+		c, _ = h.CaseHandler.CreateCaseAndLog(platform, "unwarn", targetID, callerID, fmt.Sprintf("removed warning #%d", index), targetName, moderatorName)
 	}
 
 	return fmt.Sprintf("Warning #%d removed from %s.", index, formatUserRef(platform, targetID)), c, nil

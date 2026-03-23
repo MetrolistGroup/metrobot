@@ -54,7 +54,8 @@ func (h *ModerationHandler) Ban(banner PlatformBanner, callerID, targetID, reaso
 	var c *db.Case
 	if h.CaseHandler != nil {
 		targetName, _ := banner.GetDisplayName(targetID)
-		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "ban", targetID, callerID, reason, targetName, "")
+		moderatorName, _ := banner.GetDisplayName(callerID)
+		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "ban", targetID, callerID, reason, targetName, moderatorName)
 	}
 
 	reasonText := " Reason: " + reason
@@ -80,7 +81,8 @@ func (h *ModerationHandler) DBan(banner PlatformBanner, callerID, targetID, reas
 	var c *db.Case
 	if h.CaseHandler != nil {
 		targetName, _ := banner.GetDisplayName(targetID)
-		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "dban", targetID, callerID, reason, targetName, "")
+		moderatorName, _ := banner.GetDisplayName(callerID)
+		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "dban", targetID, callerID, reason, targetName, moderatorName)
 	}
 
 	reasonText := " Reason: " + reason
@@ -110,7 +112,8 @@ func (h *ModerationHandler) TBan(banner PlatformBanner, callerID, targetID strin
 	var c *db.Case
 	if h.CaseHandler != nil {
 		targetName, _ := banner.GetDisplayName(targetID)
-		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "tban", targetID, callerID, reason, targetName, "")
+		moderatorName, _ := banner.GetDisplayName(callerID)
+		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "tban", targetID, callerID, reason, targetName, moderatorName)
 	}
 
 	reasonText := " Reason: " + reason
@@ -146,7 +149,8 @@ func (h *ModerationHandler) SBan(banner PlatformBanner, callerID, targetID, reas
 	var c *db.Case
 	if h.CaseHandler != nil {
 		targetName, _ := banner.GetDisplayName(targetID)
-		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "sban", targetID, callerID, reason, targetName, "")
+		moderatorName, _ := banner.GetDisplayName(callerID)
+		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "sban", targetID, callerID, reason, targetName, moderatorName)
 	}
 
 	reasonText := " Reason: " + reason
@@ -177,7 +181,8 @@ func (h *ModerationHandler) Mute(banner PlatformBanner, callerID, targetID strin
 	var c *db.Case
 	if h.CaseHandler != nil {
 		targetName, _ := banner.GetDisplayName(targetID)
-		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "mute", targetID, callerID, reason, targetName, "")
+		moderatorName, _ := banner.GetDisplayName(callerID)
+		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "mute", targetID, callerID, reason, targetName, moderatorName)
 	}
 
 	// Schedule unmute

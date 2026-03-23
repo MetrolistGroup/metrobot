@@ -2,6 +2,7 @@ package discord
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/config"
@@ -63,6 +64,8 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 
 	session.AddHandler(bot.onInteractionCreate)
 	session.AddHandler(bot.onMessageCreate)
+	session.AddHandler(bot.onGuildMemberAdd)
+	session.AddHandler(bot.onGuildMemberUpdate)
 
 	bot.confirmations = newConfirmationStore()
 
@@ -476,11 +479,12 @@ func (d *DiscordBanner) deleteUserMessagesInChannel(channelID, userID string) {
 }
 
 func (d *DiscordBanner) Restrict(userID string, untilDate int64) error {
-	return d.session.GuildBanCreateWithReason(d.guildID, userID, "timed restriction", 0)
+	timeoutUntil := time.Unix(untilDate, 0)
+	return d.session.GuildMemberTimeout(d.guildID, userID, &timeoutUntil)
 }
 
 func (d *DiscordBanner) Unrestrict(userID string) error {
-	return d.session.GuildBanDelete(d.guildID, userID)
+	return d.session.GuildMemberTimeout(d.guildID, userID, nil)
 }
 
 func (d *DiscordBanner) SetNickname(userID, nickname string) error {
@@ -564,4 +568,9 @@ func (b *Bot) newBanner() *DiscordBanner {
 		guildID: b.Config.DiscordGuildID,
 		logger:  b.Logger,
 	}
+}
+
+// NewBanner creates a new DiscordBanner for external use
+func (b *Bot) NewBanner() *DiscordBanner {
+	return b.newBanner()
 }

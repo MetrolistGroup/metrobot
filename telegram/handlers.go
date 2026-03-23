@@ -20,11 +20,6 @@ var telegramInlineCodePattern = regexp.MustCompile("`([^`\\n]+)`")
 func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	callerID := telegramSenderID(msg)
 
-	b.Logger.Info("message received",
-		zap.String("user", callerID),
-		zap.String("text", msg.Text),
-	)
-
 	if msg.IsCommand() {
 		b.handleCommand(msg, callerID)
 		return
@@ -33,6 +28,11 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	content := strings.TrimSpace(msg.Text)
 
 	if noteName := extractTriggeredNoteName(content, b.API.Self.UserName); noteName != "" {
+		// Log note triggering since it's an action
+		b.Logger.Info("note triggered",
+			zap.String("user", callerID),
+			zap.String("note", noteName),
+		)
 		text, err := b.Notes.GetNote(noteName)
 		if err != nil {
 			b.Logger.Error("note lookup error", zap.Error(err))
@@ -44,10 +44,17 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 
 	matches := chatModPattern.FindStringSubmatch(content)
 	if matches == nil {
+		// No action triggered, so don't log this message
 		return
 	}
 
+	// Log moderation command attempt since it's an action
 	action := strings.ToLower(matches[1])
+	b.Logger.Info("moderation command attempted",
+		zap.String("user", callerID),
+		zap.String("action", action),
+	)
+
 	args := strings.TrimSpace(matches[2])
 
 	if !b.DB.IsAdmin("telegram", callerID, b.Config) {

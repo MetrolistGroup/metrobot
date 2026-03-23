@@ -87,6 +87,9 @@ func main() {
 
 	logger.Info("both bots are running. Press Ctrl+C to stop.")
 
+	// Restore timed mutes after both bots are started
+	restoreTimedMutes(database, discordBot, telegramBot, logger)
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
@@ -135,4 +138,54 @@ func restoreTimedBans(database *db.DB, logger *zap.Logger) {
 	}
 
 	logger.Info("timed bans restored", zap.Int("count", len(bans)))
+}
+
+func restoreTimedMutes(database *db.DB, discordBot *discord.Bot, telegramBot *telegram.Bot, logger *zap.Logger) {
+	mutes, err := database.GetPendingMutes()
+	if err != nil {
+		logger.Error("failed to load pending timed mutes", zap.Error(err))
+		return
+	}
+
+	now := time.Now().Unix()
+	for _, mute := range mutes {
+		mute := mute
+		if mute.ExpiresAt <= now {
+			logger.Info("expired timed mute found, removing",
+				zap.Int64("mute_id", mute.ID),
+				zap.String("user_id", mute.UserID),
+			)
+			database.DeleteMute(mute.ID)
+			database.LogModAction(mute.Platform, "system", mute.UserID, "unmute", "timed mute expired (bot was offline)")
+			continue
+		}
+
+		remaining := time.Duration(mute.ExpiresAt-now) * time.Second
+		logger.Info("restoring timed mute",
+			zap.Int64("mute_id", mute.ID),
+			zap.String("user_id", mute.UserID),
+			zap.Duration("remaining", remaining),
+		)
+
+		time.AfterFunc(remaining, func() {
+			logger.Info("timed mute expired, unmuting",
+				zap.Int64("mute_id", mute.ID),
+				zap.String("user_id", mute.UserID),
+			)
+
+			// Unrestrict the user based on platform
+			if mute.Platform == "discord" {
+				banner := discordBot.NewBanner()
+				banner.Unrestrict(mute.UserID)
+			} else if mute.Platform == "telegram" {
+				banner := telegramBot.NewBanner()
+				banner.Unrestrict(mute.UserID)
+			}
+
+			database.DeleteMute(mute.ID)
+			database.LogModAction(mute.Platform, "system", mute.UserID, "unmute", "timed mute expired")
+		})
+	}
+
+	logger.Info("timed mutes restored", zap.Int("count", len(mutes)))
 }
