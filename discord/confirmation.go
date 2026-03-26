@@ -52,7 +52,13 @@ func (b *Bot) sendConfirmation(s *discordgo.Session, channelID, callerID, action
 	actionUpper := strings.ToUpper(action)
 	targetRef := ""
 	if targetID != "" {
-		targetRef = fmt.Sprintf(" <@%s>", targetID)
+		banner := b.newBanner()
+		username, err := banner.GetUsername(targetID)
+		if err != nil || username == "" {
+			targetRef = fmt.Sprintf(" `@%s`", targetID)  // fallback to userID
+		} else {
+			targetRef = fmt.Sprintf(" `@%s`", username)
+		}
 	}
 
 	embed := &discordgo.MessageEmbed{

@@ -25,6 +25,7 @@ type Bot struct {
 	Ping       *cmd.PingHandler
 	Case       *cmd.CaseHandler
 
+	garminProcessor  *cmd.GarminProcessor
 	TimedBanRestorer func()
 	confirmations    *confirmationStore
 }
@@ -42,18 +43,19 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 	session.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsGuildMembers | discordgo.IntentsGuildBans
 
 	bot := &Bot{
-		Session:    session,
-		Config:     cfg,
-		DB:         database,
-		Logger:     logger.With(zap.String("platform", "discord")),
-		Notes:      notes,
-		Version:    version,
-		Actions:    actions,
-		Moderation: moderation,
-		Warn:       warn,
-		Admin:      admin,
-		Ping:       ping,
-		Case:       cases,
+		Session:         session,
+		Config:          cfg,
+		DB:              database,
+		Logger:          logger.With(zap.String("platform", "discord")),
+		Notes:           notes,
+		Version:         version,
+		Actions:         actions,
+		Moderation:      moderation,
+		Warn:            warn,
+		Admin:           admin,
+		Ping:            ping,
+		Case:            cases,
+		garminProcessor: cmd.NewGarminProcessor(),
 	}
 
 	// Set up Discord case logger if log channel is configured
@@ -518,6 +520,18 @@ func (d *DiscordBanner) GetDisplayName(userID string) (string, error) {
 	}
 
 	// 3) Fallback: username (when no display names are set)
+	return member.User.Username, nil
+}
+
+func (d *DiscordBanner) GetUsername(userID string) (string, error) {
+	member, err := d.session.GuildMember(d.guildID, userID)
+	if err != nil {
+		if restErr, ok := err.(*discordgo.RESTError); ok && restErr.Response != nil && restErr.Response.StatusCode == 404 {
+			return "", nil
+		}
+		return "", err
+	}
+
 	return member.User.Username, nil
 }
 

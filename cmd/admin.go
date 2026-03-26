@@ -10,7 +10,8 @@ type AdminHandler struct {
 	DB *db.DB
 }
 
-func (h *AdminHandler) AddAdmin(platform, callerID, targetID string, cfg db.PermaAdminProvider) (string, error) {
+func (h *AdminHandler) AddAdmin(banner PlatformBanner, callerID, targetID string, cfg db.PermaAdminProvider) (string, error) {
+	platform := banner.Platform()
 	if !h.DB.IsPermaAdmin(platform, callerID, cfg) {
 		return "Only permanent admins can add admins.", nil
 	}
@@ -19,10 +20,11 @@ func (h *AdminHandler) AddAdmin(platform, callerID, targetID string, cfg db.Perm
 		return "", fmt.Errorf("adding admin: %w", err)
 	}
 
-	return fmt.Sprintf("<@%s> has been added as an admin.", targetID), nil
+	return fmt.Sprintf("%s has been added as an admin.", formatUserRef(banner, targetID)), nil
 }
 
-func (h *AdminHandler) RemoveAdmin(platform, callerID, targetID string, cfg db.PermaAdminProvider) (string, error) {
+func (h *AdminHandler) RemoveAdmin(banner PlatformBanner, callerID, targetID string, cfg db.PermaAdminProvider) (string, error) {
+	platform := banner.Platform()
 	if !h.DB.IsPermaAdmin(platform, callerID, cfg) {
 		return "Only permanent admins can remove admins.", nil
 	}
@@ -35,5 +37,5 @@ func (h *AdminHandler) RemoveAdmin(platform, callerID, targetID string, cfg db.P
 		return "", fmt.Errorf("removing admin: %w", err)
 	}
 
-	return fmt.Sprintf("<@%s> has been removed as an admin.", targetID), nil
+	return fmt.Sprintf("%s has been removed as an admin.", formatUserRef(banner, targetID)), nil
 }

@@ -370,14 +370,21 @@ type Case struct {
 func (d *DB) CreateCase(platform, actionType, targetID, moderatorID, reason string) (*Case, error) {
 	now := time.Now().Unix()
 
-	// Get next case number
+	// Use a transaction to prevent race conditions in case number generation
+	tx, err := d.conn.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Get next case number within transaction
 	var nextNum int64
-	err := d.conn.QueryRow("SELECT COALESCE(MAX(case_number), 0) + 1 FROM cases").Scan(&nextNum)
+	err = tx.QueryRow("SELECT COALESCE(MAX(case_number), 0) + 1 FROM cases").Scan(&nextNum)
 	if err != nil {
 		return nil, fmt.Errorf("getting next case number: %w", err)
 	}
 
-	res, err := d.conn.Exec(
+	res, err := tx.Exec(
 		"INSERT INTO cases (case_number, action_type, platform, target_id, moderator_id, reason, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
 		nextNum, actionType, platform, targetID, moderatorID, reason, now,
 	)
@@ -385,7 +392,15 @@ func (d *DB) CreateCase(platform, actionType, targetID, moderatorID, reason stri
 		return nil, fmt.Errorf("inserting case: %w", err)
 	}
 
-	id, _ := res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("getting insert ID: %w", err)
+	}
+
+	// Commit the transaction
+	if err = tx.Commit(); err != nil {
+		return nil, fmt.Errorf("committing transaction: %w", err)
+	}
 
 	return &Case{
 		ID:          id,

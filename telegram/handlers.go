@@ -27,6 +27,9 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 
 	content := strings.TrimSpace(msg.Text)
 
+	// Check for "Ok Garmin" trigger (case insensitive, comma optional)
+	content = b.garminProcessor.ProcessTrigger(content)
+
 	if noteName := extractTriggeredNoteName(content, b.API.Self.UserName); noteName != "" {
 		// Log note triggering since it's an action
 		b.Logger.Info("note triggered",
@@ -592,7 +595,8 @@ func (b *Bot) tgHandleWarnings(msg *tgbotapi.Message, args string) {
 		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Could not resolve user.", "", false, b.Logger)
 		return
 	}
-	resp, err := b.Warn.Warnings("telegram", targetID)
+	banner := b.newBanner()
+	resp, err := b.Warn.Warnings(banner, targetID)
 	if err != nil {
 		b.Logger.Error("warnings error", zap.Error(err))
 		return
@@ -683,7 +687,8 @@ func (b *Bot) tgHandleAddAdmin(msg *tgbotapi.Message, args string, callerID stri
 		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Could not resolve user.", "", false, b.Logger)
 		return
 	}
-	resp, err := b.Admin.AddAdmin("telegram", callerID, targetID, b.Config)
+	banner := b.newBanner()
+	resp, err := b.Admin.AddAdmin(banner, callerID, targetID, b.Config)
 	if err != nil {
 		b.Logger.Error("addadmin error", zap.Error(err))
 		return
@@ -702,7 +707,8 @@ func (b *Bot) tgHandleRemoveAdmin(msg *tgbotapi.Message, args string, callerID s
 		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Could not resolve user.", "", false, b.Logger)
 		return
 	}
-	resp, err := b.Admin.RemoveAdmin("telegram", callerID, targetID, b.Config)
+	banner := b.newBanner()
+	resp, err := b.Admin.RemoveAdmin(banner, callerID, targetID, b.Config)
 	if err != nil {
 		b.Logger.Error("removeadmin error", zap.Error(err))
 		return
@@ -771,11 +777,33 @@ func telegramSenderID(msg *tgbotapi.Message) string {
 }
 
 func extractTriggeredNoteName(content, botUsername string) string {
-	if !strings.HasPrefix(content, "#") || len(content) <= 1 || content[1] == ' ' {
+	if !strings.HasPrefix(content, "#") {
 		return ""
 	}
 
-	noteName := strings.Fields(content[1:])[0]
+	// Count leading hash symbols
+	i := 0
+	for i < len(content) && content[i] == '#' {
+		i++
+	}
+
+	if i >= len(content) {
+		return "" // Only hash symbols, no note name
+	}
+
+	// Skip any whitespace after hash symbols
+	remainder := strings.TrimLeft(content[i:], " \t")
+	if remainder == "" {
+		return "" // No note name after hashes and spaces
+	}
+
+	// Extract the first word as note name
+	fields := strings.Fields(remainder)
+	if len(fields) == 0 {
+		return ""
+	}
+
+	noteName := fields[0]
 	if botUsername != "" {
 		suffix := "@" + strings.ToLower(botUsername)
 		lowerName := strings.ToLower(noteName)

@@ -25,7 +25,8 @@ type Bot struct {
 	Ping       *cmd.PingHandler
 	Case       *cmd.CaseHandler
 
-	confirmations *confirmationStore
+	garminProcessor *cmd.GarminProcessor
+	confirmations   *confirmationStore
 }
 
 func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
@@ -39,18 +40,19 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 	}
 
 	bot := &Bot{
-		API:        api,
-		Config:     cfg,
-		DB:         database,
-		Logger:     logger.With(zap.String("platform", "telegram")),
-		Notes:      notes,
-		Version:    version,
-		Actions:    actions,
-		Moderation: moderation,
-		Warn:       warn,
-		Admin:      admin,
-		Ping:       ping,
-		Case:       cases,
+		API:             api,
+		Config:          cfg,
+		DB:              database,
+		Logger:          logger.With(zap.String("platform", "telegram")),
+		Notes:           notes,
+		Version:         version,
+		Actions:         actions,
+		Moderation:      moderation,
+		Warn:            warn,
+		Admin:           admin,
+		Ping:            ping,
+		Case:            cases,
+		garminProcessor: cmd.NewGarminProcessor(),
 	}
 
 	bot.confirmations = newConfirmationStore()
@@ -160,20 +162,35 @@ type TelegramBanner struct {
 func (t *TelegramBanner) Platform() string { return "telegram" }
 func (t *TelegramBanner) ChatID() string   { return strconv.FormatInt(t.chatID, 10) }
 
+// parseUserID converts a string user ID to int64 with consistent error handling
+func parseUserID(userID string) (int64, error) {
+	uid, err := strconv.ParseInt(userID, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid user ID %q: %w", userID, err)
+	}
+	return uid, nil
+}
+
 func (t *TelegramBanner) Ban(userID, reason string) error {
-	uid, _ := strconv.ParseInt(userID, 10, 64)
+	uid, err := parseUserID(userID)
+	if err != nil {
+		return err
+	}
 	cfg := tgbotapi.BanChatMemberConfig{
 		ChatMemberConfig: tgbotapi.ChatMemberConfig{
 			ChatID: t.chatID,
 			UserID: uid,
 		},
 	}
-	_, err := t.api.Request(cfg)
+	_, err = t.api.Request(cfg)
 	return err
 }
 
 func (t *TelegramBanner) Unban(userID string) error {
-	uid, _ := strconv.ParseInt(userID, 10, 64)
+	uid, err := parseUserID(userID)
+	if err != nil {
+		return err
+	}
 	cfg := tgbotapi.UnbanChatMemberConfig{
 		ChatMemberConfig: tgbotapi.ChatMemberConfig{
 			ChatID: t.chatID,
@@ -181,7 +198,7 @@ func (t *TelegramBanner) Unban(userID string) error {
 		},
 		OnlyIfBanned: true,
 	}
-	_, err := t.api.Request(cfg)
+	_, err = t.api.Request(cfg)
 	return err
 }
 
@@ -192,7 +209,10 @@ func (t *TelegramBanner) DeleteMessages(userID string) error {
 }
 
 func (t *TelegramBanner) Restrict(userID string, untilDate int64) error {
-	uid, _ := strconv.ParseInt(userID, 10, 64)
+	uid, err := parseUserID(userID)
+	if err != nil {
+		return err
+	}
 	perms := tgbotapi.ChatPermissions{
 		CanSendMessages:       false,
 		CanSendMediaMessages:  false,
@@ -211,12 +231,15 @@ func (t *TelegramBanner) Restrict(userID string, untilDate int64) error {
 		UntilDate:   untilDate,
 		Permissions: &perms,
 	}
-	_, err := t.api.Request(cfg)
+	_, err = t.api.Request(cfg)
 	return err
 }
 
 func (t *TelegramBanner) Unrestrict(userID string) error {
-	uid, _ := strconv.ParseInt(userID, 10, 64)
+	uid, err := parseUserID(userID)
+	if err != nil {
+		return err
+	}
 	perms := tgbotapi.ChatPermissions{
 		CanSendMessages:       true,
 		CanSendMediaMessages:  true,
@@ -234,7 +257,7 @@ func (t *TelegramBanner) Unrestrict(userID string) error {
 		},
 		Permissions: &perms,
 	}
-	_, err := t.api.Request(cfg)
+	_, err = t.api.Request(cfg)
 	return err
 }
 
@@ -243,12 +266,18 @@ func (t *TelegramBanner) SetNickname(userID, nickname string) error {
 }
 
 func (t *TelegramBanner) DMUser(userID, message string) error {
-	uid, _ := strconv.ParseInt(userID, 10, 64)
+	uid, err := parseUserID(userID)
+	if err != nil {
+		return err
+	}
 	return dmUser(t.api, uid, message)
 }
 
 func (t *TelegramBanner) GetDisplayName(userID string) (string, error) {
-	uid, _ := strconv.ParseInt(userID, 10, 64)
+	uid, err := parseUserID(userID)
+	if err != nil {
+		return "", err
+	}
 	member, err := t.api.GetChatMember(tgbotapi.GetChatMemberConfig{
 		ChatConfigWithUser: tgbotapi.ChatConfigWithUser{
 			ChatID: t.chatID,
@@ -263,6 +292,26 @@ func (t *TelegramBanner) GetDisplayName(userID string) (string, error) {
 		name += " " + member.User.LastName
 	}
 	return name, nil
+}
+
+func (t *TelegramBanner) GetUsername(userID string) (string, error) {
+	uid, err := parseUserID(userID)
+	if err != nil {
+		return "", err
+	}
+	member, err := t.api.GetChatMember(tgbotapi.GetChatMemberConfig{
+		ChatConfigWithUser: tgbotapi.ChatConfigWithUser{
+			ChatID: t.chatID,
+			UserID: uid,
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	if member.User.UserName != "" {
+		return member.User.UserName, nil
+	}
+	return member.User.FirstName, nil
 }
 
 func (t *TelegramBanner) GetAllMembers() ([]cmd.MemberInfo, error) {

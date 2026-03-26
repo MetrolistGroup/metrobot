@@ -60,20 +60,21 @@ func (h *WarnHandler) Warn(banner PlatformBanner, callerID, targetID, reason str
 		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "warn", targetID, callerID, reason, targetName, moderatorName)
 	}
 
-	response := fmt.Sprintf("⚠️ %s has been warned. Reason: %s (%d/%d)", formatUserRef(platform, targetID), reasonText, count, threshold)
+	response := fmt.Sprintf("⚠️ %s has been warned. Reason: %s (%d/%d)", formatUserRef(banner, targetID), reasonText, count, threshold)
 
 	if count >= threshold {
 		if err := banner.Ban(targetID, "Auto-ban: warning threshold reached"); err != nil {
 			return "", nil, nil, fmt.Errorf("auto-banning user: %w", err)
 		}
 		h.DB.LogModAction(banner.Platform(), "system", targetID, "ban", "Auto-ban: warning threshold reached")
-		response = fmt.Sprintf("⚠️ %s has been warned. Reason: %s (%d/%d). Auto-action: permanently banned for reaching %d warnings.", formatUserRef(platform, targetID), reasonText, count, threshold, threshold)
+		response = fmt.Sprintf("⚠️ %s has been warned. Reason: %s (%d/%d). Auto-action: permanently banned for reaching %d warnings.", formatUserRef(banner, targetID), reasonText, count, threshold, threshold)
 	}
 
 	return response, nil, c, nil
 }
 
-func (h *WarnHandler) Warnings(platform, targetID string) (string, error) {
+func (h *WarnHandler) Warnings(banner PlatformBanner, targetID string) (string, error) {
+	platform := banner.Platform()
 	warnings, err := h.DB.GetWarnings(platform, targetID)
 	if err != nil {
 		return "", fmt.Errorf("getting warnings: %w", err)
@@ -85,11 +86,11 @@ func (h *WarnHandler) Warnings(platform, targetID string) (string, error) {
 	}
 
 	if len(warnings) == 0 {
-		return fmt.Sprintf("%s has no warnings. (0/%d)", formatUserRef(platform, targetID), threshold), nil
+		return fmt.Sprintf("%s has no warnings. (0/%d)", formatUserRef(banner, targetID), threshold), nil
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("**Warnings for %s:**\n", formatUserRef(platform, targetID)))
+	sb.WriteString(fmt.Sprintf("**Warnings for %s:**\n", formatUserRef(banner, targetID)))
 
 	for i, w := range warnings {
 		reason := w.Reason
@@ -97,7 +98,7 @@ func (h *WarnHandler) Warnings(platform, targetID string) (string, error) {
 			reason = "no reason"
 		}
 		ts := time.Unix(w.Timestamp, 0).Format("2006-01-02")
-		sb.WriteString(fmt.Sprintf("[%d] %s - by %s - %s\n", i+1, reason, formatUserRef(platform, w.WarnedBy), ts))
+		sb.WriteString(fmt.Sprintf("[%d] %s - by %s - %s\n", i+1, reason, formatUserRef(banner, w.WarnedBy), ts))
 	}
 
 	sb.WriteString(fmt.Sprintf("\nWarnings: %d/%d", len(warnings), threshold))
@@ -124,5 +125,5 @@ func (h *WarnHandler) Unwarn(platform, callerID, targetID string, index int, ban
 		c, _ = h.CaseHandler.CreateCaseAndLog(platform, "unwarn", targetID, callerID, fmt.Sprintf("removed warning #%d", index), targetName, moderatorName)
 	}
 
-	return fmt.Sprintf("Warning #%d removed from %s.", index, formatUserRef(platform, targetID)), c, nil
+	return fmt.Sprintf("Warning #%d removed from %s.", index, formatUserRef(banner, targetID)), c, nil
 }

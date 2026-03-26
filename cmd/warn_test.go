@@ -28,6 +28,7 @@ func (b *fakeWarnBanner) Unrestrict(userID string) error               { return 
 func (b *fakeWarnBanner) SetNickname(userID, nickname string) error    { return nil }
 func (b *fakeWarnBanner) DMUser(userID, message string) error          { return nil }
 func (b *fakeWarnBanner) GetDisplayName(userID string) (string, error) { return "", nil }
+func (b *fakeWarnBanner) GetUsername(userID string) (string, error)    { return "testuser", nil }
 func (b *fakeWarnBanner) GetAllMembers() ([]MemberInfo, error)         { return nil, nil }
 func (b *fakeWarnBanner) Platform() string                             { return b.platform }
 func (b *fakeWarnBanner) ChatID() string                               { return b.chatID }
@@ -35,6 +36,7 @@ func (b *fakeWarnBanner) ChatID() string                               { return 
 func TestWarningsAreOneIndexed(t *testing.T) {
 	database := openWarnTestDB(t)
 	handler := &WarnHandler{DB: database}
+	banner := &fakeWarnBanner{platform: "discord", chatID: "123"}
 
 	if _, err := database.AddWarning("discord", "target", "first", "mod-1"); err != nil {
 		t.Fatalf("AddWarning first: %v", err)
@@ -43,7 +45,7 @@ func TestWarningsAreOneIndexed(t *testing.T) {
 		t.Fatalf("AddWarning second: %v", err)
 	}
 
-	got, err := handler.Warnings("discord", "target")
+	got, err := handler.Warnings(banner, "target")
 	if err != nil {
 		t.Fatalf("Warnings: %v", err)
 	}
@@ -56,6 +58,7 @@ func TestWarningsAreOneIndexed(t *testing.T) {
 func TestUnwarnUsesOneBasedIDs(t *testing.T) {
 	database := openWarnTestDB(t)
 	handler := &WarnHandler{DB: database}
+	banner := &fakeWarnBanner{platform: "discord", chatID: "123"}
 
 	if _, err := database.AddWarning("discord", "target", "first", "mod-1"); err != nil {
 		t.Fatalf("AddWarning first: %v", err)
@@ -72,7 +75,7 @@ func TestUnwarnUsesOneBasedIDs(t *testing.T) {
 		t.Fatalf("Unwarn() response = %q", resp)
 	}
 
-	got, err := handler.Warnings("discord", "target")
+	got, err := handler.Warnings(banner, "target")
 	if err != nil {
 		t.Fatalf("Warnings after unwarn: %v", err)
 	}

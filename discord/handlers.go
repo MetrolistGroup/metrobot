@@ -97,12 +97,10 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 
 	content := strings.TrimSpace(m.Content)
 
-	if strings.HasPrefix(content, "#") && len(content) > 1 && content[1] != ' ' {
-		fields := strings.Fields(content[1:])
-		if len(fields) == 0 {
-			return
-		}
-		noteName := fields[0]
+	// Check for "Ok Garmin" trigger (case insensitive, comma optional)
+	content = b.garminProcessor.ProcessTrigger(content)
+
+	if noteName := extractNoteName(content); noteName != "" {
 		text, err := b.Notes.GetNote(noteName)
 		if err != nil {
 			b.Logger.Error("note lookup error", zap.Error(err))
@@ -452,7 +450,8 @@ func (b *Bot) handleWarn(s *discordgo.Session, i *discordgo.InteractionCreate, o
 
 func (b *Bot) handleWarnings(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption) {
 	targetUser := opts["user"].UserValue(s)
-	resp, err := b.Warn.Warnings("discord", targetUser.ID)
+	banner := b.newBanner()
+	resp, err := b.Warn.Warnings(banner, targetUser.ID)
 	if err != nil {
 		b.Logger.Error("warnings error", zap.Error(err))
 		respondEphemeral(s, i, "Error fetching warnings.")
@@ -524,7 +523,8 @@ func (b *Bot) handleDehoist(s *discordgo.Session, i *discordgo.InteractionCreate
 
 func (b *Bot) handleAddAdmin(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
 	targetUser := opts["user"].UserValue(s)
-	resp, err := b.Admin.AddAdmin("discord", callerID, targetUser.ID, b.Config)
+	banner := b.newBanner()
+	resp, err := b.Admin.AddAdmin(banner, callerID, targetUser.ID, b.Config)
 	if err != nil {
 		b.Logger.Error("addadmin error", zap.Error(err))
 		respondEphemeral(s, i, "Error adding admin.")
@@ -535,7 +535,8 @@ func (b *Bot) handleAddAdmin(s *discordgo.Session, i *discordgo.InteractionCreat
 
 func (b *Bot) handleRemoveAdmin(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
 	targetUser := opts["user"].UserValue(s)
-	resp, err := b.Admin.RemoveAdmin("discord", callerID, targetUser.ID, b.Config)
+	banner := b.newBanner()
+	resp, err := b.Admin.RemoveAdmin(banner, callerID, targetUser.ID, b.Config)
 	if err != nil {
 		b.Logger.Error("removeadmin error", zap.Error(err))
 		respondEphemeral(s, i, "Error removing admin.")
@@ -748,4 +749,35 @@ func needsDehoisting(name string) bool {
 	// Check if name starts with hoisting characters (anything that would put it at top of member list)
 	firstChar := rune(name[0])
 	return firstChar < 'A' || (firstChar > 'Z' && firstChar < 'a')
+}
+
+// extractNoteName extracts note name from formats like #NOTE, # NOTE, ## NOTE, ##NOTE, etc.
+func extractNoteName(content string) string {
+	if !strings.HasPrefix(content, "#") {
+		return ""
+	}
+
+	// Count leading hash symbols
+	i := 0
+	for i < len(content) && content[i] == '#' {
+		i++
+	}
+
+	if i >= len(content) {
+		return "" // Only hash symbols, no note name
+	}
+
+	// Skip any whitespace after hash symbols
+	remainder := strings.TrimLeft(content[i:], " \t")
+	if remainder == "" {
+		return "" // No note name after hashes and spaces
+	}
+
+	// Extract the first word as note name
+	fields := strings.Fields(remainder)
+	if len(fields) == 0 {
+		return ""
+	}
+
+	return fields[0]
 }

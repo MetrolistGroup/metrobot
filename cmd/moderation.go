@@ -6,6 +6,13 @@ import (
 	"time"
 
 	"github.com/MetrolistGroup/metrobot/db"
+	"github.com/MetrolistGroup/metrobot/util"
+)
+
+// Platform constants to avoid hardcoded strings and improve maintainability
+const (
+	PlatformDiscord  = "discord"
+	PlatformTelegram = "telegram"
 )
 
 type PlatformBanner interface {
@@ -17,6 +24,7 @@ type PlatformBanner interface {
 	SetNickname(userID, nickname string) error
 	DMUser(userID, message string) error
 	GetDisplayName(userID string) (string, error)
+	GetUsername(userID string) (string, error)
 	GetAllMembers() ([]MemberInfo, error)
 	Platform() string
 	ChatID() string
@@ -59,7 +67,7 @@ func (h *ModerationHandler) Ban(banner PlatformBanner, callerID, targetID, reaso
 	}
 
 	reasonText := " Reason: " + reason
-	return fmt.Sprintf("🔨 %s has been permanently banned.%s", formatUserRef(banner.Platform(), targetID), reasonText), c, nil
+	return fmt.Sprintf("🔨 %s has been permanently banned.%s", formatUserRef(banner, targetID), reasonText), c, nil
 }
 
 func (h *ModerationHandler) DBan(banner PlatformBanner, callerID, targetID, reason string, cfg db.PermaAdminProvider) (string, *db.Case, error) {
@@ -86,7 +94,7 @@ func (h *ModerationHandler) DBan(banner PlatformBanner, callerID, targetID, reas
 	}
 
 	reasonText := " Reason: " + reason
-	return fmt.Sprintf("🔨 %s has been banned and their messages deleted.%s", formatUserRef(banner.Platform(), targetID), reasonText), c, nil
+	return fmt.Sprintf("🔨 %s has been banned and their messages deleted.%s", formatUserRef(banner, targetID), reasonText), c, nil
 }
 
 func (h *ModerationHandler) TBan(banner PlatformBanner, callerID, targetID string, duration time.Duration, reason string, cfg db.PermaAdminProvider) (string, *db.Case, error) {
@@ -117,7 +125,7 @@ func (h *ModerationHandler) TBan(banner PlatformBanner, callerID, targetID strin
 	}
 
 	reasonText := " Reason: " + reason
-	return fmt.Sprintf("⏱️ %s has been banned for %s.%s", formatUserRef(banner.Platform(), targetID), formatDuration(duration), reasonText), c, nil
+	return fmt.Sprintf("⏱️ %s has been banned for %s.%s", formatUserRef(banner, targetID), util.FormatDuration(duration), reasonText), c, nil
 }
 
 func (h *ModerationHandler) SBan(banner PlatformBanner, callerID, targetID, reason string, cfg db.PermaAdminProvider) (string, *db.Case, error) {
@@ -127,7 +135,7 @@ func (h *ModerationHandler) SBan(banner PlatformBanner, callerID, targetID, reas
 
 	banner.DMUser(targetID, fmt.Sprintf("You have been softbanned from Metrolist. Reason: %s", reason))
 
-	if banner.Platform() == "discord" {
+	if banner.Platform() == PlatformDiscord {
 		if err := banner.Ban(targetID, reason); err != nil {
 			return "", nil, fmt.Errorf("banning user: %w", err)
 		}
@@ -154,7 +162,7 @@ func (h *ModerationHandler) SBan(banner PlatformBanner, callerID, targetID, reas
 	}
 
 	reasonText := " Reason: " + reason
-	return fmt.Sprintf("🧹 %s has been softbanned.%s", formatUserRef(banner.Platform(), targetID), reasonText), c, nil
+	return fmt.Sprintf("🧹 %s has been softbanned.%s", formatUserRef(banner, targetID), reasonText), c, nil
 }
 
 func (h *ModerationHandler) Mute(banner PlatformBanner, callerID, targetID string, duration time.Duration, reason string, cfg db.PermaAdminProvider) (string, *db.Case, error) {
@@ -192,7 +200,7 @@ func (h *ModerationHandler) Mute(banner PlatformBanner, callerID, targetID strin
 	})
 
 	reasonText := " Reason: " + reason
-	return fmt.Sprintf("🔇 %s has been muted for %s.%s", formatUserRef(banner.Platform(), targetID), formatDuration(duration), reasonText), c, nil
+	return fmt.Sprintf("🔇 %s has been muted for %s.%s", formatUserRef(banner, targetID), util.FormatDuration(duration), reasonText), c, nil
 }
 
 func (h *ModerationHandler) Dehoist(banner PlatformBanner, targetID string, dry bool, cfg db.PermaAdminProvider) (string, error) {
@@ -208,7 +216,7 @@ func (h *ModerationHandler) Dehoist(banner PlatformBanner, targetID string, dry 
 	// Bulk dehoist: targetID empty, non-dry run
 	if targetID == "" {
 		// Telegram cannot rename users; fall back to dry-run output.
-		if banner.Platform() == "telegram" {
+		if banner.Platform() == PlatformTelegram {
 			return h.dehoistDryRun(banner, targetID, cfg)
 		}
 
@@ -262,7 +270,7 @@ func (h *ModerationHandler) Dehoist(banner PlatformBanner, targetID string, dry 
 		return fmt.Sprintf("@%s does not need dehoisting.", targetID), nil
 	}
 
-	if banner.Platform() == "telegram" {
+	if banner.Platform() == PlatformTelegram {
 		return fmt.Sprintf("⚠️ Cannot rename users on Telegram. Please manually change your username: @%s", targetID), nil
 	}
 
@@ -320,7 +328,7 @@ func (h *ModerationHandler) dehoistDryRun(banner PlatformBanner, targetID string
 
 	list := strings.Join(results, "\n")
 	result := fmt.Sprintf("```\n%s\n```", list)
-	if banner.Platform() == "telegram" {
+	if banner.Platform() == PlatformTelegram {
 		result += "\n\n⚠️ Note: Telegram bots cannot rename users. This is informational only."
 	}
 
@@ -355,34 +363,13 @@ func stripHoistChars(s string) string {
 	return result
 }
 
-func formatUserRef(platform, userID string) string {
-	switch platform {
-	case "discord":
-		return "<@" + userID + ">"
-	case "telegram":
-		// Telegram bots cannot mention by numeric ID in plain text without a username.
-		// Show the raw ID to avoid broken @username links.
-		return userID
-	default:
-		return "<@" + userID + ">"
+func formatUserRef(banner PlatformBanner, userID string) string {
+	// Get username to format nicely without pinging
+	username, err := banner.GetUsername(userID)
+	if err != nil || username == "" {
+		// Fallback to userID if we can't get username
+		return "`@" + userID + "`"
 	}
-}
 
-func formatDuration(d time.Duration) string {
-	if d < time.Minute {
-		return fmt.Sprintf("%ds", int(d.Seconds()))
-	}
-	if d < time.Hour {
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	}
-	if d < 24*time.Hour {
-		hours := int(d.Hours())
-		mins := int(d.Minutes()) % 60
-		if mins > 0 {
-			return fmt.Sprintf("%dh%dm", hours, mins)
-		}
-		return fmt.Sprintf("%dh", hours)
-	}
-	days := int(d.Hours()) / 24
-	return fmt.Sprintf("%dd", days)
+	return "`@" + username + "`"
 }

@@ -40,6 +40,7 @@ func (b *fakeDehoistBanner) SetNickname(userID, nickname string) error {
 }
 func (b *fakeDehoistBanner) DMUser(userID, message string) error          { return nil }
 func (b *fakeDehoistBanner) GetDisplayName(userID string) (string, error) { return "", nil }
+func (b *fakeDehoistBanner) GetUsername(userID string) (string, error)    { return "testuser", nil }
 func (b *fakeDehoistBanner) GetAllMembers() ([]MemberInfo, error)         { return b.members, nil }
 func (b *fakeDehoistBanner) Platform() string                             { return b.platform }
 func (b *fakeDehoistBanner) ChatID() string                               { return "test-chat" }
