@@ -17,6 +17,8 @@ func NewGarminProcessor() *GarminProcessor {
 			"sban": true,
 			"mute": true,
 			"warn": true,
+			"notes": true,
+			"note": true,
 		},
 	}
 }
