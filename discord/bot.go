@@ -41,7 +41,7 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		return nil, fmt.Errorf("creating discord session: %w", err)
 	}
 
-	session.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsGuildMembers | discordgo.IntentsGuildBans
+	session.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsGuildMembers | discordgo.IntentsGuildBans | discordgo.IntentsGuildMessageReactions
 
 	bot := &Bot{
 		Session:         session,

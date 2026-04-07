@@ -69,6 +69,14 @@ func (b *Bot) handleReactionAdd(s *discordgo.Session, r *discordgo.MessageReacti
 		zap.Bool("isBot", msg.Author.Bot),
 		zap.Int("reactionCount", len(msg.Reactions)))
 
+	// Log all reactions for debugging
+	for _, reaction := range msg.Reactions {
+		b.Logger.Debug("starboard message reaction",
+			zap.String("emojiName", reaction.Emoji.Name),
+			zap.Int("count", reaction.Count),
+			zap.String("emojiID", reaction.Emoji.ID))
+	}
+
 	// Don't starboard bot messages (optional - remove if you want to allow bot messages)
 	if msg.Author.Bot {
 		b.Logger.Debug("starboard ignored - bot message",
@@ -82,6 +90,7 @@ func (b *Bot) handleReactionAdd(s *discordgo.Session, r *discordgo.MessageReacti
 	b.Logger.Info("starboard reaction processed",
 		zap.String("messageID", r.MessageID),
 		zap.Int("starCount", starCount),
+		zap.Int("totalReactions", len(msg.Reactions)),
 		zap.String("emoji", starEmoji))
 
 	// Check if message is already in starboard
@@ -366,7 +375,13 @@ func (b *Bot) handleMessageDelete(s *discordgo.Session, m *discordgo.MessageDele
 // countReactions counts the total number of a specific emoji reaction
 func countReactions(reactions []*discordgo.MessageReactions, emoji string) int {
 	for _, r := range reactions {
-		if r.Emoji.Name == emoji {
+		// Check for both custom and unicode emojis
+		emojiMatch := r.Emoji.Name == emoji
+		if r.Emoji.ID != "" {
+			// Custom emoji - compare by ID if needed, but usually name works
+			emojiMatch = r.Emoji.Name == emoji || r.Emoji.ID == emoji
+		}
+		if emojiMatch {
 			return r.Count
 		}
 	}
