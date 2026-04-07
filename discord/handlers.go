@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/MetrolistGroup/metrobot/util"
 	"github.com/bwmarrin/discordgo"
@@ -87,6 +88,8 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 		b.handleRemoveAdmin(s, i, opts, callerID)
 	case "ping":
 		b.handlePing(s, i)
+	case "purge":
+		b.handlePurge(s, i, opts, callerID)
 	}
 }
 
@@ -106,7 +109,7 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 			b.Logger.Error("note lookup error", zap.Error(err))
 			return
 		}
-		sendReply(s, m.ChannelID, m.ID, text, true, b.Logger)
+		sendReply(s, m.ChannelID, m.ID, text, false, b.Logger)
 		return
 	}
 
@@ -169,7 +172,7 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	}
 
 	// Request confirmation before executing prefix command
-	b.requestPrefixConfirmation(s, m, action, commandArgs, targetID)
+	b.executePrefixCommand(s, m.ChannelID, m.Author.ID, action, commandArgs, targetID)
 }
 
 // --- Slash command handlers ---
@@ -196,13 +199,16 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		"• /warn [user] [reason] - Warn a user\n" +
 		"• /warnings [user] - Show warnings for a user\n" +
 		"• /unwarn [user] [id] - Remove a warning from a user\n" +
-		"• /dehoist [user] [dry] - Remove hoisting characters from name\n\n" +
+		"• /dehoist [user] [dry] - Remove hoisting characters from name\n" +
+		"• /purge [count] - Delete messages (reply to message or use count)\n\n" +
 		"**Admin Management (permaadmin only):**\n" +
 		"• /addadmin [user] - Add a bot admin\n" +
 		"• /removeadmin [user] - Remove a bot admin\n\n" +
 		"**Prefix Commands:**\n" +
 		"Moderation actions can also be triggered via message prefix: !action [user] [args]\n" +
-		"Example: !ban @user spam"
+		"Example: !ban @user spam\n\n" +
+		"**Notes Trigger:**\n" +
+		"Type $notename to display a note (e.g., $help, $rules)"
 	respondEphemeral(s, i, help)
 }
 
@@ -228,7 +234,7 @@ func (b *Bot) handleNote(s *discordgo.Session, i *discordgo.InteractionCreate, o
 	if stay {
 		respondPublic(s, i, text)
 	} else {
-		respondPublicAutoDelete(s, i, text, b.Logger)
+		respondPublic(s, i, text)
 	}
 }
 
@@ -555,6 +561,158 @@ func (b *Bot) handlePing(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	respondPublicAutoDelete(s, i, text, b.Logger)
 }
 
+func (b *Bot) handlePurge(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
+	if !b.DB.IsAdmin("discord", callerID, b.Config) {
+		respondEphemeral(s, i, "You don't have purge permissions.")
+		return
+	}
+
+	// Check if this is a reply to another message
+	var targetMessageID string
+	if i.Interaction.Type == discordgo.InteractionApplicationCommand {
+		// Try to get the message from the channel to check for reply
+		msgs, err := s.ChannelMessages(i.ChannelID, 1, "", "", i.ID)
+		if err == nil && len(msgs) > 0 {
+			// Look for a referenced message
+			if msgs[0].ReferencedMessage != nil {
+				targetMessageID = msgs[0].ReferencedMessage.ID
+			}
+		}
+
+		// Also check resolved messages from Discord
+		interactionData := i.ApplicationCommandData()
+		if interactionData.Resolved != nil && interactionData.Resolved.Messages != nil {
+			// Try to find a referenced message
+			for _, msg := range interactionData.Resolved.Messages {
+				if msg != nil && msg.ID != i.ID {
+					targetMessageID = msg.ID
+					break
+				}
+			}
+		}
+	}
+
+	// Alternative: check for count option
+	var count int64 = 0
+	if opt, ok := opts["count"]; ok {
+		count = opt.IntValue()
+	}
+
+	// If we have a target message from reply, delete messages from current to target
+	if targetMessageID != "" {
+		// Defer the response since this might take time
+		if err := deferResponse(s, i, true); err != nil {
+			b.Logger.Error("failed to defer purge response", zap.Error(err))
+			return
+		}
+
+		deleted, err := b.purgeMessagesBetween(s, i.ChannelID, i.ID, targetMessageID)
+		if err != nil {
+			b.Logger.Error("purge failed", zap.Error(err))
+			editDeferredResponse(s, i, fmt.Sprintf("Error executing purge: %s", err))
+			return
+		}
+
+		editDeferredResponse(s, i, fmt.Sprintf("🗑️ Deleted %d messages.", deleted))
+	} else if count > 0 {
+		// Delete last N messages
+		if count > 100 {
+			count = 100
+		}
+
+		// Defer the response
+		if err := deferResponse(s, i, true); err != nil {
+			b.Logger.Error("failed to defer purge response", zap.Error(err))
+			return
+		}
+
+		msgs, err := s.ChannelMessages(i.ChannelID, int(count)+1, "", "", i.ID)
+		if err != nil {
+			b.Logger.Error("failed to get messages for purge", zap.Error(err))
+			editDeferredResponse(s, i, "Error fetching messages.")
+			return
+		}
+
+		var toDelete []string
+		for _, msg := range msgs {
+			if msg.ID != i.ID { // Don't delete the command message yet
+				toDelete = append(toDelete, msg.ID)
+			}
+		}
+
+		if len(toDelete) > 1 {
+			s.ChannelMessagesBulkDelete(i.ChannelID, toDelete)
+		} else if len(toDelete) == 1 {
+			s.ChannelMessageDelete(i.ChannelID, toDelete[0])
+		}
+
+		// Delete the command message
+		s.ChannelMessageDelete(i.ChannelID, i.ID)
+
+		editDeferredResponse(s, i, fmt.Sprintf("🗑️ Deleted %d messages.", len(toDelete)))
+	} else {
+		respondEphemeral(s, i, "Please reply to a message or provide a count to purge.")
+	}
+}
+
+// purgeMessagesBetween deletes all messages between two message IDs (inclusive of the target)
+func (b *Bot) purgeMessagesBetween(s *discordgo.Session, channelID, commandID, targetID string) (int, error) {
+	var allMessages []string
+	var beforeID string
+
+	// Keep fetching messages until we find the target
+	for {
+		msgs, err := s.ChannelMessages(channelID, 100, beforeID, "", commandID)
+		if err != nil {
+			return 0, err
+		}
+
+		if len(msgs) == 0 {
+			break
+		}
+
+		for _, msg := range msgs {
+			if msg.ID == targetID {
+				// Found the target, include it and stop
+				allMessages = append(allMessages, msg.ID)
+				beforeID = ""
+				break
+			}
+			allMessages = append(allMessages, msg.ID)
+		}
+
+		if beforeID == "" {
+			break // Found target or reached end
+		}
+
+		beforeID = msgs[len(msgs)-1].ID
+	}
+
+	// Delete messages in chunks
+	deleted := 0
+	for len(allMessages) > 0 {
+		chunkSize := 100
+		if len(allMessages) < chunkSize {
+			chunkSize = len(allMessages)
+		}
+
+		chunk := allMessages[:chunkSize]
+		allMessages = allMessages[chunkSize:]
+
+		if len(chunk) > 1 {
+			s.ChannelMessagesBulkDelete(channelID, chunk)
+		} else if len(chunk) == 1 {
+			s.ChannelMessageDelete(channelID, chunk[0])
+		}
+		deleted += len(chunk)
+	}
+
+	// Delete the command message
+	s.ChannelMessageDelete(channelID, commandID)
+
+	return deleted, nil
+}
+
 // --- Helpers ---
 
 func optionMap(opts []*discordgo.ApplicationCommandInteractionDataOption) map[string]*discordgo.ApplicationCommandInteractionDataOption {
@@ -688,27 +846,31 @@ func (b *Bot) onGuildMemberAdd(s *discordgo.Session, m *discordgo.GuildMemberAdd
 		return
 	}
 
-	// Run dehoisting for the new member
-	banner := b.newBanner()
-	displayName, err := banner.GetDisplayName(m.User.ID)
-	if err != nil {
-		b.Logger.Error("failed to get display name for new member",
-			zap.String("userID", m.User.ID), zap.Error(err))
-		return
-	}
+	// Run dehoisting for the new member after a short delay to ensure member data is available
+	go func() {
+		time.Sleep(2 * time.Second)
 
-	// Check if dehoisting is needed
-	if needsDehoisting(displayName) {
-		b.Logger.Info("auto-dehoisting new member",
-			zap.String("userID", m.User.ID),
-			zap.String("displayName", displayName))
-
-		_, err := b.Moderation.Dehoist(banner, m.User.ID, false, b.Config)
+		banner := b.newBanner()
+		displayName, err := banner.GetDisplayName(m.User.ID)
 		if err != nil {
-			b.Logger.Error("failed to dehoist new member",
+			b.Logger.Error("failed to get display name for new member",
 				zap.String("userID", m.User.ID), zap.Error(err))
+			return
 		}
-	}
+
+		// Check if dehoisting is needed
+		if needsDehoisting(displayName) {
+			b.Logger.Info("auto-dehoisting new member",
+				zap.String("userID", m.User.ID),
+				zap.String("displayName", displayName))
+
+			_, err := b.Moderation.Dehoist(banner, m.User.ID, false, b.Config)
+			if err != nil {
+				b.Logger.Error("failed to dehoist new member",
+					zap.String("userID", m.User.ID), zap.Error(err))
+			}
+		}
+	}()
 }
 
 func (b *Bot) onGuildMemberUpdate(s *discordgo.Session, m *discordgo.GuildMemberUpdate) {
@@ -751,26 +913,26 @@ func needsDehoisting(name string) bool {
 	return firstChar < 'A' || (firstChar > 'Z' && firstChar < 'a')
 }
 
-// extractNoteName extracts note name from formats like #NOTE, # NOTE, ## NOTE, ##NOTE, etc.
+// extractNoteName extracts note name from formats like $NOTE, $ NOTE, $$ NOTE, $$NOTE, etc.
 func extractNoteName(content string) string {
-	if !strings.HasPrefix(content, "#") {
+	if !strings.HasPrefix(content, "$") {
 		return ""
 	}
 
-	// Count leading hash symbols
+	// Count leading dollar symbols
 	i := 0
-	for i < len(content) && content[i] == '#' {
+	for i < len(content) && content[i] == '$' {
 		i++
 	}
 
 	if i >= len(content) {
-		return "" // Only hash symbols, no note name
+		return "" // Only dollar symbols, no note name
 	}
 
-	// Skip any whitespace after hash symbols
+	// Skip any whitespace after dollar symbols
 	remainder := strings.TrimLeft(content[i:], " \t")
 	if remainder == "" {
-		return "" // No note name after hashes and spaces
+		return "" // No note name after dollars and spaces
 	}
 
 	// Extract the first word as note name

@@ -27,6 +27,11 @@ type Config struct {
 
 	LogFile           string `json:"log_file"`
 	DiscordLogChannel string `json:"discord_log_channel"`
+
+	// Starboard configuration
+	StarboardChannelID string `json:"starboard_channel_id"`
+	StarboardThreshold int    `json:"starboard_threshold"`
+	StarboardEmoji     string `json:"starboard_emoji"`
 }
 
 // Load reads config.json from the given path and validates all required fields.

@@ -107,6 +107,17 @@ func (d *DB) migrate() error {
 			expires_at     INTEGER NOT NULL,
 			reason         TEXT
 		)`,
+		`CREATE TABLE IF NOT EXISTS starboard (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			original_msg_id TEXT NOT NULL UNIQUE,
+			starboard_msg_id TEXT,
+			channel_id      TEXT NOT NULL,
+			guild_id        TEXT NOT NULL,
+			author_id       TEXT NOT NULL,
+			content         TEXT,
+			star_count      INTEGER NOT NULL DEFAULT 0,
+			timestamp       INTEGER NOT NULL
+		)`,
 	}
 
 	for _, m := range migrations {
@@ -532,6 +543,83 @@ func (d *DB) ListExcludedChannels(guildID string) ([]string, error) {
 		channels = append(channels, ch)
 	}
 	return channels, rows.Err()
+}
+
+// --- Starboard ---
+
+type StarboardEntry struct {
+	ID             int64
+	OriginalMsgID  string
+	StarboardMsgID *string
+	ChannelID      string
+	GuildID        string
+	AuthorID       string
+	Content        string
+	StarCount      int
+	Timestamp      int64
+}
+
+func (d *DB) GetStarboardEntry(originalMsgID string) (*StarboardEntry, error) {
+	var entry StarboardEntry
+	var starboardMsgID sql.NullString
+	err := d.conn.QueryRow(
+		"SELECT id, original_msg_id, starboard_msg_id, channel_id, guild_id, author_id, content, star_count, timestamp FROM starboard WHERE original_msg_id = ?",
+		originalMsgID,
+	).Scan(&entry.ID, &entry.OriginalMsgID, &starboardMsgID, &entry.ChannelID, &entry.GuildID, &entry.AuthorID, &entry.Content, &entry.StarCount, &entry.Timestamp)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if starboardMsgID.Valid {
+		entry.StarboardMsgID = &starboardMsgID.String
+	}
+	return &entry, nil
+}
+
+func (d *DB) AddStarboardEntry(originalMsgID, channelID, guildID, authorID, content string, starCount int, timestamp int64) (*StarboardEntry, error) {
+	res, err := d.conn.Exec(
+		"INSERT INTO starboard (original_msg_id, channel_id, guild_id, author_id, content, star_count, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		originalMsgID, channelID, guildID, authorID, content, starCount, timestamp,
+	)
+	if err != nil {
+		return nil, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	return &StarboardEntry{
+		ID:            id,
+		OriginalMsgID: originalMsgID,
+		ChannelID:     channelID,
+		GuildID:       guildID,
+		AuthorID:      authorID,
+		Content:       content,
+		StarCount:     starCount,
+		Timestamp:     timestamp,
+	}, nil
+}
+
+func (d *DB) UpdateStarboardEntry(originalMsgID string, starCount int, starboardMsgID *string) error {
+	if starboardMsgID != nil {
+		_, err := d.conn.Exec(
+			"UPDATE starboard SET star_count = ?, starboard_msg_id = ? WHERE original_msg_id = ?",
+			starCount, *starboardMsgID, originalMsgID,
+		)
+		return err
+	}
+	_, err := d.conn.Exec(
+		"UPDATE starboard SET star_count = ? WHERE original_msg_id = ?",
+		starCount, originalMsgID,
+	)
+	return err
+}
+
+func (d *DB) DeleteStarboardEntry(originalMsgID string) error {
+	_, err := d.conn.Exec("DELETE FROM starboard WHERE original_msg_id = ?", originalMsgID)
+	return err
 }
 
 // --- Interface for config dependency ---

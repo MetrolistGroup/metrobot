@@ -791,13 +791,13 @@ func extractTriggeredNoteName(content, botUsername string) string {
 		return "" // Only hash symbols, no note name
 	}
 
-	// Skip any whitespace after hash symbols
-	remainder := strings.TrimLeft(content[i:], " \t")
-	if remainder == "" {
-		return "" // No note name after hashes and spaces
+	// If there's whitespace immediately after hashes, it's not a valid note
+	if content[i] == ' ' || content[i] == '\t' {
+		return ""
 	}
 
 	// Extract the first word as note name
+	remainder := content[i:]
 	fields := strings.Fields(remainder)
 	if len(fields) == 0 {
 		return ""

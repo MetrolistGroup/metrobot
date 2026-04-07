@@ -14,5 +14,8 @@
     "gms": "app-with-Google-cast"
   },
   "log_file": "bot.log",
-  "discord_log_channel": "1234567890123456789"
+  "discord_log_channel": "1234567890123456789",
+  "starboard_channel_id": "",
+  "starboard_threshold": 3,
+  "starboard_emoji": "⭐"
 }

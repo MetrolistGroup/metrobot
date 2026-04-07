@@ -2,6 +2,7 @@ package discord
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
@@ -68,6 +69,9 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 	session.AddHandler(bot.onMessageCreate)
 	session.AddHandler(bot.onGuildMemberAdd)
 	session.AddHandler(bot.onGuildMemberUpdate)
+	session.AddHandler(bot.handleReactionAdd)
+	session.AddHandler(bot.handleReactionRemove)
+	session.AddHandler(bot.handleMessageDelete)
 
 	bot.confirmations = newConfirmationStore()
 
@@ -403,6 +407,20 @@ func (b *Bot) registerCommands() error {
 			Name:        "ping",
 			Description: "Check latency to various services",
 		},
+		{
+			Name:        "purge",
+			Description: "Delete messages from current message until the one being replied to (admin only)",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionInteger,
+					Name:        "count",
+					Description: "Number of messages to delete (alternative to replying)",
+					Required:    false,
+					MinValue:    func() *float64 { v := float64(1); return &v }(),
+					MaxValue:    100,
+				},
+			},
+		},
 	}
 
 	for _, cmd := range commands {
@@ -439,18 +457,56 @@ func (d *DiscordBanner) DeleteMessages(userID string) error {
 		return err
 	}
 
+	// Use a wait group to process channels concurrently
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var firstError error
+
+	// Process only text channels, up to a reasonable limit concurrently
+	semaphore := make(chan struct{}, 5) // Limit to 5 concurrent channels
+
 	for _, ch := range channels {
 		if ch.Type != discordgo.ChannelTypeGuildText {
 			continue
 		}
-		d.deleteUserMessagesInChannel(ch.ID, userID)
+
+		wg.Add(1)
+		semaphore <- struct{}{} // Acquire
+
+		go func(channelID string) {
+			defer wg.Done()
+			defer func() { <-semaphore }() // Release
+
+			if err := d.deleteUserMessagesInChannel(channelID, userID); err != nil {
+				mu.Lock()
+				if firstError == nil {
+					firstError = err
+				}
+				mu.Unlock()
+			}
+		}(ch.ID)
 	}
-	return nil
+
+	wg.Wait()
+	return firstError
 }
 
-func (d *DiscordBanner) deleteUserMessagesInChannel(channelID, userID string) {
+func (d *DiscordBanner) deleteUserMessagesInChannel(channelID, userID string) error {
+	// Calculate the message ID for 7 days ago
+	// Discord snowflakes encode timestamp, so we can calculate a cutoff
+	// 7 days = 7 * 24 * 60 * 60 * 1000 milliseconds = 604800000 ms
+	sevenDaysAgo := time.Now().Add(-7 * 24 * time.Hour)
+	// Discord epoch is 1420070400000 (Jan 1, 2015)
+	discordEpoch := int64(1420070400000)
+	// Convert to snowflake: (timestamp - discordEpoch) << 22
+	cutoffSnowflake := ((sevenDaysAgo.UnixMilli() - discordEpoch) << 22)
+	cutoffID := fmt.Sprintf("%d", cutoffSnowflake)
+
 	var beforeID string
-	for {
+	messageCount := 0
+	maxMessages := 1000 // Limit to prevent excessive API calls
+
+	for messageCount < maxMessages {
 		msgs, err := d.session.ChannelMessages(channelID, 100, beforeID, "", "")
 		if err != nil || len(msgs) == 0 {
 			break
@@ -458,13 +514,21 @@ func (d *DiscordBanner) deleteUserMessagesInChannel(channelID, userID string) {
 
 		var toDelete []string
 		for _, msg := range msgs {
+			// Stop if we've reached messages older than 7 days
+			if msg.ID < cutoffID {
+				return nil
+			}
+
 			if msg.Author.ID == userID {
 				toDelete = append(toDelete, msg.ID)
 			}
+			messageCount++
 		}
 
 		if len(toDelete) > 1 {
+			// Bulk delete for messages less than 14 days old
 			if err := d.session.ChannelMessagesBulkDelete(channelID, toDelete); err != nil {
+				// Fall back to individual deletion if bulk fails
 				for _, id := range toDelete {
 					d.session.ChannelMessageDelete(channelID, id)
 				}
@@ -478,6 +542,8 @@ func (d *DiscordBanner) deleteUserMessagesInChannel(channelID, userID string) {
 			break
 		}
 	}
+
+	return nil
 }
 
 func (d *DiscordBanner) Restrict(userID string, untilDate int64) error {

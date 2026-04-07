@@ -125,5 +125,12 @@ func (h *WarnHandler) Unwarn(platform, callerID, targetID string, index int, ban
 		c, _ = h.CaseHandler.CreateCaseAndLog(platform, "unwarn", targetID, callerID, fmt.Sprintf("removed warning #%d", index), targetName, moderatorName)
 	}
 
-	return fmt.Sprintf("Warning #%d removed from %s.", index, formatUserRef(banner, targetID)), c, nil
+	var targetRef string
+	if banner != nil {
+		targetRef = formatUserRef(banner, targetID)
+	} else {
+		targetRef = "`@" + targetID + "`"
+	}
+
+	return fmt.Sprintf("Warning #%d removed from %s.", index, targetRef), c, nil
 }
