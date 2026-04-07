@@ -850,6 +850,23 @@ func (b *Bot) onGuildMemberAdd(s *discordgo.Session, m *discordgo.GuildMemberAdd
 	go func() {
 		time.Sleep(2 * time.Second)
 
+		// Check if we have permission to manage this user's nickname
+		botMember, err := s.GuildMember(m.GuildID, s.State.User.ID)
+		if err != nil {
+			b.Logger.Debug("failed to get bot member for permission check on new member",
+				zap.String("userID", m.User.ID), zap.Error(err))
+			return
+		}
+
+		// Check if the bot's highest role is higher than the target's highest role
+		canManage := canManageMember(s, m.GuildID, botMember, m.Member)
+		if !canManage {
+			b.Logger.Debug("skipping dehoist for new member - insufficient permissions",
+				zap.String("userID", m.User.ID),
+				zap.String("displayName", m.Nick))
+			return
+		}
+
 		banner := b.newBanner()
 		displayName, err := banner.GetDisplayName(m.User.ID)
 		if err != nil {
@@ -875,6 +892,23 @@ func (b *Bot) onGuildMemberAdd(s *discordgo.Session, m *discordgo.GuildMemberAdd
 
 func (b *Bot) onGuildMemberUpdate(s *discordgo.Session, m *discordgo.GuildMemberUpdate) {
 	if m.GuildID != b.Config.DiscordGuildID {
+		return
+	}
+
+	// Check if we have permission to manage this user's nickname
+	botMember, err := s.GuildMember(m.GuildID, s.State.User.ID)
+	if err != nil {
+		b.Logger.Debug("failed to get bot member for permission check",
+			zap.String("userID", m.User.ID), zap.Error(err))
+		return
+	}
+
+	// Check if the bot's highest role is higher than the target's highest role
+	canManage := canManageMember(s, m.GuildID, botMember, m.Member)
+	if !canManage {
+		b.Logger.Debug("skipping dehoist - insufficient permissions",
+			zap.String("userID", m.User.ID),
+			zap.String("displayName", m.Nick))
 		return
 	}
 
@@ -911,6 +945,40 @@ func needsDehoisting(name string) bool {
 	// Check if name starts with hoisting characters (anything that would put it at top of member list)
 	firstChar := rune(name[0])
 	return firstChar < 'A' || (firstChar > 'Z' && firstChar < 'a')
+}
+
+// canManageMember checks if the bot can manage a member's nickname
+func canManageMember(s *discordgo.Session, guildID string, botMember, targetMember *discordgo.Member) bool {
+	// Get the guild to check roles
+	guild, err := s.Guild(guildID)
+	if err != nil {
+		return false
+	}
+
+	// Create a map of role positions
+	rolePositions := make(map[string]int)
+	for _, role := range guild.Roles {
+		rolePositions[role.ID] = role.Position
+	}
+
+	// Find bot's highest role position
+	botHighestPos := -1
+	for _, roleID := range botMember.Roles {
+		if pos, ok := rolePositions[roleID]; ok && pos > botHighestPos {
+			botHighestPos = pos
+		}
+	}
+
+	// Find target's highest role position
+	targetHighestPos := -1
+	for _, roleID := range targetMember.Roles {
+		if pos, ok := rolePositions[roleID]; ok && pos > targetHighestPos {
+			targetHighestPos = pos
+		}
+	}
+
+	// Bot can manage if its highest role is higher than target's highest role
+	return botHighestPos > targetHighestPos
 }
 
 // extractNoteName extracts note name from formats like $NOTE, $ NOTE, $$ NOTE, $$NOTE, etc.
