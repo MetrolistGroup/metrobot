@@ -90,6 +90,8 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 		b.handlePing(s, i)
 	case "purge":
 		b.handlePurge(s, i, opts, callerID)
+	case "refreshstarboard":
+		b.handleRefreshStarboard(s, i, callerID)
 	}
 }
 
@@ -208,7 +210,7 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		"Moderation actions can also be triggered via message prefix: !action [user] [args]\n" +
 		"Example: !ban @user spam\n\n" +
 		"**Notes Trigger:**\n" +
-		"Type $notename to display a note (e.g., $help, $rules)"
+		"Type nnotename to display a note (e.g., nhelp, nrules)"
 	respondEphemeral(s, i, help)
 }
 
@@ -713,6 +715,27 @@ func (b *Bot) purgeMessagesBetween(s *discordgo.Session, channelID, commandID, t
 	return deleted, nil
 }
 
+func (b *Bot) handleRefreshStarboard(s *discordgo.Session, i *discordgo.InteractionCreate, callerID string) {
+	if !b.DB.IsAdmin("discord", callerID, b.Config) {
+		respondEphemeral(s, i, "You don't have permission to refresh the starboard.")
+		return
+	}
+
+	// Defer the response since this might take time
+	if err := deferResponse(s, i, true); err != nil {
+		b.Logger.Error("failed to defer refreshstarboard response", zap.Error(err))
+		return
+	}
+
+	if err := b.RefreshAllStarboard(s); err != nil {
+		b.Logger.Error("refreshstarboard failed", zap.Error(err))
+		editDeferredResponse(s, i, fmt.Sprintf("Error refreshing starboard: %s", err))
+		return
+	}
+
+	editDeferredResponse(s, i, "✅ Starboard refreshed successfully.")
+}
+
 // --- Helpers ---
 
 func optionMap(opts []*discordgo.ApplicationCommandInteractionDataOption) map[string]*discordgo.ApplicationCommandInteractionDataOption {
@@ -981,26 +1004,26 @@ func canManageMember(s *discordgo.Session, guildID string, botMember, targetMemb
 	return botHighestPos > targetHighestPos
 }
 
-// extractNoteName extracts note name from formats like $NOTE, $ NOTE, $$ NOTE, $$NOTE, etc.
+// extractNoteName extracts note name from formats like nNOTE, n NOTE, nn NOTE, nnNOTE, etc.
 func extractNoteName(content string) string {
-	if !strings.HasPrefix(content, "$") {
+	if !strings.HasPrefix(content, "n") {
 		return ""
 	}
 
-	// Count leading dollar symbols
+	// Count leading 'n' characters
 	i := 0
-	for i < len(content) && content[i] == '$' {
+	for i < len(content) && content[i] == 'n' {
 		i++
 	}
 
 	if i >= len(content) {
-		return "" // Only dollar symbols, no note name
+		return "" // Only n's, no note name
 	}
 
-	// Skip any whitespace after dollar symbols
+	// Skip any whitespace after n characters
 	remainder := strings.TrimLeft(content[i:], " \t")
 	if remainder == "" {
-		return "" // No note name after dollars and spaces
+		return "" // No note name after n's and spaces
 	}
 
 	// Extract the first word as note name

@@ -622,7 +622,49 @@ func (d *DB) DeleteStarboardEntry(originalMsgID string) error {
 	return err
 }
 
-// --- Interface for config dependency ---
+func (d *DB) GetStarboardEntryByStarboardMsgID(starboardMsgID string) (*StarboardEntry, error) {
+	var entry StarboardEntry
+	var sbMsgID sql.NullString
+	err := d.conn.QueryRow(
+		"SELECT id, original_msg_id, starboard_msg_id, channel_id, guild_id, author_id, content, star_count, timestamp FROM starboard WHERE starboard_msg_id = ?",
+		starboardMsgID,
+	).Scan(&entry.ID, &entry.OriginalMsgID, &sbMsgID, &entry.ChannelID, &entry.GuildID, &entry.AuthorID, &entry.Content, &entry.StarCount, &entry.Timestamp)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if sbMsgID.Valid {
+		entry.StarboardMsgID = &sbMsgID.String
+	}
+	return &entry, nil
+}
+
+func (d *DB) GetAllStarboardEntries() ([]*StarboardEntry, error) {
+	rows, err := d.conn.Query(
+		"SELECT id, original_msg_id, starboard_msg_id, channel_id, guild_id, author_id, content, star_count, timestamp FROM starboard",
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []*StarboardEntry
+	for rows.Next() {
+		var entry StarboardEntry
+		var sbMsgID sql.NullString
+		err := rows.Scan(&entry.ID, &entry.OriginalMsgID, &sbMsgID, &entry.ChannelID, &entry.GuildID, &entry.AuthorID, &entry.Content, &entry.StarCount, &entry.Timestamp)
+		if err != nil {
+			return nil, err
+		}
+		if sbMsgID.Valid {
+			entry.StarboardMsgID = &sbMsgID.String
+		}
+		entries = append(entries, &entry)
+	}
+	return entries, rows.Err()
+}
 
 type PermaAdminProvider interface {
 	GetPermaAdminIDs(platform string) []string

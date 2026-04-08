@@ -11,9 +11,9 @@ func TestExtractTriggeredNoteName(t *testing.T) {
 		content string
 		want    string
 	}{
-		{name: "plain hashtag", content: "#playback", want: "playback"},
-		{name: "with trailing text", content: "#playback please", want: "playback"},
-		{name: "invalid leading space", content: "# playback", want: ""},
+		{name: "plain n prefix", content: "nplayback", want: "playback"},
+		{name: "with trailing text", content: "nplayback please", want: "playback"},
+		{name: "invalid leading space", content: "n playback", want: ""},
 	}
 
 	for _, tt := range tests {
@@ -26,11 +26,11 @@ func TestExtractTriggeredNoteName(t *testing.T) {
 }
 
 func TestExtractTriggeredNoteNameMentionSuffix(t *testing.T) {
-	if got := extractTriggeredNoteName("#playback@metrolist_robot", "metrolist_robot"); got != "playback" {
+	if got := extractTriggeredNoteName("nplayback@metrolist_robot", "metrolist_robot"); got != "playback" {
 		t.Fatalf("extractTriggeredNoteName() = %q, want %q", got, "playback")
 	}
 
-	if got := extractTriggeredNoteName("#playback@another_bot", "metrolist_robot"); got != "playback@another_bot" {
+	if got := extractTriggeredNoteName("nplayback@another_bot", "metrolist_robot"); got != "playback@another_bot" {
 		t.Fatalf("extractTriggeredNoteName() = %q, want %q", got, "playback@another_bot")
 	}
 }

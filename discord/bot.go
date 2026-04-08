@@ -421,6 +421,10 @@ func (b *Bot) registerCommands() error {
 				},
 			},
 		},
+		{
+			Name:        "refreshstarboard",
+			Description: "Refresh all starboard entries by rechecking star counts (admin only)",
+		},
 	}
 
 	for _, cmd := range commands {

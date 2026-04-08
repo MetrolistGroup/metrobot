@@ -777,21 +777,21 @@ func telegramSenderID(msg *tgbotapi.Message) string {
 }
 
 func extractTriggeredNoteName(content, botUsername string) string {
-	if !strings.HasPrefix(content, "#") {
+	if !strings.HasPrefix(content, "n") {
 		return ""
 	}
 
-	// Count leading hash symbols
+	// Count leading 'n' characters
 	i := 0
-	for i < len(content) && content[i] == '#' {
+	for i < len(content) && content[i] == 'n' {
 		i++
 	}
 
 	if i >= len(content) {
-		return "" // Only hash symbols, no note name
+		return "" // Only n's, no note name
 	}
 
-	// If there's whitespace immediately after hashes, it's not a valid note
+	// If there's whitespace immediately after n's, it's not a valid note
 	if content[i] == ' ' || content[i] == '\t' {
 		return ""
 	}
