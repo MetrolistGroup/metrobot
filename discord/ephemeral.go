@@ -94,6 +94,25 @@ func sendReply(s *discordgo.Session, channelID, messageID, content string, autoD
 	}
 }
 
+// sendReplyWithDelete sends a reply and deletes it after the specified duration
+func sendReplyWithDelete(s *discordgo.Session, channelID, messageID, content string, duration time.Duration, logger *zap.Logger) {
+	msg, err := s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+		Content: suppressDiscordEmbeds(content),
+		Flags:   discordgo.MessageFlagsSuppressEmbeds,
+		Reference: &discordgo.MessageReference{
+			MessageID: messageID,
+		},
+	})
+	if err != nil {
+		logger.Error("failed to send reply", zap.Error(err))
+		return
+	}
+
+	time.AfterFunc(duration, func() {
+		s.ChannelMessageDelete(channelID, msg.ID)
+	})
+}
+
 // sendPermissionError sends an error message about missing permissions and deletes both messages after 5 seconds
 func sendPermissionError(s *discordgo.Session, channelID, originalMsgID string, permission string, logger *zap.Logger) {
 	content := fmt.Sprintf("❌ I don't have the required permission: **%s**", permission)

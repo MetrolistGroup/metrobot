@@ -28,7 +28,6 @@ type Bot struct {
 
 	garminProcessor  *cmd.GarminProcessor
 	TimedBanRestorer func()
-	confirmations    *confirmationStore
 }
 
 func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
@@ -72,8 +71,6 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 	session.AddHandler(bot.handleReactionAdd)
 	session.AddHandler(bot.handleReactionRemove)
 	session.AddHandler(bot.handleMessageDelete)
-
-	bot.confirmations = newConfirmationStore()
 
 	return bot, nil
 }

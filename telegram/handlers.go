@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/MetrolistGroup/metrobot/util"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -41,7 +42,22 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 			b.Logger.Error("note lookup error", zap.Error(err))
 			return
 		}
-		sendEphemeralReply(b.API, msg.Chat.ID, msg.MessageID, formatTelegramNoteHTML(text), "HTML", false, b.Logger)
+		// Auto-delete "Note not found" messages after 10 seconds
+		isNotFound := strings.Contains(text, "Note `") && strings.Contains(text, "` not found")
+		if isNotFound {
+			notFoundMsg := tgbotapi.NewMessage(msg.Chat.ID, formatTelegramNoteHTML(text))
+			notFoundMsg.ReplyToMessageID = msg.MessageID
+			notFoundMsg.DisableWebPagePreview = true
+			notFoundMsg.ParseMode = "HTML"
+			sent, err := b.API.Send(notFoundMsg)
+			if err != nil {
+				b.Logger.Error("failed to send telegram message", zap.Error(err))
+				return
+			}
+			scheduleDeleteAfter(b.API, msg.Chat.ID, sent.MessageID, 10*time.Second, b.Logger)
+		} else {
+			sendEphemeralReply(b.API, msg.Chat.ID, msg.MessageID, formatTelegramNoteHTML(text), "HTML", false, b.Logger)
+		}
 		return
 	}
 
@@ -108,8 +124,8 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		return
 	}
 
-	// Request confirmation before executing prefix command
-	b.requestPrefixConfirmation(msg, action, commandArgs, targetID)
+	// Execute the command directly
+	b.executePrefixCommand(msg.Chat.ID, telegramSenderID(msg), action, commandArgs, targetID)
 }
 
 func (b *Bot) handleCommand(msg *tgbotapi.Message, callerID string) {
@@ -777,21 +793,21 @@ func telegramSenderID(msg *tgbotapi.Message) string {
 }
 
 func extractTriggeredNoteName(content, botUsername string) string {
-	if !strings.HasPrefix(content, "n") {
+	if !strings.HasPrefix(content, ".") {
 		return ""
 	}
 
-	// Count leading 'n' characters
+	// Count leading '.' characters
 	i := 0
-	for i < len(content) && content[i] == 'n' {
+	for i < len(content) && content[i] == '.' {
 		i++
 	}
 
 	if i >= len(content) {
-		return "" // Only n's, no note name
+		return "" // Only dots, no note name
 	}
 
-	// If there's whitespace immediately after n's, it's not a valid note
+	// If there's whitespace immediately after dots, it's not a valid note
 	if content[i] == ' ' || content[i] == '\t' {
 		return ""
 	}

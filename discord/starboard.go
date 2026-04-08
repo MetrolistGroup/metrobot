@@ -662,7 +662,33 @@ func (b *Bot) RefreshAllStarboard(s *discordgo.Session) error {
 			continue
 		}
 
-		starCount := countReactions(msg.Reactions, starEmoji)
+		// Count stars on the original message
+		originalStarCount := countReactions(msg.Reactions, starEmoji)
+
+		// Also count stars on the starboard message itself
+		starboardStarCount := 0
+		if entry.StarboardMsgID != nil {
+			starboardMsg, err := s.ChannelMessage(b.Config.StarboardChannelID, *entry.StarboardMsgID)
+			if err == nil {
+				starboardStarCount = countReactions(starboardMsg.Reactions, starEmoji)
+				b.Logger.Debug("counted stars on starboard message",
+					zap.String("starboardMsgID", *entry.StarboardMsgID),
+					zap.Int("starboardStars", starboardStarCount))
+			} else {
+				b.Logger.Warn("failed to get starboard message for star counting",
+					zap.Error(err),
+					zap.String("starboardMsgID", *entry.StarboardMsgID))
+			}
+		}
+
+		// Total star count includes stars on both messages
+		starCount := originalStarCount + starboardStarCount
+
+		b.Logger.Info("starboard refresh counted stars",
+			zap.String("messageID", entry.OriginalMsgID),
+			zap.Int("originalStars", originalStarCount),
+			zap.Int("starboardStars", starboardStarCount),
+			zap.Int("totalStars", starCount))
 
 		if starCount < threshold {
 			// Remove from starboard

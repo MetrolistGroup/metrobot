@@ -26,7 +26,6 @@ type Bot struct {
 	Case       *cmd.CaseHandler
 
 	garminProcessor *cmd.GarminProcessor
-	confirmations   *confirmationStore
 }
 
 func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
@@ -55,8 +54,6 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		garminProcessor: cmd.NewGarminProcessor(),
 	}
 
-	bot.confirmations = newConfirmationStore()
-
 	return bot, nil
 }
 
@@ -74,12 +71,6 @@ func (b *Bot) Start() error {
 	updates := b.API.GetUpdatesChan(u)
 	go func() {
 		for update := range updates {
-			// Handle callback queries for confirmations
-			if update.CallbackQuery != nil {
-				b.handleConfirmationCallback(update.CallbackQuery)
-				continue
-			}
-
 			if update.MyChatMember != nil {
 				b.handleChatMemberUpdate(update.MyChatMember)
 				continue

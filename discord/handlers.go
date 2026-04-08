@@ -16,21 +16,16 @@ import (
 var chatModPattern = regexp.MustCompile(`(?i)^!(ban|dban|tban|sban|mute|warn)\s*(.*)$`)
 
 func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	if i.GuildID != b.Config.DiscordGuildID {
+		return
+	}
+
 	if i.Type == discordgo.InteractionApplicationCommandAutocomplete {
 		b.handleAutocomplete(s, i)
 		return
 	}
 
-	if i.Type == discordgo.InteractionMessageComponent {
-		b.handleConfirmationButton(s, i)
-		return
-	}
-
 	if i.Type != discordgo.InteractionApplicationCommand {
-		return
-	}
-
-	if i.GuildID != b.Config.DiscordGuildID {
 		return
 	}
 
@@ -111,7 +106,13 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 			b.Logger.Error("note lookup error", zap.Error(err))
 			return
 		}
-		sendReply(s, m.ChannelID, m.ID, text, false, b.Logger)
+		// Auto-delete "Note not found" messages after 10 seconds
+		autoDelete := strings.Contains(text, "Note `") && strings.Contains(text, "` not found")
+		if autoDelete {
+			sendReplyWithDelete(s, m.ChannelID, m.ID, text, 10*time.Second, b.Logger)
+		} else {
+			sendReply(s, m.ChannelID, m.ID, text, false, b.Logger)
+		}
 		return
 	}
 
@@ -173,7 +174,7 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		return
 	}
 
-	// Request confirmation before executing prefix command
+	// Execute the command directly
 	b.executePrefixCommand(s, m.ChannelID, m.Author.ID, action, commandArgs, targetID)
 }
 
@@ -560,7 +561,7 @@ func (b *Bot) handlePing(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		respondEphemeral(s, i, "Error checking ping.")
 		return
 	}
-	respondPublicAutoDelete(s, i, text, b.Logger)
+	respondPublic(s, i, text)
 }
 
 func (b *Bot) handlePurge(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
@@ -1004,26 +1005,26 @@ func canManageMember(s *discordgo.Session, guildID string, botMember, targetMemb
 	return botHighestPos > targetHighestPos
 }
 
-// extractNoteName extracts note name from formats like nNOTE, n NOTE, nn NOTE, nnNOTE, etc.
+// extractNoteName extracts note name from formats like .NOTE, . NOTE, .. NOTE, ..NOTE, etc.
 func extractNoteName(content string) string {
-	if !strings.HasPrefix(content, "n") {
+	if !strings.HasPrefix(content, ".") {
 		return ""
 	}
 
-	// Count leading 'n' characters
+	// Count leading '.' characters
 	i := 0
-	for i < len(content) && content[i] == 'n' {
+	for i < len(content) && content[i] == '.' {
 		i++
 	}
 
 	if i >= len(content) {
-		return "" // Only n's, no note name
+		return "" // Only dots, no note name
 	}
 
-	// Skip any whitespace after n characters
+	// Skip any whitespace after dots
 	remainder := strings.TrimLeft(content[i:], " \t")
 	if remainder == "" {
-		return "" // No note name after n's and spaces
+		return "" // No note name after dots and spaces
 	}
 
 	// Extract the first word as note name

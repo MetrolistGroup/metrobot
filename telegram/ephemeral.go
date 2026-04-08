@@ -57,6 +57,16 @@ func scheduleDelete(bot *tgbotapi.BotAPI, chatID int64, msgID int, logger *zap.L
 	})
 }
 
+// scheduleDeleteAfter deletes a message after the specified duration
+func scheduleDeleteAfter(bot *tgbotapi.BotAPI, chatID int64, msgID int, duration time.Duration, logger *zap.Logger) {
+	time.AfterFunc(duration, func() {
+		del := tgbotapi.NewDeleteMessage(chatID, msgID)
+		if _, err := bot.Request(del); err != nil {
+			logger.Debug("failed to delete telegram message", zap.Int("msg_id", msgID), zap.Error(err))
+		}
+	})
+}
+
 func dmUser(bot *tgbotapi.BotAPI, userID int64, text string) error {
 	msg := tgbotapi.NewMessage(userID, text)
 	msg.DisableWebPagePreview = true
