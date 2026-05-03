@@ -358,7 +358,7 @@ func stripHoistChars(s string) string {
 	result := b.String()
 
 	if result == "" {
-		return "change your username"
+		return "change your display name"
 	}
 	return result
 }
