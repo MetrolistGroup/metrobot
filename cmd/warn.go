@@ -37,19 +37,14 @@ func (h *WarnHandler) Warn(banner PlatformBanner, callerID, targetID, reason str
 		return "", nil, nil, fmt.Errorf("getting warning count: %w", err)
 	}
 
-	threshold, err := h.DB.GetWarnThreshold(platform, targetID)
-	if err != nil {
-		return "", nil, nil, fmt.Errorf("getting warn threshold: %w", err)
-	}
-
 	reasonText := reason
 	if reasonText == "" {
 		reasonText = "no reason provided"
 	}
 
 	banner.DMUser(targetID, fmt.Sprintf(
-		"You have been warned in Metrolist for: %s. This is warning %d of %d.",
-		reasonText, count, threshold,
+		"You have been warned in Metrolist for: %s. This is warning %d.",
+		reasonText, count,
 	))
 
 	// Create case
@@ -60,15 +55,17 @@ func (h *WarnHandler) Warn(banner PlatformBanner, callerID, targetID, reason str
 		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "warn", targetID, callerID, reason, targetName, moderatorName)
 	}
 
-	response := fmt.Sprintf("⚠️ %s has been warned. Reason: %s (%d/%d)", formatUserRef(banner, targetID), reasonText, count, threshold)
+	// Calculate escalating timeout: 1h + (count-1) * 20m
+	timeoutDuration := time.Hour + time.Duration(count-1)*20*time.Minute
+	timeoutExpiresAt := time.Now().Add(timeoutDuration).Unix()
 
-	if count >= threshold {
-		if err := banner.Ban(targetID, "Auto-ban: warning threshold reached"); err != nil {
-			return "", nil, nil, fmt.Errorf("auto-banning user: %w", err)
-		}
-		h.DB.LogModAction(banner.Platform(), "system", targetID, "ban", "Auto-ban: warning threshold reached")
-		response = fmt.Sprintf("⚠️ %s has been warned. Reason: %s (%d/%d). Auto-action: permanently banned for reaching %d warnings.", formatUserRef(banner, targetID), reasonText, count, threshold, threshold)
+	if err := banner.Restrict(targetID, timeoutExpiresAt); err != nil {
+		h.DB.LogModAction(platform, "system", targetID, "timeout_failed", fmt.Sprintf("Failed to timeout user after warn #%d: %s", count, err))
 	}
+
+	h.DB.LogModAction(platform, "system", targetID, "timeout", fmt.Sprintf("Timeout for %s after warn #%d", util.FormatDuration(timeoutDuration), count))
+
+	response := fmt.Sprintf("⚠️ %s has been warned. Reason: %s (warning #%d). Auto-action: timed out for %s.", formatUserRef(banner, targetID), reasonText, count, util.FormatDuration(timeoutDuration))
 
 	return response, nil, c, nil
 }

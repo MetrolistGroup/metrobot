@@ -32,32 +32,12 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	content = b.garminProcessor.ProcessTrigger(content)
 
 	if noteName := extractTriggeredNoteName(content, b.API.Self.UserName); noteName != "" {
-		// Log note triggering since it's an action
-		b.Logger.Info("note triggered",
-			zap.String("user", callerID),
-			zap.String("note", noteName),
-		)
 		text, err := b.Notes.GetNote(noteName)
 		if err != nil {
-			b.Logger.Error("note lookup error", zap.Error(err))
+			b.Logger.Debug("note not found", zap.String("note", noteName), zap.Error(err))
 			return
 		}
-		// Auto-delete "Note not found" messages after 10 seconds
-		isNotFound := strings.Contains(text, "Note `") && strings.Contains(text, "` not found")
-		if isNotFound {
-			notFoundMsg := tgbotapi.NewMessage(msg.Chat.ID, formatTelegramNoteHTML(text))
-			notFoundMsg.ReplyToMessageID = msg.MessageID
-			notFoundMsg.DisableWebPagePreview = true
-			notFoundMsg.ParseMode = "HTML"
-			sent, err := b.API.Send(notFoundMsg)
-			if err != nil {
-				b.Logger.Error("failed to send telegram message", zap.Error(err))
-				return
-			}
-			scheduleDeleteAfter(b.API, msg.Chat.ID, sent.MessageID, 10*time.Second, b.Logger)
-		} else {
-			sendEphemeralReply(b.API, msg.Chat.ID, msg.MessageID, formatTelegramNoteHTML(text), "HTML", false, b.Logger)
-		}
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, text, "", false, b.Logger)
 		return
 	}
 
@@ -236,13 +216,13 @@ func (b *Bot) tgHandleNotes(msg *tgbotapi.Message, stay bool) {
 		b.Logger.Error("notes error", zap.Error(err))
 		return
 	}
-	sendEphemeralReply(b.API, msg.Chat.ID, msg.MessageID, formatTelegramNoteHTML(text), "HTML", stay, b.Logger)
+	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, text, "", false, b.Logger)
 }
 
 func (b *Bot) tgHandleNote(msg *tgbotapi.Message, args string, stay bool) {
 	name := strings.TrimSpace(args)
 	if name == "" {
-		sendEphemeralReply(b.API, msg.Chat.ID, msg.MessageID, "Usage: /note [name]", "", stay, b.Logger)
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Usage: /note [name]", "", false, b.Logger)
 		return
 	}
 	text, err := b.Notes.GetNote(name)
@@ -250,7 +230,7 @@ func (b *Bot) tgHandleNote(msg *tgbotapi.Message, args string, stay bool) {
 		b.Logger.Error("note error", zap.Error(err))
 		return
 	}
-	sendEphemeralReply(b.API, msg.Chat.ID, msg.MessageID, formatTelegramNoteHTML(text), "HTML", stay, b.Logger)
+	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, text, "", false, b.Logger)
 }
 
 func (b *Bot) tgHandleAddNote(msg *tgbotapi.Message, args string, callerID string) {
@@ -626,16 +606,33 @@ func (b *Bot) tgHandleUnwarn(msg *tgbotapi.Message, args string, callerID string
 		return
 	}
 	parts := strings.Fields(args)
-	if len(parts) < 2 {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Usage: /unwarn [user] [id]", "", false, b.Logger)
-		return
+
+	var targetID string
+	var index int
+	var err error
+
+	if msg.ReplyToMessage != nil {
+		// Reply form: /unwarn [id] (user extracted from reply)
+		if len(parts) < 1 {
+			sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Usage: reply to a message and use /unwarn [id]", "", false, b.Logger)
+			return
+		}
+		targetID = extractTelegramUserID(msg, "")
+		index, err = strconv.Atoi(parts[0])
+	} else {
+		// Normal form: /unwarn [user] [id]
+		if len(parts) < 2 {
+			sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Usage: /unwarn [user] [id]", "", false, b.Logger)
+			return
+		}
+		targetID = extractTelegramUserID(msg, parts[0])
+		index, err = strconv.Atoi(parts[1])
 	}
-	targetID := extractTelegramUserID(msg, parts[0])
+
 	if targetID == "" {
 		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Could not resolve user.", "", false, b.Logger)
 		return
 	}
-	index, err := strconv.Atoi(parts[1])
 	if err != nil {
 		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Invalid warning index.", "", false, b.Logger)
 		return

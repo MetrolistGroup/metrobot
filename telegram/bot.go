@@ -76,6 +76,13 @@ func (b *Bot) Start() error {
 				continue
 			}
 
+			// Handle new chat members (for auto-dehoist)
+			if update.Message != nil && update.Message.Chat.ID == b.Config.TelegramChatID {
+				if len(update.Message.NewChatMembers) > 0 {
+					b.handleNewChatMembers(update.Message)
+				}
+			}
+
 			message := update.Message
 			if message == nil {
 				message = update.ChannelPost
@@ -141,6 +148,36 @@ func (b *Bot) handleChatMemberUpdate(update *tgbotapi.ChatMemberUpdated) {
 		leave := tgbotapi.LeaveChatConfig{ChatID: update.Chat.ID}
 		b.API.Request(leave)
 		b.Logger.Warn("left unauthorized chat", zap.Int64("chat_id", update.Chat.ID))
+	}
+}
+
+func (b *Bot) handleNewChatMembers(msg *tgbotapi.Message) {
+	banner := b.newBanner()
+	for _, member := range msg.NewChatMembers {
+		userID := strconv.FormatInt(member.ID, 10)
+		// Skip bots and admins
+		if member.IsBot || b.DB.IsAdmin("telegram", userID, b.Config) {
+			continue
+		}
+		// Check if the user's name needs dehoisting
+		displayName, err := banner.GetDisplayName(userID)
+		if err != nil {
+			b.Logger.Debug("failed to get display name for new member", zap.String("userID", userID), zap.Error(err))
+			continue
+		}
+		// Check if name starts with non-alphanumeric characters
+		needsDehoist := false
+		for _, r := range displayName {
+			isAlphanumeric := (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+			if !isAlphanumeric {
+				needsDehoist = true
+			}
+			break
+		}
+		if needsDehoist {
+			b.Logger.Info("auto-dehoisting new Telegram member", zap.String("userID", userID), zap.String("displayName", displayName))
+			b.Moderation.Dehoist(banner, userID, false, b.Config)
+		}
 	}
 }
 

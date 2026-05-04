@@ -47,7 +47,7 @@ func (h *NotesHandler) GetNote(name string) (string, error) {
 	}
 
 	if content == "" {
-		return fmt.Sprintf("Note `%s` not found. Use /notes to see available notes.", name), nil
+		return "", fmt.Errorf("note %q not found", name)
 	}
 
 	return normalizeNoteContent(content), nil

@@ -103,16 +103,10 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	if noteName := extractNoteName(content); noteName != "" {
 		text, err := b.Notes.GetNote(noteName)
 		if err != nil {
-			b.Logger.Error("note lookup error", zap.Error(err))
+			b.Logger.Debug("note not found", zap.String("note", noteName), zap.Error(err))
 			return
 		}
-		// Auto-delete "Note not found" messages after 10 seconds
-		autoDelete := strings.Contains(text, "Note `") && strings.Contains(text, "` not found")
-		if autoDelete {
-			sendReplyWithDelete(s, m.ChannelID, m.ID, text, 10*time.Second, b.Logger)
-		} else {
-			sendReply(s, m.ChannelID, m.ID, text, false, b.Logger)
-		}
+		sendReply(s, m.ChannelID, m.ID, text, false, b.Logger)
 		return
 	}
 
@@ -960,15 +954,18 @@ func (b *Bot) onGuildMemberUpdate(s *discordgo.Session, m *discordgo.GuildMember
 	}
 }
 
-// needsDehoisting checks if a display name contains hoisting characters
+// needsDehoisting checks if a display name starts with non-alphanumeric characters
 func needsDehoisting(name string) bool {
 	if len(name) == 0 {
 		return false
 	}
 
-	// Check if name starts with hoisting characters (anything that would put it at top of member list)
-	firstChar := rune(name[0])
-	return firstChar < 'A' || (firstChar > 'Z' && firstChar < 'a')
+	// Get the first rune of the name
+	for _, r := range name {
+		isAlphanumeric := (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		return !isAlphanumeric
+	}
+	return false
 }
 
 // canManageMember checks if the bot can manage a member's nickname
