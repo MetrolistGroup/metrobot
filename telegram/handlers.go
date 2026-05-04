@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/MetrolistGroup/metrobot/util"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
