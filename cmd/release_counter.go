@@ -39,13 +39,17 @@ func (h *ReleaseCounterHandler) Increment(isTelegram bool) (string, error) {
 		h.mu.Unlock()
 		return "", nil
 	}
-	h.lastTriggeredAt = time.Now()
 	h.mu.Unlock()
 
 	count, err := h.DB.IncrementReleaseCounter()
 	if err != nil {
 		return "", fmt.Errorf("incrementing release counter: %w", err)
 	}
+
+	h.mu.Lock()
+	h.lastTriggeredAt = time.Now()
+	h.mu.Unlock()
+
 	return formatCounter(count, isTelegram), nil
 }
 
