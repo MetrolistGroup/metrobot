@@ -22,8 +22,9 @@ type Bot struct {
 	Moderation *cmd.ModerationHandler
 	Warn       *cmd.WarnHandler
 	Admin      *cmd.AdminHandler
-	Ping       *cmd.PingHandler
-	Case       *cmd.CaseHandler
+	Ping            *cmd.PingHandler
+	Case            *cmd.CaseHandler
+	ReleaseCounter  *cmd.ReleaseCounterHandler
 
 	garminProcessor *cmd.GarminProcessor
 }
@@ -31,7 +32,7 @@ type Bot struct {
 func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 	notes *cmd.NotesHandler, version *cmd.VersionHandler, actions *cmd.ActionsHandler,
 	moderation *cmd.ModerationHandler, warn *cmd.WarnHandler, admin *cmd.AdminHandler, ping *cmd.PingHandler,
-	cases *cmd.CaseHandler,
+	cases *cmd.CaseHandler, releaseCounter *cmd.ReleaseCounterHandler,
 ) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(cfg.TelegramToken)
 	if err != nil {
@@ -51,6 +52,7 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		Admin:           admin,
 		Ping:            ping,
 		Case:            cases,
+		ReleaseCounter:  releaseCounter,
 		garminProcessor: cmd.NewGarminProcessor(),
 	}
 
@@ -132,6 +134,7 @@ func (b *Bot) registerCommands() {
 		{Command: "addadmin", Description: "Add a bot admin (permaadmin)"},
 		{Command: "removeadmin", Description: "Remove a bot admin (permaadmin)"},
 		{Command: "ping", Description: "Check latency to services"},
+		{Command: "counter", Description: "Show the release date question counter"},
 	}
 
 	cfg := tgbotapi.NewSetMyCommandsWithScope(

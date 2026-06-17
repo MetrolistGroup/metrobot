@@ -118,6 +118,10 @@ func (d *DB) migrate() error {
 			star_count      INTEGER NOT NULL DEFAULT 0,
 			timestamp       INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS release_counter (
+			id    INTEGER PRIMARY KEY CHECK (id = 1),
+			count INTEGER NOT NULL DEFAULT 0
+		)`,
 	}
 
 	for _, m := range migrations {
@@ -664,6 +668,26 @@ func (d *DB) GetAllStarboardEntries() ([]*StarboardEntry, error) {
 		entries = append(entries, &entry)
 	}
 	return entries, rows.Err()
+}
+
+// --- Release Counter ---
+
+func (d *DB) GetReleaseCounter() (int, error) {
+	var count int
+	err := d.conn.QueryRow("SELECT count FROM release_counter WHERE id = 1").Scan(&count)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return count, err
+}
+
+func (d *DB) IncrementReleaseCounter() (int, error) {
+	_, err := d.conn.Exec(`INSERT INTO release_counter (id, count) VALUES (1, 1)
+		ON CONFLICT(id) DO UPDATE SET count = count + 1`)
+	if err != nil {
+		return 0, err
+	}
+	return d.GetReleaseCounter()
 }
 
 type PermaAdminProvider interface {

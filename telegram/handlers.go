@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/util"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"go.uber.org/zap"
@@ -34,6 +35,19 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		text, err := b.Notes.GetNote(noteName)
 		if err != nil {
 			b.Logger.Debug("note not found", zap.String("note", noteName), zap.Error(err))
+			return
+		}
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, text, "", false, b.Logger)
+		return
+	}
+
+	if cmd.MatchReleaseQuestion(content) {
+		text, err := b.ReleaseCounter.Increment(true)
+		if err != nil {
+			b.Logger.Error("release counter error", zap.Error(err))
+			return
+		}
+		if text == "" {
 			return
 		}
 		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, text, "", false, b.Logger)
@@ -168,6 +182,8 @@ func (b *Bot) handleCommand(msg *tgbotapi.Message, callerID string) {
 		b.tgHandleRemoveAdmin(msg, args, callerID)
 	case "ping":
 		b.tgHandlePing(msg)
+	case "counter":
+		b.tgHandleCounter(msg)
 	}
 }
 
@@ -733,6 +749,16 @@ func (b *Bot) tgHandlePing(msg *tgbotapi.Message) {
 	if err != nil {
 		b.Logger.Error("ping error", zap.Error(err))
 		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Error checking ping.", "", false, b.Logger)
+		return
+	}
+	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, text, "", false, b.Logger)
+}
+
+func (b *Bot) tgHandleCounter(msg *tgbotapi.Message) {
+	text, err := b.ReleaseCounter.Get(true)
+	if err != nil {
+		b.Logger.Error("counter error", zap.Error(err))
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Error fetching counter.", "", false, b.Logger)
 		return
 	}
 	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, text, "", false, b.Logger)

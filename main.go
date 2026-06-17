@@ -116,6 +116,7 @@ func main() {
 	adminHandler := &cmd.AdminHandler{DB: database}
 	pingHandler := &cmd.PingHandler{}
 	caseHandler := &cmd.CaseHandler{DB: database}
+	releaseCounterHandler := &cmd.ReleaseCounterHandler{DB: database}
 
 	// Wire up case handler with moderation handlers
 	moderationHandler.SetCaseHandler(caseHandler)
@@ -129,7 +130,7 @@ func main() {
 	discordBot, err := discord.New(cfg, database, logger,
 		notesHandler, versionHandler, actionsHandler,
 		moderationHandler, warnHandler, adminHandler, pingHandler,
-		caseHandler,
+		caseHandler, releaseCounterHandler,
 	)
 	if err != nil {
 		logger.Fatal("failed to create discord bot", zap.Error(err))
@@ -142,7 +143,7 @@ func main() {
 	telegramBot, err := telegram.New(cfg, database, logger,
 		notesHandler, versionHandler, actionsHandler,
 		moderationHandler, warnHandler, adminHandler, pingHandler,
-		caseHandler,
+		caseHandler, releaseCounterHandler,
 	)
 	if err != nil {
 		logger.Fatal("failed to create telegram bot", zap.Error(err))

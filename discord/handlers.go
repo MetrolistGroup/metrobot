@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/util"
 	"github.com/bwmarrin/discordgo"
 	"go.uber.org/zap"
@@ -87,6 +88,8 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 		b.handlePurge(s, i, opts, callerID)
 	case "refreshstarboard":
 		b.handleRefreshStarboard(s, i, callerID)
+	case "counter":
+		b.handleCounter(s, i)
 	}
 }
 
@@ -104,6 +107,19 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		text, err := b.Notes.GetNote(noteName)
 		if err != nil {
 			b.Logger.Debug("note not found", zap.String("note", noteName), zap.Error(err))
+			return
+		}
+		sendReply(s, m.ChannelID, m.ID, text, false, b.Logger)
+		return
+	}
+
+	if cmd.MatchReleaseQuestion(content) {
+		text, err := b.ReleaseCounter.Increment(false)
+		if err != nil {
+			b.Logger.Error("release counter error", zap.Error(err))
+			return
+		}
+		if text == "" {
 			return
 		}
 		sendReply(s, m.ChannelID, m.ID, text, false, b.Logger)
@@ -729,6 +745,16 @@ func (b *Bot) handleRefreshStarboard(s *discordgo.Session, i *discordgo.Interact
 	}
 
 	editDeferredResponse(s, i, "✅ Starboard refreshed successfully.")
+}
+
+func (b *Bot) handleCounter(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	text, err := b.ReleaseCounter.Get(false)
+	if err != nil {
+		b.Logger.Error("counter error", zap.Error(err))
+		respondEphemeral(s, i, "Error fetching counter.")
+		return
+	}
+	respondPublic(s, i, text)
 }
 
 // --- Helpers ---

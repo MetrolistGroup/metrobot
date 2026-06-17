@@ -23,8 +23,9 @@ type Bot struct {
 	Moderation *cmd.ModerationHandler
 	Warn       *cmd.WarnHandler
 	Admin      *cmd.AdminHandler
-	Ping       *cmd.PingHandler
-	Case       *cmd.CaseHandler
+	Ping            *cmd.PingHandler
+	Case            *cmd.CaseHandler
+	ReleaseCounter  *cmd.ReleaseCounterHandler
 
 	garminProcessor  *cmd.GarminProcessor
 	TimedBanRestorer func()
@@ -33,7 +34,7 @@ type Bot struct {
 func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 	notes *cmd.NotesHandler, version *cmd.VersionHandler, actions *cmd.ActionsHandler,
 	moderation *cmd.ModerationHandler, warn *cmd.WarnHandler, admin *cmd.AdminHandler, ping *cmd.PingHandler,
-	cases *cmd.CaseHandler,
+	cases *cmd.CaseHandler, releaseCounter *cmd.ReleaseCounterHandler,
 ) (*Bot, error) {
 	session, err := discordgo.New("Bot " + cfg.DiscordToken)
 	if err != nil {
@@ -55,6 +56,7 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		Admin:           admin,
 		Ping:            ping,
 		Case:            cases,
+		ReleaseCounter:  releaseCounter,
 		garminProcessor: cmd.NewGarminProcessor(),
 	}
 
@@ -421,6 +423,10 @@ func (b *Bot) registerCommands() error {
 		{
 			Name:        "refreshstarboard",
 			Description: "Refresh all starboard entries by rechecking star counts (admin only)",
+		},
+		{
+			Name:        "counter",
+			Description: "Show the release date question counter",
 		},
 	}
 
