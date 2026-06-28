@@ -42,6 +42,10 @@ type ModerationHandler struct {
 	CaseHandler *CaseHandler
 }
 
+type messageDeletingBanner interface {
+	BanAndDeleteMessages(userID, reason string) error
+}
+
 // SetCaseHandler sets the case handler for moderation actions
 func (h *ModerationHandler) SetCaseHandler(ch *CaseHandler) {
 	h.CaseHandler = ch
@@ -75,12 +79,18 @@ func (h *ModerationHandler) DBan(banner PlatformBanner, callerID, targetID, reas
 		return "I will not ban an admin.", nil, nil
 	}
 
-	if err := banner.DeleteMessages(targetID); err != nil {
-		return "", nil, fmt.Errorf("deleting messages: %w", err)
-	}
+	if deletingBanner, ok := banner.(messageDeletingBanner); ok {
+		if err := deletingBanner.BanAndDeleteMessages(targetID, reason); err != nil {
+			return "", nil, fmt.Errorf("banning user and deleting messages: %w", err)
+		}
+	} else {
+		if err := banner.DeleteMessages(targetID); err != nil {
+			return "", nil, fmt.Errorf("deleting messages: %w", err)
+		}
 
-	if err := banner.Ban(targetID, reason); err != nil {
-		return "", nil, fmt.Errorf("banning user: %w", err)
+		if err := banner.Ban(targetID, reason); err != nil {
+			return "", nil, fmt.Errorf("banning user: %w", err)
+		}
 	}
 
 	h.DB.LogModAction(banner.Platform(), callerID, targetID, "dban", reason)
@@ -115,6 +125,11 @@ func (h *ModerationHandler) TBan(banner PlatformBanner, callerID, targetID strin
 	_ = banID
 
 	h.DB.LogModAction(banner.Platform(), callerID, targetID, "tban", reason)
+	time.AfterFunc(duration, func() {
+		_ = banner.Unban(targetID)
+		_ = h.DB.DeleteTimedBan(banID)
+		_ = h.DB.LogModAction(banner.Platform(), "system", targetID, "unban", "timed ban expired")
+	})
 
 	// Create case
 	var c *db.Case
@@ -136,7 +151,11 @@ func (h *ModerationHandler) SBan(banner PlatformBanner, callerID, targetID, reas
 	banner.DMUser(targetID, fmt.Sprintf("You have been softbanned from Metrolist. Reason: %s", reason))
 
 	if banner.Platform() == PlatformDiscord {
-		if err := banner.Ban(targetID, reason); err != nil {
+		if deletingBanner, ok := banner.(messageDeletingBanner); ok {
+			if err := deletingBanner.BanAndDeleteMessages(targetID, reason); err != nil {
+				return "", nil, fmt.Errorf("banning user and deleting messages: %w", err)
+			}
+		} else if err := banner.Ban(targetID, reason); err != nil {
 			return "", nil, fmt.Errorf("banning user: %w", err)
 		}
 		if err := banner.Unban(targetID); err != nil {

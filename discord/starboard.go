@@ -9,8 +9,14 @@ import (
 	"go.uber.org/zap"
 )
 
+const prohibitedFlagReaction = "🇮🇱"
+
 // handleReactionAdd handles reaction add events for starboard
 func (b *Bot) handleReactionAdd(s *discordgo.Session, r *discordgo.MessageReactionAdd) {
+	if b.handleProhibitedReaction(s, r) {
+		return
+	}
+
 	// Check if starboard is configured
 	if b.Config.StarboardChannelID == "" {
 		b.Logger.Debug("starboard reaction ignored - no channel configured",
@@ -60,6 +66,37 @@ func (b *Bot) handleReactionAdd(s *discordgo.Session, r *discordgo.MessageReacti
 	b.handleOriginalMessageReaction(s, r)
 }
 
+func (b *Bot) handleProhibitedReaction(s *discordgo.Session, r *discordgo.MessageReactionAdd) bool {
+	if r.GuildID != b.Config.DiscordGuildID || r.UserID == "" || r.Emoji.Name != prohibitedFlagReaction {
+		return false
+	}
+	if s.State != nil && s.State.User != nil && r.UserID == s.State.User.ID {
+		return true
+	}
+
+	if err := s.MessageReactionRemove(r.ChannelID, r.MessageID, r.Emoji.APIName(), r.UserID); err != nil {
+		b.Logger.Warn("failed to remove prohibited reaction",
+			zap.Error(err),
+			zap.String("messageID", r.MessageID),
+			zap.String("userID", r.UserID))
+	}
+
+	resp, extras, _, err := b.Warn.Warn(b.newBanner(), "system", r.UserID, "using prohibited :flag_il: reaction", b.Config)
+	if err != nil {
+		b.Logger.Error("failed to warn for prohibited reaction",
+			zap.Error(err),
+			zap.String("messageID", r.MessageID),
+			zap.String("userID", r.UserID))
+		return true
+	}
+
+	s.ChannelMessageSend(r.ChannelID, resp)
+	for _, extra := range extras {
+		s.ChannelMessageSendComplex(r.ChannelID, &discordgo.MessageSend{Content: suppressDiscordEmbeds(extra), Flags: discordgo.MessageFlagsSuppressEmbeds})
+	}
+	return true
+}
+
 // handleStarboardReaction handles star reactions on starboard messages
 func (b *Bot) handleStarboardReaction(s *discordgo.Session, r *discordgo.MessageReactionAdd) {
 	// Find the original message ID from the starboard entry
@@ -87,12 +124,11 @@ func (b *Bot) handleStarboardReaction(s *discordgo.Session, r *discordgo.Message
 		return
 	}
 
-	// Count total star reactions on the original message
 	starEmoji := b.Config.StarboardEmoji
 	if starEmoji == "" {
 		starEmoji = "⭐"
 	}
-	starCount := countReactions(msg.Reactions, starEmoji)
+	starCount := b.countTotalStarboardReactions(s, msg, entry.StarboardMsgID, starEmoji)
 
 	b.Logger.Info("starboard reaction on starboard message processed",
 		zap.String("starboardMsgID", r.MessageID),
@@ -152,15 +188,6 @@ func (b *Bot) handleOriginalMessageReaction(s *discordgo.Session, r *discordgo.M
 		return
 	}
 
-	// Count total star reactions
-	starCount := countReactions(msg.Reactions, starEmoji)
-
-	b.Logger.Info("starboard reaction processed",
-		zap.String("messageID", r.MessageID),
-		zap.Int("starCount", starCount),
-		zap.Int("totalReactions", len(msg.Reactions)),
-		zap.String("emoji", starEmoji))
-
 	// Check if message is already in starboard
 	entry, err := b.DB.GetStarboardEntry(r.MessageID)
 	if err != nil {
@@ -169,6 +196,19 @@ func (b *Bot) handleOriginalMessageReaction(s *discordgo.Session, r *discordgo.M
 			zap.String("messageID", r.MessageID))
 		return
 	}
+
+	// Count total star reactions. Existing entries also include stars on the starboard message.
+	var starboardMsgID *string
+	if entry != nil {
+		starboardMsgID = entry.StarboardMsgID
+	}
+	starCount := b.countTotalStarboardReactions(s, msg, starboardMsgID, starEmoji)
+
+	b.Logger.Info("starboard reaction processed",
+		zap.String("messageID", r.MessageID),
+		zap.Int("starCount", starCount),
+		zap.Int("totalReactions", len(msg.Reactions)),
+		zap.String("emoji", starEmoji))
 
 	threshold := b.Config.StarboardThreshold
 	if threshold == 0 {
@@ -335,7 +375,7 @@ func (b *Bot) handleStarboardReactionRemove(s *discordgo.Session, r *discordgo.M
 		return
 	}
 
-	starCount := countReactions(msg.Reactions, starEmoji)
+	starCount := b.countTotalStarboardReactions(s, msg, entry.StarboardMsgID, starEmoji)
 
 	threshold := b.Config.StarboardThreshold
 	if threshold == 0 {
@@ -423,13 +463,6 @@ func (b *Bot) handleOriginalMessageReactionRemove(s *discordgo.Session, r *disco
 		return
 	}
 
-	// Count total star reactions
-	starCount := countReactions(msg.Reactions, starEmoji)
-
-	b.Logger.Debug("starboard reaction removal counted stars",
-		zap.String("messageID", r.MessageID),
-		zap.Int("starCount", starCount))
-
 	// Get existing entry
 	entry, err := b.DB.GetStarboardEntry(r.MessageID)
 	if err != nil {
@@ -444,6 +477,13 @@ func (b *Bot) handleOriginalMessageReactionRemove(s *discordgo.Session, r *disco
 			zap.String("messageID", r.MessageID))
 		return // Not in starboard yet
 	}
+
+	// Count total star reactions, including stars on the starboard message.
+	starCount := b.countTotalStarboardReactions(s, msg, entry.StarboardMsgID, starEmoji)
+
+	b.Logger.Debug("starboard reaction removal counted stars",
+		zap.String("messageID", r.MessageID),
+		zap.Int("starCount", starCount))
 
 	threshold := b.Config.StarboardThreshold
 	if threshold == 0 {
@@ -536,6 +576,26 @@ func countReactions(reactions []*discordgo.MessageReactions, emoji string) int {
 		}
 	}
 	return 0
+}
+
+func (b *Bot) countTotalStarboardReactions(s *discordgo.Session, originalMsg *discordgo.Message, starboardMsgID *string, starEmoji string) int {
+	starCount := 0
+	if originalMsg != nil {
+		starCount += countReactions(originalMsg.Reactions, starEmoji)
+	}
+	if starboardMsgID == nil {
+		return starCount
+	}
+
+	starboardMsg, err := s.ChannelMessage(b.Config.StarboardChannelID, *starboardMsgID)
+	if err != nil {
+		b.Logger.Warn("failed to get starboard message for star counting",
+			zap.Error(err),
+			zap.String("starboardMsgID", *starboardMsgID))
+		return starCount
+	}
+
+	return starCount + countReactions(starboardMsg.Reactions, starEmoji)
 }
 
 // postToStarboard posts a message to the starboard channel

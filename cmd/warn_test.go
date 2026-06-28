@@ -13,15 +13,17 @@ type fakeWarnConfig struct{}
 func (fakeWarnConfig) GetPermaAdminIDs(platform string) []string { return nil }
 
 type fakeWarnBanner struct {
-	platform string
-	chatID   string
-	banCalls int
+	platform      string
+	chatID        string
+	banCalls      int
+	restrictCalls int
 }
 
 func (b *fakeWarnBanner) Ban(userID, reason string) error    { b.banCalls++; return nil }
 func (b *fakeWarnBanner) Unban(userID string) error          { return nil }
 func (b *fakeWarnBanner) DeleteMessages(userID string) error { return nil }
 func (b *fakeWarnBanner) Restrict(userID string, untilDate int64) error {
+	b.restrictCalls++
 	return nil
 }
 func (b *fakeWarnBanner) Unrestrict(userID string) error               { return nil }
@@ -91,7 +93,7 @@ func TestUnwarnUsesOneBasedIDs(t *testing.T) {
 	}
 }
 
-func TestWarnThresholdReturnsSingleCombinedMessage(t *testing.T) {
+func TestWarnUsesEscalatingTimeout(t *testing.T) {
 	database := openWarnTestDB(t)
 	handler := &WarnHandler{DB: database}
 	banner := &fakeWarnBanner{platform: "discord", chatID: "test-chat"}
@@ -107,17 +109,20 @@ func TestWarnThresholdReturnsSingleCombinedMessage(t *testing.T) {
 		t.Fatalf("Warn threshold: %v", err)
 	}
 
-	if !strings.Contains(resp, "(3/3)") {
+	if !strings.Contains(resp, "warning #3") {
 		t.Fatalf("response should include third warning count, got: %q", resp)
 	}
-	if !strings.Contains(resp, "Auto-action: permanently banned") {
-		t.Fatalf("response should include auto-ban notice, got: %q", resp)
+	if !strings.Contains(resp, "Auto-action: timed out for 1h40m") {
+		t.Fatalf("response should include escalating timeout notice, got: %q", resp)
 	}
 	if len(extras) != 0 {
 		t.Fatalf("expected no extra messages, got: %#v", extras)
 	}
-	if banner.banCalls != 1 {
-		t.Fatalf("expected one auto-ban call, got %d", banner.banCalls)
+	if banner.banCalls != 0 {
+		t.Fatalf("expected no auto-ban calls, got %d", banner.banCalls)
+	}
+	if banner.restrictCalls != 3 {
+		t.Fatalf("expected one timeout per warning, got %d", banner.restrictCalls)
 	}
 }
 

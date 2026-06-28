@@ -40,7 +40,7 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		return nil, fmt.Errorf("creating discord session: %w", err)
 	}
 
-	session.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsGuildMembers | discordgo.IntentsGuildBans | discordgo.IntentsGuildMessageReactions
+	session.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsGuildMembers | discordgo.IntentsGuildBans | discordgo.IntentsGuildMessageReactions | discordgo.IntentsMessageContent
 
 	bot := &Bot{
 		Session:         session,
@@ -406,7 +406,7 @@ func (b *Bot) registerCommands() error {
 		},
 		{
 			Name:        "purge",
-			Description: "Delete messages from current message until the one being replied to (admin only)",
+			Description: "Delete recent messages from the current channel (admin only)",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionInteger,
@@ -446,6 +446,10 @@ func (d *DiscordBanner) ChatID() string   { return d.guildID }
 
 func (d *DiscordBanner) Ban(userID, reason string) error {
 	return d.session.GuildBanCreateWithReason(d.guildID, userID, reason, 0)
+}
+
+func (d *DiscordBanner) BanAndDeleteMessages(userID, reason string) error {
+	return d.session.GuildBanCreateWithReason(d.guildID, userID, reason, 7)
 }
 
 func (d *DiscordBanner) Unban(userID string) error {

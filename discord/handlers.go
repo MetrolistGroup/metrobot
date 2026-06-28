@@ -197,7 +197,7 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		"• /warnings [user] - Show warnings for a user\n" +
 		"• /unwarn [user] [id] - Remove a warning from a user\n" +
 		"• /dehoist [user] [dry] - Remove hoisting characters from name\n" +
-		"• /purge [count] - Delete messages (reply to message or use count)\n\n" +
+		"• /purge [count] - Delete recent messages\n\n" +
 		"**Admin Management (permaadmin only):**\n" +
 		"• /addadmin [user] - Add a bot admin\n" +
 		"• /removeadmin [user] - Remove a bot admin\n\n" +
@@ -205,7 +205,7 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		"Moderation actions can also be triggered via message prefix: !action [user] [args]\n" +
 		"Example: !ban @user spam\n\n" +
 		"**Notes Trigger:**\n" +
-		"Type nnotename to display a note (e.g., nhelp, nrules)"
+		"Type .notename to display a note (e.g., .help, .rules)"
 	respondEphemeral(s, i, help)
 }
 
@@ -564,54 +564,12 @@ func (b *Bot) handlePurge(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		return
 	}
 
-	// Check if this is a reply to another message
-	var targetMessageID string
-	if i.Interaction.Type == discordgo.InteractionApplicationCommand {
-		// Try to get the message from the channel to check for reply
-		msgs, err := s.ChannelMessages(i.ChannelID, 1, "", "", i.ID)
-		if err == nil && len(msgs) > 0 {
-			// Look for a referenced message
-			if msgs[0].ReferencedMessage != nil {
-				targetMessageID = msgs[0].ReferencedMessage.ID
-			}
-		}
-
-		// Also check resolved messages from Discord
-		interactionData := i.ApplicationCommandData()
-		if interactionData.Resolved != nil && interactionData.Resolved.Messages != nil {
-			// Try to find a referenced message
-			for _, msg := range interactionData.Resolved.Messages {
-				if msg != nil && msg.ID != i.ID {
-					targetMessageID = msg.ID
-					break
-				}
-			}
-		}
-	}
-
-	// Alternative: check for count option
 	var count int64 = 0
 	if opt, ok := opts["count"]; ok {
 		count = opt.IntValue()
 	}
 
-	// If we have a target message from reply, delete messages from current to target
-	if targetMessageID != "" {
-		// Defer the response since this might take time
-		if err := deferResponse(s, i, true); err != nil {
-			b.Logger.Error("failed to defer purge response", zap.Error(err))
-			return
-		}
-
-		deleted, err := b.purgeMessagesBetween(s, i.ChannelID, i.ID, targetMessageID)
-		if err != nil {
-			b.Logger.Error("purge failed", zap.Error(err))
-			editDeferredResponse(s, i, fmt.Sprintf("Error executing purge: %s", err))
-			return
-		}
-
-		editDeferredResponse(s, i, fmt.Sprintf("🗑️ Deleted %d messages.", deleted))
-	} else if count > 0 {
+	if count > 0 {
 		// Delete last N messages
 		if count > 100 {
 			count = 100
@@ -623,7 +581,7 @@ func (b *Bot) handlePurge(s *discordgo.Session, i *discordgo.InteractionCreate, 
 			return
 		}
 
-		msgs, err := s.ChannelMessages(i.ChannelID, int(count)+1, "", "", i.ID)
+		msgs, err := s.ChannelMessages(i.ChannelID, int(count), "", "", "")
 		if err != nil {
 			b.Logger.Error("failed to get messages for purge", zap.Error(err))
 			editDeferredResponse(s, i, "Error fetching messages.")
@@ -632,9 +590,7 @@ func (b *Bot) handlePurge(s *discordgo.Session, i *discordgo.InteractionCreate, 
 
 		var toDelete []string
 		for _, msg := range msgs {
-			if msg.ID != i.ID { // Don't delete the command message yet
-				toDelete = append(toDelete, msg.ID)
-			}
+			toDelete = append(toDelete, msg.ID)
 		}
 
 		if len(toDelete) > 1 {
@@ -643,71 +599,10 @@ func (b *Bot) handlePurge(s *discordgo.Session, i *discordgo.InteractionCreate, 
 			s.ChannelMessageDelete(i.ChannelID, toDelete[0])
 		}
 
-		// Delete the command message
-		s.ChannelMessageDelete(i.ChannelID, i.ID)
-
 		editDeferredResponse(s, i, fmt.Sprintf("🗑️ Deleted %d messages.", len(toDelete)))
 	} else {
-		respondEphemeral(s, i, "Please reply to a message or provide a count to purge.")
+		respondEphemeral(s, i, "Please provide a count to purge.")
 	}
-}
-
-// purgeMessagesBetween deletes all messages between two message IDs (inclusive of the target)
-func (b *Bot) purgeMessagesBetween(s *discordgo.Session, channelID, commandID, targetID string) (int, error) {
-	var allMessages []string
-	var beforeID string
-
-	// Keep fetching messages until we find the target
-	for {
-		msgs, err := s.ChannelMessages(channelID, 100, beforeID, "", commandID)
-		if err != nil {
-			return 0, err
-		}
-
-		if len(msgs) == 0 {
-			break
-		}
-
-		for _, msg := range msgs {
-			if msg.ID == targetID {
-				// Found the target, include it and stop
-				allMessages = append(allMessages, msg.ID)
-				beforeID = ""
-				break
-			}
-			allMessages = append(allMessages, msg.ID)
-		}
-
-		if beforeID == "" {
-			break // Found target or reached end
-		}
-
-		beforeID = msgs[len(msgs)-1].ID
-	}
-
-	// Delete messages in chunks
-	deleted := 0
-	for len(allMessages) > 0 {
-		chunkSize := 100
-		if len(allMessages) < chunkSize {
-			chunkSize = len(allMessages)
-		}
-
-		chunk := allMessages[:chunkSize]
-		allMessages = allMessages[chunkSize:]
-
-		if len(chunk) > 1 {
-			s.ChannelMessagesBulkDelete(channelID, chunk)
-		} else if len(chunk) == 1 {
-			s.ChannelMessageDelete(channelID, chunk[0])
-		}
-		deleted += len(chunk)
-	}
-
-	// Delete the command message
-	s.ChannelMessageDelete(channelID, commandID)
-
-	return deleted, nil
 }
 
 func (b *Bot) handleRefreshStarboard(s *discordgo.Session, i *discordgo.InteractionCreate, callerID string) {
