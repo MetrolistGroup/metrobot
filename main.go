@@ -110,7 +110,10 @@ func main() {
 	notesHandler := &cmd.NotesHandler{DB: database}
 	versionHandler := &cmd.VersionHandler{Releases: releasesClient}
 	actionsHandler := &cmd.ActionsHandler{Actions: actionsClient, Config: cfg}
-	moderationHandler := &cmd.ModerationHandler{DB: database}
+	// Create timer manager for proper cleanup
+	timerManager := NewTimerManager()
+
+	moderationHandler := &cmd.ModerationHandler{DB: database, Scheduler: timerManager}
 	warnHandler := &cmd.WarnHandler{DB: database}
 	adminHandler := &cmd.AdminHandler{DB: database}
 	pingHandler := &cmd.PingHandler{}
@@ -119,9 +122,6 @@ func main() {
 	// Wire up case handler with moderation handlers
 	moderationHandler.SetCaseHandler(caseHandler)
 	warnHandler.SetCaseHandler(caseHandler)
-
-	// Create timer manager for proper cleanup
-	timerManager := NewTimerManager()
 
 	discordBot, err := discord.New(cfg, database, logger,
 		notesHandler, versionHandler, actionsHandler,
@@ -254,6 +254,9 @@ func restoreTimedMutes(database *db.DB, discordBot *discord.Bot, telegramBot *te
 				zap.Int64("mute_id", mute.ID),
 				zap.String("user_id", mute.UserID),
 			)
+			if err := unmuteTimedUser(mute.Platform, mute.UserID, discordBot, telegramBot); err != nil {
+				logger.Error("failed to unmute expired timed mute", zap.Error(err), zap.String("user_id", mute.UserID))
+			}
 			if err := database.DeleteMute(mute.ID); err != nil {
 				logger.Error("failed to delete expired timed mute", zap.Error(err))
 			}
@@ -303,4 +306,15 @@ func restoreTimedMutes(database *db.DB, discordBot *discord.Bot, telegramBot *te
 	}
 
 	logger.Info("timed mutes restored", zap.Int("count", len(mutes)))
+}
+
+func unmuteTimedUser(platform, userID string, discordBot *discord.Bot, telegramBot *telegram.Bot) error {
+	switch platform {
+	case "discord":
+		return discordBot.NewBanner().Unrestrict(userID)
+	case "telegram":
+		return telegramBot.NewBanner().Unrestrict(userID)
+	default:
+		return fmt.Errorf("unsupported platform %q", platform)
+	}
 }

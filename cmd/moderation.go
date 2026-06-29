@@ -40,6 +40,11 @@ type MemberInfo struct {
 type ModerationHandler struct {
 	DB          *db.DB
 	CaseHandler *CaseHandler
+	Scheduler   TimerScheduler
+}
+
+type TimerScheduler interface {
+	AddTimer(id string, duration time.Duration, cleanupCallback func())
 }
 
 type messageDeletingBanner interface {
@@ -114,18 +119,18 @@ func (h *ModerationHandler) TBan(banner PlatformBanner, callerID, targetID strin
 
 	expiresAt := time.Now().Add(duration).Unix()
 
-	if err := banner.Ban(targetID, reason); err != nil {
-		return "", nil, fmt.Errorf("banning user: %w", err)
-	}
-
 	banID, err := h.DB.AddTimedBan(banner.Platform(), banner.ChatID(), targetID, expiresAt, reason)
 	if err != nil {
 		return "", nil, fmt.Errorf("storing timed ban: %w", err)
 	}
-	_ = banID
+
+	if err := banner.Ban(targetID, reason); err != nil {
+		_ = h.DB.DeleteTimedBan(banID)
+		return "", nil, fmt.Errorf("banning user: %w", err)
+	}
 
 	h.DB.LogModAction(banner.Platform(), callerID, targetID, "tban", reason)
-	time.AfterFunc(duration, func() {
+	h.scheduleTimer(fmt.Sprintf("ban_%d", banID), duration, func() {
 		_ = banner.Unban(targetID)
 		_ = h.DB.DeleteTimedBan(banID)
 		_ = h.DB.LogModAction(banner.Platform(), "system", targetID, "unban", "timed ban expired")
@@ -191,16 +196,16 @@ func (h *ModerationHandler) Mute(banner PlatformBanner, callerID, targetID strin
 
 	expiresAt := time.Now().Add(duration).Unix()
 
-	if err := banner.Restrict(targetID, expiresAt); err != nil {
-		return "", nil, fmt.Errorf("muting user: %w", err)
-	}
-
 	// Store timed mute for restoration after restart
 	muteID, err := h.DB.AddMute(banner.Platform(), banner.ChatID(), targetID, expiresAt, reason)
 	if err != nil {
 		return "", nil, fmt.Errorf("storing timed mute: %w", err)
 	}
-	_ = muteID
+
+	if err := banner.Restrict(targetID, expiresAt); err != nil {
+		_ = h.DB.DeleteMute(muteID)
+		return "", nil, fmt.Errorf("muting user: %w", err)
+	}
 
 	h.DB.LogModAction(banner.Platform(), callerID, targetID, "mute", reason)
 
@@ -213,13 +218,22 @@ func (h *ModerationHandler) Mute(banner PlatformBanner, callerID, targetID strin
 	}
 
 	// Schedule unmute
-	time.AfterFunc(duration, func() {
+	h.scheduleTimer(fmt.Sprintf("mute_%d", muteID), duration, func() {
+		_ = banner.Unrestrict(targetID)
 		h.DB.DeleteMute(muteID)
 		h.DB.LogModAction(banner.Platform(), "system", targetID, "unmute", "timed mute expired")
 	})
 
 	reasonText := " Reason: " + reason
 	return fmt.Sprintf("🔇 %s has been muted for %s.%s", formatUserRef(banner, targetID), util.FormatDuration(duration), reasonText), c, nil
+}
+
+func (h *ModerationHandler) scheduleTimer(id string, duration time.Duration, cleanupCallback func()) {
+	if h.Scheduler != nil {
+		h.Scheduler.AddTimer(id, duration, cleanupCallback)
+		return
+	}
+	time.AfterFunc(duration, cleanupCallback)
 }
 
 func (h *ModerationHandler) Dehoist(banner PlatformBanner, targetID string, dry bool, cfg db.PermaAdminProvider) (string, error) {

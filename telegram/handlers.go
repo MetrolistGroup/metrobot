@@ -157,7 +157,6 @@ func (b *Bot) handleCommand(msg *tgbotapi.Message, callerID string) {
 		b.tgHandleWarnings(msg, args)
 	case "warns":
 		b.tgHandleWarnings(msg, args)
-		b.tgHandleWarnings(msg, args)
 	case "unwarn":
 		b.tgHandleUnwarn(msg, args, callerID)
 	case "dehoist":
@@ -215,7 +214,7 @@ func (b *Bot) tgHandleNotes(msg *tgbotapi.Message, stay bool) {
 		b.Logger.Error("notes error", zap.Error(err))
 		return
 	}
-	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, text, "", false, b.Logger)
+	sendEphemeralReply(b.API, msg.Chat.ID, msg.MessageID, text, "", stay, b.Logger)
 }
 
 func (b *Bot) tgHandleNote(msg *tgbotapi.Message, args string, stay bool) {
@@ -229,7 +228,7 @@ func (b *Bot) tgHandleNote(msg *tgbotapi.Message, args string, stay bool) {
 		b.Logger.Error("note error", zap.Error(err))
 		return
 	}
-	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, text, "", false, b.Logger)
+	sendEphemeralReply(b.API, msg.Chat.ID, msg.MessageID, text, "", stay, b.Logger)
 }
 
 func (b *Bot) tgHandleAddNote(msg *tgbotapi.Message, args string, callerID string) {
@@ -420,17 +419,14 @@ func (b *Bot) tgHandleTBan(msg *tgbotapi.Message, args string, callerID string) 
 		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Could not resolve user.", "", false, b.Logger)
 		return
 	}
-	dur, err := util.ParseDuration(parts[1])
-	if err != nil {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, fmt.Sprintf("Invalid duration: %s", err), "", false, b.Logger)
+	durationStr, reason, ok := timedModerationArgs(parts, msg.ReplyToMessage != nil)
+	if !ok {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "tban - usage: tban [user] [duration] [reason]", "", false, b.Logger)
 		return
 	}
-	var reason string
-	if len(parts) > 2 {
-		reason = strings.Join(parts[2:], " ")
-	}
-	if reason == "" {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "tban - usage: tban [user] [duration] [reason]", "", false, b.Logger)
+	dur, err := util.ParseDuration(durationStr)
+	if err != nil {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, fmt.Sprintf("Invalid duration: %s", err), "", false, b.Logger)
 		return
 	}
 	banner := b.newBanner()
@@ -509,16 +505,14 @@ func (b *Bot) tgHandleMute(msg *tgbotapi.Message, args string, callerID string) 
 		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Could not resolve user.", "", false, b.Logger)
 		return
 	}
-	dur, err := util.ParseDuration(parts[1])
-	if err != nil {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, fmt.Sprintf("Invalid duration: %s", err), "", false, b.Logger)
+	durationStr, reason, ok := timedModerationArgs(parts, msg.ReplyToMessage != nil)
+	if !ok {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "mute - usage: mute [user] [duration] [reason]", "", false, b.Logger)
 		return
 	}
-	if len(parts) > 2 {
-		reason = strings.Join(parts[2:], " ")
-	}
-	if reason == "" {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "mute - usage: mute [user] [duration] [reason]", "", false, b.Logger)
+	dur, err := util.ParseDuration(durationStr)
+	if err != nil {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, fmt.Sprintf("Invalid duration: %s", err), "", false, b.Logger)
 		return
 	}
 	banner := b.newBanner()
@@ -758,6 +752,18 @@ func extractTelegramUserID(msg *tgbotapi.Message, mention string) string {
 	}
 
 	return mention
+}
+
+func timedModerationArgs(parts []string, isReply bool) (durationStr string, reason string, ok bool) {
+	durationIndex := 1
+	if isReply {
+		durationIndex = 0
+	}
+	if len(parts) <= durationIndex+1 {
+		return "", "", false
+	}
+
+	return parts[durationIndex], strings.Join(parts[durationIndex+1:], " "), true
 }
 
 func chunkString(s string, maxLen int) []string {

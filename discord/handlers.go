@@ -231,7 +231,7 @@ func (b *Bot) handleNote(s *discordgo.Session, i *discordgo.InteractionCreate, o
 	if stay {
 		respondPublic(s, i, text)
 	} else {
-		respondPublic(s, i, text)
+		respondEphemeral(s, i, text)
 	}
 }
 

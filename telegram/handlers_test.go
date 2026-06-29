@@ -60,3 +60,28 @@ func TestFormatTelegramNoteHTMLKeepsBoldOutOfCode(t *testing.T) {
 		t.Fatalf("formatTelegramNoteHTML() = %q, want %q", formatted, want)
 	}
 }
+
+func TestTimedModerationArgs(t *testing.T) {
+	tests := []struct {
+		name         string
+		args         []string
+		isReply      bool
+		wantDuration string
+		wantReason   string
+		wantOK       bool
+	}{
+		{name: "normal command", args: []string{"123", "1h", "spam"}, wantDuration: "1h", wantReason: "spam", wantOK: true},
+		{name: "reply command", args: []string{"1h", "spam"}, isReply: true, wantDuration: "1h", wantReason: "spam", wantOK: true},
+		{name: "normal missing reason", args: []string{"123", "1h"}, wantOK: false},
+		{name: "reply missing reason", args: []string{"1h"}, isReply: true, wantOK: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotDuration, gotReason, gotOK := timedModerationArgs(tt.args, tt.isReply)
+			if gotOK != tt.wantOK || gotDuration != tt.wantDuration || gotReason != tt.wantReason {
+				t.Fatalf("timedModerationArgs() = (%q, %q, %v), want (%q, %q, %v)", gotDuration, gotReason, gotOK, tt.wantDuration, tt.wantReason, tt.wantOK)
+			}
+		})
+	}
+}

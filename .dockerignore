@@ -5,3 +5,8 @@
 .dockerignore
 *_test.go
 **/*_test.go
+config.json
+bot.db*
+bot.log
+metrobot
+main
