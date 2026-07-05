@@ -8,12 +8,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/util"
 	"github.com/bwmarrin/discordgo"
 	"go.uber.org/zap"
 )
 
 var chatModPattern = regexp.MustCompile(`(?i)^!(ban|dban|tban|sban|mute|warn)\s*(.*)$`)
+
+var newMemberDehoistDelays = []time.Duration{
+	2 * time.Second,
+	10 * time.Second,
+	30 * time.Second,
+	2 * time.Minute,
+}
 
 func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	if i.GuildID != b.Config.DiscordGuildID {
@@ -758,46 +766,16 @@ func (b *Bot) onGuildMemberAdd(s *discordgo.Session, m *discordgo.GuildMemberAdd
 	if m.GuildID != b.Config.DiscordGuildID {
 		return
 	}
+	if m.User == nil {
+		return
+	}
+	userID := m.User.ID
 
-	// Run dehoisting for the new member after a short delay to ensure member data is available
 	go func() {
-		time.Sleep(2 * time.Second)
-
-		// Check if we have permission to manage this user's nickname
-		botMember, err := s.GuildMember(m.GuildID, s.State.User.ID)
-		if err != nil {
-			b.Logger.Debug("failed to get bot member for permission check on new member",
-				zap.String("userID", m.User.ID), zap.Error(err))
-			return
-		}
-
-		// Check if the bot's highest role is higher than the target's highest role
-		canManage := canManageMember(s, m.GuildID, botMember, m.Member)
-		if !canManage {
-			b.Logger.Debug("skipping dehoist for new member - insufficient permissions",
-				zap.String("userID", m.User.ID),
-				zap.String("displayName", m.Nick))
-			return
-		}
-
-		banner := b.newBanner()
-		displayName, err := banner.GetDisplayName(m.User.ID)
-		if err != nil {
-			b.Logger.Error("failed to get display name for new member",
-				zap.String("userID", m.User.ID), zap.Error(err))
-			return
-		}
-
-		// Check if dehoisting is needed
-		if needsDehoisting(displayName) {
-			b.Logger.Info("auto-dehoisting new member",
-				zap.String("userID", m.User.ID),
-				zap.String("displayName", displayName))
-
-			_, err := b.Moderation.Dehoist(banner, m.User.ID, false, b.Config)
-			if err != nil {
-				b.Logger.Error("failed to dehoist new member",
-					zap.String("userID", m.User.ID), zap.Error(err))
+		for attempt, delay := range newMemberDehoistDelays {
+			time.Sleep(delay)
+			if b.autoDehoistMember(s, m.GuildID, userID, "new member", attempt+1) {
+				return
 			}
 		}
 	}()
@@ -807,60 +785,75 @@ func (b *Bot) onGuildMemberUpdate(s *discordgo.Session, m *discordgo.GuildMember
 	if m.GuildID != b.Config.DiscordGuildID {
 		return
 	}
-
-	// Check if we have permission to manage this user's nickname
-	botMember, err := s.GuildMember(m.GuildID, s.State.User.ID)
-	if err != nil {
-		b.Logger.Debug("failed to get bot member for permission check",
-			zap.String("userID", m.User.ID), zap.Error(err))
-		return
-	}
-
-	// Check if the bot's highest role is higher than the target's highest role
-	canManage := canManageMember(s, m.GuildID, botMember, m.Member)
-	if !canManage {
-		b.Logger.Debug("skipping dehoist - insufficient permissions",
-			zap.String("userID", m.User.ID),
-			zap.String("displayName", m.Nick))
+	if m.User == nil {
 		return
 	}
 
 	// Check if the user changed their nickname (we only auto-dehoist Discord changes)
 	// We can't detect if it was a Discord vs manual change, so we'll dehoist any hoisting characters
-	banner := b.newBanner()
-	displayName, err := banner.GetDisplayName(m.User.ID)
-	if err != nil {
-		b.Logger.Error("failed to get display name for updated member",
-			zap.String("userID", m.User.ID), zap.Error(err))
-		return
-	}
-
-	// Check if dehoisting is needed
-	if needsDehoisting(displayName) {
-		b.Logger.Info("auto-dehoisting updated member",
-			zap.String("userID", m.User.ID),
-			zap.String("displayName", displayName))
-
-		_, err := b.Moderation.Dehoist(banner, m.User.ID, false, b.Config)
-		if err != nil {
-			b.Logger.Error("failed to dehoist updated member",
-				zap.String("userID", m.User.ID), zap.Error(err))
-		}
-	}
+	b.autoDehoistMember(s, m.GuildID, m.User.ID, "updated member", 1)
 }
 
-// needsDehoisting checks if a display name starts with non-alphanumeric characters
-func needsDehoisting(name string) bool {
-	if len(name) == 0 {
+func (b *Bot) autoDehoistMember(s *discordgo.Session, guildID, userID, source string, attempt int) bool {
+	botMember, err := s.GuildMember(guildID, s.State.User.ID)
+	if err != nil {
+		b.Logger.Debug("failed to get bot member for auto-dehoist permission check",
+			zap.String("userID", userID), zap.String("source", source), zap.Int("attempt", attempt), zap.Error(err))
 		return false
 	}
 
-	// Get the first rune of the name
-	for _, r := range name {
-		isAlphanumeric := (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
-		return !isAlphanumeric
+	targetMember, err := s.GuildMember(guildID, userID)
+	if err != nil {
+		if restErr, ok := err.(*discordgo.RESTError); ok && restErr.Response != nil && restErr.Response.StatusCode == 404 {
+			b.Logger.Debug("skipping auto-dehoist - member no longer in guild",
+				zap.String("userID", userID), zap.String("source", source), zap.Int("attempt", attempt))
+			return true
+		}
+		b.Logger.Debug("failed to get member for auto-dehoist",
+			zap.String("userID", userID), zap.String("source", source), zap.Int("attempt", attempt), zap.Error(err))
+		return false
 	}
-	return false
+
+	if targetMember.User == nil {
+		b.Logger.Debug("failed to auto-dehoist member with missing user data",
+			zap.String("userID", userID), zap.String("source", source), zap.Int("attempt", attempt))
+		return false
+	}
+	if targetMember.User.Bot || b.DB.IsAdmin("discord", userID, b.Config) {
+		return true
+	}
+
+	if !canManageMember(s, guildID, botMember, targetMember) {
+		b.Logger.Debug("skipping auto-dehoist - insufficient permissions",
+			zap.String("userID", userID), zap.String("source", source), zap.Int("attempt", attempt), zap.String("displayName", targetMember.Nick))
+		return false
+	}
+
+	banner := b.newBanner()
+	displayName, err := banner.GetDisplayName(userID)
+	if err != nil {
+		b.Logger.Error("failed to get display name for auto-dehoist",
+			zap.String("userID", userID), zap.String("source", source), zap.Int("attempt", attempt), zap.Error(err))
+		return false
+	}
+
+	if cmd.NeedsDehoisting(displayName) {
+		b.Logger.Info("auto-dehoisting member",
+			zap.String("userID", userID),
+			zap.String("source", source),
+			zap.Int("attempt", attempt),
+			zap.String("displayName", displayName))
+
+		_, err := b.Moderation.Dehoist(banner, userID, false, b.Config)
+		if err != nil {
+			b.Logger.Error("failed to auto-dehoist member",
+				zap.String("userID", userID), zap.String("source", source), zap.Int("attempt", attempt), zap.Error(err))
+			return false
+		}
+		return true
+	}
+
+	return source != "new member"
 }
 
 // canManageMember checks if the bot can manage a member's nickname

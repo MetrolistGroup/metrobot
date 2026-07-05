@@ -368,6 +368,11 @@ func (h *ModerationHandler) dehoistDryRun(banner PlatformBanner, targetID string
 	return result, nil
 }
 
+// NeedsDehoisting reports whether the name would change after dehoisting.
+func NeedsDehoisting(name string) bool {
+	return name != "" && stripHoistChars(name) != name
+}
+
 func stripHoistChars(s string) string {
 	var b strings.Builder
 	seenNormal := false

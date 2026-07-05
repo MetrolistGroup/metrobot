@@ -123,3 +123,24 @@ func TestDehoistSkipsAdminTarget(t *testing.T) {
 		t.Fatalf("response should explain admin is not dehoisted, got: %q", resp)
 	}
 }
+
+func TestNeedsDehoistingMatchesStripHoistChars(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{name: "Alice", want: false},
+		{name: "!!!Alice", want: true},
+		{name: " Alice", want: true},
+		{name: "Alice!", want: true},
+		{name: "", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NeedsDehoisting(tt.name); got != tt.want {
+				t.Fatalf("NeedsDehoisting(%q) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
