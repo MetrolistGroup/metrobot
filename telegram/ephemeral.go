@@ -28,6 +28,22 @@ func sendEphemeralReply(bot *tgbotapi.BotAPI, chatID int64, replyToMsgID int, te
 	}
 }
 
+func sendEphemeralNoteReply(bot *tgbotapi.BotAPI, chatID int64, replyToMsgID int, text string, stay bool, logger *zap.Logger) {
+	msg := newTelegramNoteMessage(chatID, text)
+	msg.ReplyToMessageID = replyToMsgID
+
+	sent, err := bot.Send(msg)
+	if err != nil {
+		logger.Error("failed to send telegram message", zap.Error(err))
+		return
+	}
+
+	if !stay {
+		scheduleDelete(bot, chatID, sent.MessageID, logger)
+		scheduleDelete(bot, chatID, replyToMsgID, logger)
+	}
+}
+
 func sendPublicReply(bot *tgbotapi.BotAPI, chatID int64, replyToMsgID int, text string, parseMode string, autoDelete bool, logger *zap.Logger) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ReplyToMessageID = replyToMsgID
@@ -46,6 +62,29 @@ func sendPublicReply(bot *tgbotapi.BotAPI, chatID int64, replyToMsgID int, text 
 		scheduleDelete(bot, chatID, sent.MessageID, logger)
 		scheduleDelete(bot, chatID, replyToMsgID, logger)
 	}
+}
+
+func sendPublicNoteReply(bot *tgbotapi.BotAPI, chatID int64, replyToMsgID int, text string, autoDelete bool, logger *zap.Logger) {
+	msg := newTelegramNoteMessage(chatID, text)
+	msg.ReplyToMessageID = replyToMsgID
+
+	sent, err := bot.Send(msg)
+	if err != nil {
+		logger.Error("failed to send telegram message", zap.Error(err))
+		return
+	}
+
+	if autoDelete {
+		scheduleDelete(bot, chatID, sent.MessageID, logger)
+		scheduleDelete(bot, chatID, replyToMsgID, logger)
+	}
+}
+
+func newTelegramNoteMessage(chatID int64, text string) tgbotapi.MessageConfig {
+	msg := tgbotapi.NewMessage(chatID, formatTelegramNoteHTML(text))
+	msg.ParseMode = "HTML"
+	msg.DisableWebPagePreview = !hasEmbeddableDiscordURL(text)
+	return msg
 }
 
 func scheduleDelete(bot *tgbotapi.BotAPI, chatID int64, msgID int, logger *zap.Logger) {

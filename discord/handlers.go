@@ -114,7 +114,7 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 			b.Logger.Debug("note not found", zap.String("note", noteName), zap.Error(err))
 			return
 		}
-		sendReply(s, m.ChannelID, m.ID, text, false, b.Logger)
+		sendReplyAllowEmbeds(s, m.ChannelID, m.ID, text, false, b.Logger)
 		return
 	}
 
@@ -237,9 +237,9 @@ func (b *Bot) handleNote(s *discordgo.Session, i *discordgo.InteractionCreate, o
 	}
 
 	if stay {
-		respondPublic(s, i, text)
+		respondPublicAllowEmbeds(s, i, text)
 	} else {
-		respondEphemeral(s, i, text)
+		respondEphemeralAllowEmbeds(s, i, text)
 	}
 }
 

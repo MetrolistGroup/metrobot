@@ -22,12 +22,31 @@ func respondEphemeral(s *discordgo.Session, i *discordgo.InteractionCreate, cont
 	})
 }
 
+func respondEphemeralAllowEmbeds(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: content,
+			Flags:   discordgo.MessageFlagsEphemeral,
+		},
+	})
+}
+
 func respondPublic(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
 			Content: suppressDiscordEmbeds(content),
 			Flags:   discordgo.MessageFlagsSuppressEmbeds,
+		},
+	})
+}
+
+func respondPublicAllowEmbeds(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: content,
 		},
 	})
 }
@@ -78,6 +97,25 @@ func sendReply(s *discordgo.Session, channelID, messageID, content string, autoD
 	msg, err := s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
 		Content: suppressDiscordEmbeds(content),
 		Flags:   discordgo.MessageFlagsSuppressEmbeds,
+		Reference: &discordgo.MessageReference{
+			MessageID: messageID,
+		},
+	})
+	if err != nil {
+		logger.Error("failed to send reply", zap.Error(err))
+		return
+	}
+
+	if autoDelete {
+		time.AfterFunc(15*time.Minute, func() {
+			s.ChannelMessageDelete(channelID, msg.ID)
+		})
+	}
+}
+
+func sendReplyAllowEmbeds(s *discordgo.Session, channelID, messageID, content string, autoDelete bool, logger *zap.Logger) {
+	msg, err := s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+		Content: content,
 		Reference: &discordgo.MessageReference{
 			MessageID: messageID,
 		},

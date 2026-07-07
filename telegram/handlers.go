@@ -16,6 +16,8 @@ import (
 var chatModPattern = regexp.MustCompile(`(?i)^!(ban|dban|tban|sban|mute|warn)\s*(.*)$`)
 var telegramBoldPattern = regexp.MustCompile(`\*\*([^*\n][^\n]*?)\*\*`)
 var telegramInlineCodePattern = regexp.MustCompile("`([^`\\n]+)`")
+var telegramSuppressedURLPattern = regexp.MustCompile(`<https?://[^>\s]+>`)
+var telegramURLPattern = regexp.MustCompile(`https?://[^>\s]+`)
 
 func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	callerID := telegramSenderID(msg)
@@ -36,7 +38,7 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 			b.Logger.Debug("note not found", zap.String("note", noteName), zap.Error(err))
 			return
 		}
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, text, "", false, b.Logger)
+		sendPublicNoteReply(b.API, msg.Chat.ID, msg.MessageID, text, false, b.Logger)
 		return
 	}
 
@@ -214,7 +216,7 @@ func (b *Bot) tgHandleNotes(msg *tgbotapi.Message, stay bool) {
 		b.Logger.Error("notes error", zap.Error(err))
 		return
 	}
-	sendEphemeralReply(b.API, msg.Chat.ID, msg.MessageID, text, "", stay, b.Logger)
+	sendEphemeralNoteReply(b.API, msg.Chat.ID, msg.MessageID, text, stay, b.Logger)
 }
 
 func (b *Bot) tgHandleNote(msg *tgbotapi.Message, args string, stay bool) {
@@ -228,7 +230,7 @@ func (b *Bot) tgHandleNote(msg *tgbotapi.Message, args string, stay bool) {
 		b.Logger.Error("note error", zap.Error(err))
 		return
 	}
-	sendEphemeralReply(b.API, msg.Chat.ID, msg.MessageID, text, "", stay, b.Logger)
+	sendEphemeralNoteReply(b.API, msg.Chat.ID, msg.MessageID, text, stay, b.Logger)
 }
 
 func (b *Bot) tgHandleAddNote(msg *tgbotapi.Message, args string, callerID string) {
@@ -863,9 +865,13 @@ func formatTelegramNoteLine(line string) string {
 }
 
 func formatTelegramInlineHTML(text string) string {
-	escaped := html.EscapeString(text)
-	protected, codePlaceholders := protectTelegramCodeSpans(escaped)
+	protected, codePlaceholders := protectTelegramCodeSpans(text)
+	protected, suppressedURLPlaceholders := protectTelegramSuppressedURLs(protected)
+	protected = html.EscapeString(protected)
 	protected = telegramBoldPattern.ReplaceAllString(protected, "<b>$1</b>")
+	for placeholder, urlHTML := range suppressedURLPlaceholders {
+		protected = strings.ReplaceAll(protected, placeholder, urlHTML)
+	}
 	for placeholder, codeHTML := range codePlaceholders {
 		protected = strings.ReplaceAll(protected, placeholder, codeHTML)
 	}
@@ -877,11 +883,38 @@ func protectTelegramCodeSpans(text string) (string, map[string]string) {
 	index := 0
 
 	protected := telegramInlineCodePattern.ReplaceAllStringFunc(text, func(match string) string {
-		placeholder := fmt.Sprintf("__METROBOT_CODE_%d__", index)
-		placeholders[placeholder] = telegramInlineCodePattern.ReplaceAllString(match, "<code>$1</code>")
+		placeholder := fmt.Sprintf("METROBOTCODE%d", index)
+		placeholders[placeholder] = "<code>" + html.EscapeString(match[1:len(match)-1]) + "</code>"
 		index++
 		return placeholder
 	})
 
 	return protected, placeholders
+}
+
+func protectTelegramSuppressedURLs(text string) (string, map[string]string) {
+	placeholders := make(map[string]string)
+	index := 0
+
+	protected := telegramSuppressedURLPattern.ReplaceAllStringFunc(text, func(match string) string {
+		placeholder := fmt.Sprintf("METROBOTSUPPRESSEDURL%d", index)
+		url := match[1 : len(match)-1]
+		placeholders[placeholder] = "&lt;<code>" + html.EscapeString(url) + "</code>&gt;"
+		index++
+		return placeholder
+	})
+
+	return protected, placeholders
+}
+
+func hasEmbeddableDiscordURL(text string) bool {
+	matches := telegramURLPattern.FindAllStringIndex(text, -1)
+	for _, match := range matches {
+		start, end := match[0], match[1]
+		if start > 0 && text[start-1] == '<' && end < len(text) && text[end] == '>' {
+			continue
+		}
+		return true
+	}
+	return false
 }
