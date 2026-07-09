@@ -93,6 +93,8 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 		b.handlePing(s, i)
 	case "purge":
 		b.handlePurge(s, i, opts, callerID)
+	case "scanreactions":
+		b.handleScanReactions(s, i, callerID)
 	case "refreshstarboard":
 		b.handleRefreshStarboard(s, i, callerID)
 	}
@@ -205,7 +207,8 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		"• /warnings [user] - Show warnings for a user\n" +
 		"• /unwarn [user] [id] - Remove a warning from a user\n" +
 		"• /dehoist [user] [dry] - Remove hoisting characters from name\n" +
-		"• /purge [count] - Delete recent messages\n\n" +
+		"• /purge [count] - Delete recent messages\n" +
+		"• /scanreactions - Scan recent messages for prohibited reactions\n\n" +
 		"**Admin Management (permaadmin only):**\n" +
 		"• /addadmin [user] - Add a bot admin\n" +
 		"• /removeadmin [user] - Remove a bot admin\n\n" +
@@ -610,6 +613,43 @@ func (b *Bot) handlePurge(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		editDeferredResponse(s, i, fmt.Sprintf("🗑️ Deleted %d messages.", len(toDelete)))
 	} else {
 		respondEphemeral(s, i, "Please provide a count to purge.")
+	}
+}
+
+func (b *Bot) handleScanReactions(s *discordgo.Session, i *discordgo.InteractionCreate, callerID string) {
+	if !b.DB.IsAdmin("discord", callerID, b.Config) {
+		respondEphemeral(s, i, "You don't have permission to scan reactions.")
+		return
+	}
+
+	if err := deferResponse(s, i, true); err != nil {
+		b.Logger.Error("failed to defer scanreactions response", zap.Error(err))
+		return
+	}
+
+	result, err := b.scanProhibitedReactions(s, i.ChannelID)
+	if err != nil {
+		b.Logger.Error("scanreactions failed", zap.Error(err))
+		editDeferredResponse(s, i, fmt.Sprintf("Error scanning reactions: %s", err))
+		return
+	}
+
+	resp := fmt.Sprintf(
+		"Scanned %d messages. Found %d prohibited reaction(s), removed %d, and issued %d warning(s).",
+		result.MessagesChecked,
+		result.ReactionsFound,
+		result.ReactionsRemoved,
+		result.WarningsIssued,
+	)
+	if result.WarningsSkipped > 0 {
+		resp += fmt.Sprintf(" Skipped %d admin warning(s).", result.WarningsSkipped)
+	}
+	if result.FetchFailures > 0 || result.RemoveFailures > 0 || result.WarnFailures > 0 {
+		resp += fmt.Sprintf(" Failures: %d fetch, %d remove, %d warn.", result.FetchFailures, result.RemoveFailures, result.WarnFailures)
+	}
+
+	if err := editDeferredResponse(s, i, resp); err != nil {
+		b.Logger.Error("failed to edit scanreactions response", zap.Error(err))
 	}
 }
 

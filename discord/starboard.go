@@ -9,7 +9,39 @@ import (
 	"go.uber.org/zap"
 )
 
-const prohibitedFlagReaction = "🇮🇱"
+const (
+	prohibitedFlagReaction              = "🇮🇱"
+	prohibitedStarOfDavidReaction       = "✡️"
+	prohibitedStarOfDavidTextReaction   = "✡"
+	prohibitedFlagReactionReason        = "using prohibited :flag_il: reaction"
+	prohibitedStarOfDavidReactionReason = "using prohibited :star_of_david: reaction"
+)
+
+type prohibitedReactionScanResult struct {
+	MessagesChecked  int
+	ReactionsFound   int
+	ReactionsRemoved int
+	WarningsIssued   int
+	WarningsSkipped  int
+	FetchFailures    int
+	RemoveFailures   int
+	WarnFailures     int
+}
+
+func prohibitedReactionReason(emojiName string) (string, bool) {
+	switch emojiName {
+	case prohibitedFlagReaction:
+		return prohibitedFlagReactionReason, true
+	case prohibitedStarOfDavidReaction, prohibitedStarOfDavidTextReaction:
+		return prohibitedStarOfDavidReactionReason, true
+	default:
+		return "", false
+	}
+}
+
+func isSessionUser(s *discordgo.Session, userID string) bool {
+	return s.State != nil && s.State.User != nil && userID == s.State.User.ID
+}
 
 // handleReactionAdd handles reaction add events for starboard
 func (b *Bot) handleReactionAdd(s *discordgo.Session, r *discordgo.MessageReactionAdd) {
@@ -67,34 +99,110 @@ func (b *Bot) handleReactionAdd(s *discordgo.Session, r *discordgo.MessageReacti
 }
 
 func (b *Bot) handleProhibitedReaction(s *discordgo.Session, r *discordgo.MessageReactionAdd) bool {
-	if r.GuildID != b.Config.DiscordGuildID || r.UserID == "" || r.Emoji.Name != prohibitedFlagReaction {
+	reason, prohibited := prohibitedReactionReason(r.Emoji.Name)
+	if r.GuildID != b.Config.DiscordGuildID || r.UserID == "" || !prohibited {
 		return false
 	}
-	if s.State != nil && s.State.User != nil && r.UserID == s.State.User.ID {
+	if isSessionUser(s, r.UserID) {
 		return true
 	}
 
-	if err := s.MessageReactionRemove(r.ChannelID, r.MessageID, r.Emoji.APIName(), r.UserID); err != nil {
+	b.removeAndWarnProhibitedReaction(s, r.ChannelID, r.MessageID, r.UserID, r.Emoji.APIName(), reason)
+	return true
+}
+
+func (b *Bot) removeAndWarnProhibitedReaction(s *discordgo.Session, channelID, messageID, userID, emojiAPIName, reason string) (bool, bool, bool) {
+	removed := true
+	if err := s.MessageReactionRemove(channelID, messageID, emojiAPIName, userID); err != nil {
+		removed = false
 		b.Logger.Warn("failed to remove prohibited reaction",
 			zap.Error(err),
-			zap.String("messageID", r.MessageID),
-			zap.String("userID", r.UserID))
+			zap.String("messageID", messageID),
+			zap.String("userID", userID))
 	}
 
-	resp, extras, _, err := b.Warn.Warn(b.newBanner(), "system", r.UserID, "using prohibited :flag_il: reaction", b.Config)
+	if b.DB.IsAdmin("discord", userID, b.Config) {
+		return removed, false, true
+	}
+
+	warned := true
+	_, _, _, err := b.Warn.Warn(b.newBanner(), "system", userID, reason, b.Config)
 	if err != nil {
+		warned = false
 		b.Logger.Error("failed to warn for prohibited reaction",
 			zap.Error(err),
-			zap.String("messageID", r.MessageID),
-			zap.String("userID", r.UserID))
-		return true
+			zap.String("messageID", messageID),
+			zap.String("userID", userID))
 	}
 
-	s.ChannelMessageSend(r.ChannelID, resp)
-	for _, extra := range extras {
-		s.ChannelMessageSendComplex(r.ChannelID, &discordgo.MessageSend{Content: suppressDiscordEmbeds(extra), Flags: discordgo.MessageFlagsSuppressEmbeds})
+	return removed, warned, false
+}
+
+func (b *Bot) scanProhibitedReactions(s *discordgo.Session, channelID string) (prohibitedReactionScanResult, error) {
+	var result prohibitedReactionScanResult
+
+	messages, err := s.ChannelMessages(channelID, 100, "", "", "")
+	if err != nil {
+		return result, err
 	}
-	return true
+	result.MessagesChecked = len(messages)
+
+	for _, msg := range messages {
+		for _, reaction := range msg.Reactions {
+			if reaction == nil || reaction.Emoji == nil {
+				continue
+			}
+
+			reason, prohibited := prohibitedReactionReason(reaction.Emoji.Name)
+			if !prohibited {
+				continue
+			}
+
+			afterID := ""
+			for {
+				users, err := s.MessageReactions(channelID, msg.ID, reaction.Emoji.APIName(), 100, "", afterID)
+				if err != nil {
+					result.FetchFailures++
+					b.Logger.Error("failed to fetch prohibited reaction users",
+						zap.Error(err),
+						zap.String("messageID", msg.ID),
+						zap.String("emoji", reaction.Emoji.Name))
+					break
+				}
+				if len(users) == 0 {
+					break
+				}
+
+				for _, user := range users {
+					if user == nil || user.ID == "" || isSessionUser(s, user.ID) {
+						continue
+					}
+
+					result.ReactionsFound++
+					removed, warned, skipped := b.removeAndWarnProhibitedReaction(s, channelID, msg.ID, user.ID, reaction.Emoji.APIName(), reason)
+					if removed {
+						result.ReactionsRemoved++
+					} else {
+						result.RemoveFailures++
+					}
+					if warned {
+						result.WarningsIssued++
+					} else if skipped {
+						result.WarningsSkipped++
+					} else {
+						result.WarnFailures++
+					}
+				}
+
+				if len(users) < 100 {
+					break
+				}
+				afterID = users[len(users)-1].ID
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // handleStarboardReaction handles star reactions on starboard messages

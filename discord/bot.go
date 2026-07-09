@@ -419,6 +419,10 @@ func (b *Bot) registerCommands() error {
 			},
 		},
 		{
+			Name:        "scanreactions",
+			Description: "Scan the last 100 channel messages for prohibited reactions (admin only)",
+		},
+		{
 			Name:        "refreshstarboard",
 			Description: "Refresh all starboard entries by rechecking star counts (admin only)",
 		},
