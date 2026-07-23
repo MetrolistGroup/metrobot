@@ -206,7 +206,7 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		"• /warn [user] [reason] - Warn a user\n" +
 		"• /warnings [user] - Show warnings for a user\n" +
 		"• /unwarn [user] [id] - Remove a warning from a user\n" +
-		"• /dehoist [user] [dry] - Remove hoisting characters from name\n" +
+		"• /dehoist [user] [dry] - Dehoist a user, or omit user to rerun the server\n" +
 		"• /purge [count] - Delete recent messages\n" +
 		"• /scanreactions - Scan recent messages for prohibited reactions\n\n" +
 		"**Admin Management (permaadmin only):**\n" +

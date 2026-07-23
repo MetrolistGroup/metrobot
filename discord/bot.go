@@ -360,12 +360,12 @@ func (b *Bot) registerCommands() error {
 		},
 		{
 			Name:        "dehoist",
-			Description: "Remove hoisting characters from a user's name (admin only)",
+			Description: "Dehoist a user or rerun dehoisting across the server (admin only)",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionUser,
 					Name:        "user",
-					Description: "User to dehoist (omit for dry run of all)",
+					Description: "User to dehoist (omit to rerun all untouched server names)",
 					Required:    false,
 				},
 				{
@@ -624,21 +624,22 @@ func (d *DiscordBanner) GetAllMembers() ([]cmd.MemberInfo, error) {
 		}
 
 		for _, m := range members {
-			// Prefer server display name, then global display name, then username
-			displayName := ""
+			originalName := m.User.GlobalName
+			if originalName == "" {
+				originalName = m.User.Username
+			}
+			displayName := originalName
 			if m.Nick != "" {
 				displayName = m.Nick
-			} else if m.User.GlobalName != "" {
-				displayName = m.User.GlobalName
-			} else {
-				displayName = m.User.Username
 			}
 
 			all = append(all, cmd.MemberInfo{
-				UserID:      m.User.ID,
-				Username:    m.User.Username,
-				DisplayName: displayName,
-				IsBot:       m.User.Bot,
+				UserID:       m.User.ID,
+				Username:     m.User.Username,
+				DisplayName:  displayName,
+				OriginalName: originalName,
+				Nickname:     m.Nick,
+				IsBot:        m.User.Bot,
 			})
 		}
 

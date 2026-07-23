@@ -57,17 +57,19 @@ func openModerationTestDB(t *testing.T) *db.DB {
 	return database
 }
 
-func TestDehoistBulkSkipsAdminsAndBots(t *testing.T) {
+func TestDehoistBulkUsesOriginalNamesAndSkipsProtectedMembers(t *testing.T) {
 	database := openModerationTestDB(t)
 	handler := &ModerationHandler{DB: database}
 
 	banner := &fakeDehoistBanner{
 		platform: "discord",
 		members: []MemberInfo{
-			{UserID: "admin-1", Username: "Admin", DisplayName: "!!!Admin"},
-			{UserID: "bot-1", Username: "BotUser", DisplayName: "!!!Bot", IsBot: true},
-			{UserID: "user-1", Username: "Alice", DisplayName: "!!!Alice"},
-			{UserID: "user-2", Username: "Bob", DisplayName: "Bob"},
+			{UserID: "admin-1", OriginalName: "!!!Admin"},
+			{UserID: "bot-1", OriginalName: "!!!Bot", IsBot: true},
+			{UserID: "user-1", OriginalName: "!!!𝔄𝔩𝔦𝔠𝔢", Nickname: "change your display name"},
+			{UserID: "user-2", OriginalName: "Bob"},
+			{UserID: "user-3", OriginalName: "!!!Ⓐⓛⓘⓒⓔ", Nickname: "Chosen Name"},
+			{UserID: "user-4", OriginalName: "!!!Ａｌｉｃｅ"},
 		},
 	}
 
@@ -83,10 +85,10 @@ func TestDehoistBulkSkipsAdminsAndBots(t *testing.T) {
 		t.Fatalf("bot user should not be dehoisted")
 	}
 
-	wantNew := stripHoistChars("!!!Alice")
+	wantNew := stripHoistChars("!!!𝔄𝔩𝔦𝔠𝔢")
 	gotNew, ok := banner.setCalls["user-1"]
 	if !ok {
-		t.Fatalf("expected user-1 to be dehoisted")
+		t.Fatalf("expected legacy nickname for user-1 to be migrated")
 	}
 	if gotNew != wantNew {
 		t.Fatalf("user-1 new nickname = %q, want %q", gotNew, wantNew)
@@ -95,10 +97,42 @@ func TestDehoistBulkSkipsAdminsAndBots(t *testing.T) {
 	if _, ok := banner.setCalls["user-2"]; ok {
 		t.Fatalf("user-2 should not be renamed (no hoist chars)")
 	}
+	if _, ok := banner.setCalls["user-3"]; ok {
+		t.Fatalf("user-3 should not have their manual nickname replaced")
+	}
+	if got := banner.setCalls["user-4"]; got != "alice" {
+		t.Fatalf("user-4 new nickname = %q, want %q", got, "alice")
+	}
 
-	wantResp := "Successfully dehoisted 1 members out of 4 server members."
+	wantResp := "Successfully dehoisted 2 members out of 6 server members."
 	if resp != wantResp {
 		t.Fatalf("response = %q, want %q", resp, wantResp)
+	}
+}
+
+func TestDehoistBulkDryRunDoesNotChangeNicknames(t *testing.T) {
+	database := openModerationTestDB(t)
+	handler := &ModerationHandler{DB: database}
+	banner := &fakeDehoistBanner{
+		platform: "discord",
+		members: []MemberInfo{
+			{UserID: "legacy", OriginalName: "!!!Ⓐⓛⓘⓒⓔ", Nickname: "change your display name"},
+			{UserID: "manual", OriginalName: "!!!Ⓑⓞⓑ", Nickname: "Robert"},
+		},
+	}
+
+	resp, err := handler.Dehoist(banner, "", true, fakeDehoistConfig{})
+	if err != nil {
+		t.Fatalf("Dehoist dry run: %v", err)
+	}
+	if len(banner.setCalls) != 0 {
+		t.Fatalf("dry run changed nicknames: %#v", banner.setCalls)
+	}
+	if !strings.Contains(resp, "change your display name → alice") {
+		t.Fatalf("dry-run response does not contain legacy migration: %q", resp)
+	}
+	if strings.Contains(resp, "Robert") {
+		t.Fatalf("dry-run response contains a manual nickname: %q", resp)
 	}
 }
 
@@ -140,6 +174,28 @@ func TestNeedsDehoistingMatchesStripHoistChars(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := NeedsDehoisting(tt.name); got != tt.want {
 				t.Fatalf("NeedsDehoisting(%q) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStripHoistCharsNormalizesUnicode(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		{name: "!!!𝔄𝔩𝔦𝔠𝔢", want: "alice"},
+		{name: "Ａｌｉｃｅ", want: "alice"},
+		{name: "Ⓐⓛⓘⓒⓔ", want: "alice"},
+		{name: "Áłïçé", want: "alice"},
+		{name: "A̴͗̽l̷i̸c̵e̵", want: "Alice"},
+		{name: "꧁Alice꧂", want: "Alice"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := stripHoistChars(tt.name); got != tt.want {
+				t.Fatalf("stripHoistChars(%q) = %q, want %q", tt.name, got, tt.want)
 			}
 		})
 	}
