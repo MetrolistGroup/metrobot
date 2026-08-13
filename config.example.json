@@ -2,6 +2,7 @@
   "discord_token": "MTQ...",
   "telegram_token": "1234:ABCD",
   "github_token": "github_pat",
+  "deepseek_api_keys": ["sk-example-1", "sk-example-2"],
   "discord_guild_id": "123",
   "telegram_chat_id": -100,
   "permaadmin_discord_ids": ["123"],

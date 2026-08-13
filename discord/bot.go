@@ -27,6 +27,10 @@ type Bot struct {
 	Case       *cmd.CaseHandler
 
 	garminProcessor  *cmd.GarminProcessor
+	garminAI         *cmd.DeepSeekClient
+	garminAIMu       sync.Mutex
+	garminAILastUsed map[string]time.Time
+	garminAISlots    chan struct{}
 	TimedBanRestorer func()
 }
 
@@ -56,6 +60,11 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		Ping:            ping,
 		Case:            cases,
 		garminProcessor: cmd.NewGarminProcessor(),
+	}
+	if len(cfg.DeepSeekAPIKeys) > 0 {
+		bot.garminAI = cmd.NewDeepSeekClient(cfg.DeepSeekAPIKeys)
+		bot.garminAILastUsed = make(map[string]time.Time)
+		bot.garminAISlots = make(chan struct{}, 3)
 	}
 
 	// Set up Discord case logger if log channel is configured

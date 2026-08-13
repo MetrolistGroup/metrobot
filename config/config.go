@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 )
 
 type Config struct {
-	DiscordToken  string `json:"discord_token"`
-	TelegramToken string `json:"telegram_token"`
-	GitHubToken   string `json:"github_token"`
+	DiscordToken    string   `json:"discord_token"`
+	TelegramToken   string   `json:"telegram_token"`
+	GitHubToken     string   `json:"github_token"`
+	DeepSeekAPIKeys []string `json:"deepseek_api_keys"`
 
 	DiscordGuildID string `json:"discord_guild_id"`
 	TelegramChatID int64  `json:"telegram_chat_id"`
@@ -85,6 +87,11 @@ func (c *Config) validate() error {
 	}
 	if len(c.PermaAdminTelegramIDs) == 0 {
 		return fmt.Errorf("permaadmin_telegram_ids must contain at least one ID")
+	}
+	for i, key := range c.DeepSeekAPIKeys {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("deepseek_api_keys[%d] is empty", i)
+		}
 	}
 
 	return nil

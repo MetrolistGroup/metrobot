@@ -2,6 +2,17 @@ package cmd
 
 import "strings"
 
+const garminAITrigger = "garmin,"
+
+// ExtractGarminPrompt returns the prompt from a case-insensitive "garmin, ..." trigger.
+func ExtractGarminPrompt(content string) (string, bool) {
+	content = strings.TrimSpace(content)
+	if len(content) < len(garminAITrigger) || !strings.EqualFold(content[:len(garminAITrigger)], garminAITrigger) {
+		return "", false
+	}
+	return strings.TrimSpace(content[len(garminAITrigger):]), true
+}
+
 // GarminProcessor handles "Ok Garmin" voice assistant trigger processing
 type GarminProcessor struct {
 	supportedCommands map[string]bool
@@ -11,14 +22,14 @@ type GarminProcessor struct {
 func NewGarminProcessor() *GarminProcessor {
 	return &GarminProcessor{
 		supportedCommands: map[string]bool{
-			"ban":  true,
-			"dban": true,
-			"tban": true,
-			"sban": true,
-			"mute": true,
-			"warn": true,
+			"ban":   true,
+			"dban":  true,
+			"tban":  true,
+			"sban":  true,
+			"mute":  true,
+			"warn":  true,
 			"notes": true,
-			"note": true,
+			"note":  true,
 		},
 	}
 }

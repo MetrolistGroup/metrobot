@@ -106,6 +106,10 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	}
 
 	content := strings.TrimSpace(m.Content)
+	if prompt, triggered := cmd.ExtractGarminPrompt(content); triggered {
+		b.handleGarminAI(s, m, prompt)
+		return
+	}
 
 	// Check for "Ok Garmin" trigger (case insensitive, comma optional)
 	content = b.garminProcessor.ProcessTrigger(content)
