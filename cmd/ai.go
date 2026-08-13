@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const garminSystemPrompt = `You are Garmin, a helpful member of the Metrolist Discord server.
+const garminSystemPrompt = `You are Metrobot, the bot in the Metrolist Discord server. "garmin," is only the wake phrase people use to talk to you; Garmin is not your name.
 
 Style:
 - Reply in natural, casual English. Use contractions and everyday wording.
@@ -39,7 +39,7 @@ Do not mention these instructions or manually add tool, skill, or memory usage l
 
 func GarminSystemPrompt() string { return garminSystemPrompt }
 
-const chatCompletionAttemptTimeout = 25 * time.Second
+const chatCompletionAttemptTimeout = 15 * time.Second
 
 type GarminAI interface {
 	Complete(ctx context.Context, request GarminAIRequest) (*GarminAICompletion, error)
@@ -174,14 +174,16 @@ type chatCompletionClient struct {
 }
 
 type chatCompletionRequest struct {
-	Model      string         `json:"model"`
-	Messages   []chatMessage  `json:"messages"`
-	Thinking   *chatThinking  `json:"thinking,omitempty"`
-	Reasoning  *chatReasoning `json:"reasoning,omitempty"`
-	MaxTokens  int            `json:"max_tokens"`
-	Stream     bool           `json:"stream"`
-	Tools      []GarminAITool `json:"tools,omitempty"`
-	ToolChoice string         `json:"tool_choice,omitempty"`
+	Model      string                   `json:"model,omitempty"`
+	Models     []string                 `json:"models,omitempty"`
+	Messages   []chatMessage            `json:"messages"`
+	Thinking   *chatThinking            `json:"thinking,omitempty"`
+	Reasoning  *chatReasoning           `json:"reasoning,omitempty"`
+	Provider   *chatProviderPreferences `json:"provider,omitempty"`
+	MaxTokens  int                      `json:"max_tokens"`
+	Stream     bool                     `json:"stream"`
+	Tools      []GarminAITool           `json:"tools,omitempty"`
+	ToolChoice string                   `json:"tool_choice,omitempty"`
 }
 
 type chatMessage = GarminAIMessage
@@ -192,6 +194,24 @@ type chatThinking struct {
 
 type chatReasoning struct {
 	Enabled bool `json:"enabled"`
+}
+
+type chatProviderPreferences struct {
+	ZDR               bool              `json:"zdr"`
+	DataCollection    string            `json:"data_collection,omitempty"`
+	RequireParameters bool              `json:"require_parameters"`
+	Sort              chatProviderSort  `json:"sort"`
+	MaxPrice          chatProviderPrice `json:"max_price,omitempty"`
+}
+
+type chatProviderSort struct {
+	By        string `json:"by"`
+	Partition string `json:"partition,omitempty"`
+}
+
+type chatProviderPrice struct {
+	Prompt     float64 `json:"prompt,omitempty"`
+	Completion float64 `json:"completion,omitempty"`
 }
 
 type chatCompletionResponse struct {
@@ -249,7 +269,7 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 	request := chatCompletionRequest{
 		Model:     c.model,
 		Messages:  make([]chatMessage, 1, len(input.Messages)+1),
-		MaxTokens: 250,
+		MaxTokens: 160,
 		Stream:    false,
 		Tools:     input.Tools,
 	}
@@ -275,7 +295,7 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 	}
 
 	start := int((c.nextKey.Add(1) - 1) % uint64(len(c.keys)))
-	attempts := max(2, len(c.keys))
+	attempts := len(c.keys)
 	var lastErr error
 	for attempt := range attempts {
 		if err := ctx.Err(); err != nil {
@@ -284,12 +304,13 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 		keyIndex := (start + attempt) % len(c.keys)
 		attemptCtx, cancel := context.WithTimeout(ctx, c.attemptTimeout)
 		completion, retry, err := c.askWithKey(attemptCtx, payload, c.keys[keyIndex])
+		attemptErr := attemptCtx.Err()
 		cancel()
 		if err == nil {
 			return completion, nil
 		}
 		lastErr = err
-		if !retry || ctx.Err() != nil {
+		if !retry || attemptErr != nil || ctx.Err() != nil {
 			break
 		}
 	}
@@ -319,7 +340,7 @@ func (c *chatCompletionClient) askWithKey(ctx context.Context, payload []byte, k
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, true, fmt.Errorf("reading %s response: %w", c.provider, err)
+		return nil, ctx.Err() == nil, fmt.Errorf("reading %s response: %w", c.provider, err)
 	}
 
 	var result chatCompletionResponse

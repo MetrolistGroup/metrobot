@@ -85,7 +85,7 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 			memory, err = cmd.NewGarminMemory("/data/" + cmd.GarminMemoryFile)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("initializing Garmin memory: %w", err)
+			return nil, fmt.Errorf("initializing Metrobot memory: %w", err)
 		}
 		bot.garminMemory = memory
 		bot.garminGitHub = gh.NewAssistantClient(cfg.GitHubToken, cfg.GitHubOwner, cfg.GitHubRepo)
@@ -438,17 +438,17 @@ func (b *Bot) registerCommands() error {
 		},
 		{
 			Name:        "memory",
-			Description: "Manage Garmin's persistent memory (admin only)",
+			Description: "Manage Metrobot's persistent memory (admin only)",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "view",
-					Description: "View Garmin's memory",
+					Description: "View Metrobot's memory",
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "append",
-					Description: "Append Markdown to Garmin's memory",
+					Description: "Append Markdown to Metrobot's memory",
 					Options: []*discordgo.ApplicationCommandOption{
 						{
 							Type:        discordgo.ApplicationCommandOptionString,
@@ -461,7 +461,7 @@ func (b *Bot) registerCommands() error {
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "replace",
-					Description: "Replace Garmin's memory",
+					Description: "Replace Metrobot's memory",
 					Options: []*discordgo.ApplicationCommandOption{
 						{
 							Type:        discordgo.ApplicationCommandOptionString,
@@ -474,7 +474,7 @@ func (b *Bot) registerCommands() error {
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "clear",
-					Description: "Clear Garmin's memory",
+					Description: "Clear Metrobot's memory",
 				},
 			},
 		},

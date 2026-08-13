@@ -15,7 +15,7 @@ type DeepSeekClient struct {
 }
 
 func NewDeepSeekClient(keys []string) *DeepSeekClient {
-	return newDeepSeekClient(keys, deepSeekEndpoint, &http.Client{Timeout: 35 * time.Second})
+	return newDeepSeekClient(keys, deepSeekEndpoint, &http.Client{Timeout: 20 * time.Second})
 }
 
 func newDeepSeekClient(keys []string, endpoint string, httpClient *http.Client) *DeepSeekClient {

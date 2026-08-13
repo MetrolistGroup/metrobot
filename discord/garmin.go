@@ -17,7 +17,7 @@ const (
 	garminAIContextTTL = 30 * time.Minute
 	garminAIContextMax = 500
 	garminAIExchanges  = 3
-	garminAITimeout    = 80 * time.Second
+	garminAITimeout    = 45 * time.Second
 )
 
 type garminAIContext struct {
@@ -27,7 +27,7 @@ type garminAIContext struct {
 
 func (b *Bot) handleGarminAI(s *discordgo.Session, m *discordgo.MessageCreate, messages []cmd.GarminAIMessage) {
 	if b.garminAI == nil {
-		b.sendGarminReply(s, m, "Garmin AI isn't configured right now.")
+		b.sendGarminReply(s, m, "Metrobot AI isn't configured right now.")
 		return
 	}
 	if len(messages) == 0 || strings.TrimSpace(messages[len(messages)-1].Content) == "" {
@@ -54,7 +54,7 @@ func (b *Bot) handleGarminAI(s *discordgo.Session, m *discordgo.MessageCreate, m
 
 	result, err := b.runGarminAI(ctx, s, m, messages)
 	if err != nil {
-		b.Logger.Error("Garmin AI request failed", zap.String("user", m.Author.ID), zap.Error(err))
+		b.Logger.Error("Metrobot AI request failed", zap.String("user", m.Author.ID), zap.Error(err))
 		b.sendGarminReply(s, m, "I couldn't answer that right now. Try again in a moment.")
 		return
 	}

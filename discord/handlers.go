@@ -222,7 +222,7 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		"**Admin Management (permaadmin only):**\n" +
 		"• /addadmin [user] - Add a bot admin\n" +
 		"• /removeadmin [user] - Remove a bot admin\n\n" +
-		"**Garmin AI (admin only):**\n" +
+		"**Metrobot AI (admin only):**\n" +
 		"• /memory view|append|replace|clear - Manage persistent AI memory\n\n" +
 		"**Prefix Commands:**\n" +
 		"Moderation actions can also be triggered via message prefix: !action [user] [args]\n" +
@@ -573,11 +573,11 @@ func (b *Bot) handleRemoveAdmin(s *discordgo.Session, i *discordgo.InteractionCr
 
 func (b *Bot) handleGarminMemory(s *discordgo.Session, i *discordgo.InteractionCreate, options []*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
 	if b.garminMemory == nil {
-		respondEphemeral(s, i, "Garmin AI is not configured.")
+		respondEphemeral(s, i, "Metrobot AI is not configured.")
 		return
 	}
 	if !b.DB.IsAdmin("discord", callerID, b.Config) {
-		respondEphemeral(s, i, "Only admins can manage Garmin's memory.")
+		respondEphemeral(s, i, "Only admins can manage Metrobot's memory.")
 		return
 	}
 	if len(options) != 1 {
@@ -594,34 +594,34 @@ func (b *Bot) handleGarminMemory(s *discordgo.Session, i *discordgo.InteractionC
 		memory, err = b.garminMemory.Read()
 		if err == nil {
 			if responseErr := respondGarminMemory(s, i, memory); responseErr != nil {
-				b.Logger.Error("failed to send Garmin memory", zap.Error(responseErr))
+				b.Logger.Error("failed to send Metrobot memory", zap.Error(responseErr))
 			}
 			return
 		}
 	case "append":
 		err = b.garminMemory.Append(getOptString(subopts, "content"))
 		if err == nil {
-			respondEphemeral(s, i, "-# memory updated\nGarmin memory updated.")
+			respondEphemeral(s, i, "-# memory updated\nMetrobot memory updated.")
 			return
 		}
 	case "replace":
 		err = b.garminMemory.Replace(getOptString(subopts, "content"))
 		if err == nil {
-			respondEphemeral(s, i, "-# memory updated\nGarmin memory replaced.")
+			respondEphemeral(s, i, "-# memory updated\nMetrobot memory replaced.")
 			return
 		}
 	case "clear":
 		err = b.garminMemory.Clear()
 		if err == nil {
-			respondEphemeral(s, i, "-# memory updated\nGarmin memory cleared.")
+			respondEphemeral(s, i, "-# memory updated\nMetrobot memory cleared.")
 			return
 		}
 	default:
 		err = fmt.Errorf("unknown memory action %q", subcommand.Name)
 	}
 
-	b.Logger.Error("Garmin memory command failed", zap.String("action", subcommand.Name), zap.Error(err))
-	respondEphemeral(s, i, fmt.Sprintf("Could not update Garmin memory: %s", err))
+	b.Logger.Error("Metrobot memory command failed", zap.String("action", subcommand.Name), zap.Error(err))
+	respondEphemeral(s, i, fmt.Sprintf("Could not update Metrobot memory: %s", err))
 }
 
 func respondGarminMemory(s *discordgo.Session, i *discordgo.InteractionCreate, memory string) error {
@@ -637,7 +637,7 @@ func respondGarminMemory(s *discordgo.Session, i *discordgo.InteractionCreate, m
 	return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
-			Content: "Garmin's memory is attached.",
+			Content: "Metrobot's memory is attached.",
 			Flags:   discordgo.MessageFlagsEphemeral | discordgo.MessageFlagsSuppressEmbeds,
 			Files: []*discordgo.File{
 				{Name: cmd.GarminMemoryFile, ContentType: "text/markdown", Reader: strings.NewReader(memory)},

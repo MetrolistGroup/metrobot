@@ -118,8 +118,8 @@ func TestDeepSeekClientSendsBoundedNonThinkingRequest(t *testing.T) {
 	if request.Thinking.Type != "disabled" {
 		t.Errorf("thinking type = %q, want disabled", request.Thinking.Type)
 	}
-	if request.MaxTokens != 250 {
-		t.Errorf("max tokens = %d, want 250", request.MaxTokens)
+	if request.MaxTokens != 160 {
+		t.Errorf("max tokens = %d, want 160", request.MaxTokens)
 	}
 	wantMessages := []chatMessage{
 		{Role: "system", Content: garminSystemPrompt},
@@ -139,7 +139,7 @@ func TestDeepSeekClientRequiresKey(t *testing.T) {
 	}
 }
 
-func TestChatCompletionClientRetriesReadTimeout(t *testing.T) {
+func TestChatCompletionClientDoesNotRetryReadTimeoutOnSameModel(t *testing.T) {
 	requests := 0
 	client := newChatCompletionClient(
 		[]string{"key"},
@@ -150,22 +150,13 @@ func TestChatCompletionClientRetriesReadTimeout(t *testing.T) {
 		nil,
 		&http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 			requests++
-			if requests == 1 {
-				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(timeoutReader{})}, nil
-			}
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"role":"assistant","content":"retried"}}]}`)),
-			}, nil
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(timeoutReader{})}, nil
 		})},
 	)
 
-	answer, err := client.Ask(context.Background(), testGarminMessages("hi"))
-	if err != nil {
-		t.Fatalf("Ask() error = %v", err)
-	}
-	if answer != "retried" || requests != 2 {
-		t.Fatalf("Ask() = %q after %d requests", answer, requests)
+	_, err := client.Ask(context.Background(), testGarminMessages("hi"))
+	if err == nil || requests != 1 {
+		t.Fatalf("Ask() error = %v after %d requests", err, requests)
 	}
 }
 

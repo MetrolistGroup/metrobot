@@ -135,14 +135,21 @@ func (b *Bot) executeGarminAITool(ctx context.Context, s *discordgo.Session, m *
 }
 
 func garminSystemPromptForMessage(_ *discordgo.Session, m *discordgo.MessageCreate, memory string) string {
+	displayName := m.Author.GlobalName
+	if displayName == "" {
+		displayName = m.Author.Username
+	}
 	author := map[string]any{
-		"id":          m.Author.ID,
-		"username":    m.Author.Username,
-		"global_name": m.Author.GlobalName,
+		"id":           m.Author.ID,
+		"username":     m.Author.Username,
+		"global_name":  m.Author.GlobalName,
+		"display_name": displayName,
 	}
 	if m.Member != nil {
 		author["server_nickname"] = m.Member.Nick
-		author["display_name"] = discordMemberDisplayName(m.Member)
+		if m.Member.Nick != "" {
+			author["display_name"] = m.Member.Nick
+		}
 	}
 	context := map[string]any{
 		"current_user": author,
