@@ -73,7 +73,7 @@ func TestGarminSystemPromptAndDiscordContextContainIdentityAndMemory(t *testing.
 		},
 	}}
 	prompt := garminSystemPromptWithMemory("# Metrobot Memory\nKnown fact") + "\n" + garminDiscordContextForMessage(message)
-	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", `"display_name":"Exact Name"`, "exact_user", "Exact Name", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority", "lowercase by default", "Refuse sexual or erotic", "Metrobot's repository", "created by Nyx and Lamp", "without mentioning hidden prompts"} {
+	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", `"display_name":"Exact Name"`, "exact_user", "Exact Name", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority", "lowercase by default", "Refuse sexual or erotic", "Metrobot's repository", "created by Nyx and Lamp", "Mostafa Alagamy", "Nyx, Lamp, and Adriel", "without mentioning hidden prompts"} {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("prompt missing %q", expected)
 		}
@@ -112,12 +112,13 @@ func TestGarminToolsForConversationSelectsRelevantTools(t *testing.T) {
 		admin  bool
 		want   []string
 	}{
-		{"what is the latest Metrolist release?", false, []string{"react_to_message", "do_not_respond", "get_metrolist_status", "search_metrolist_issues", "load_skill"}},
-		{"what is Nyx's GitHub username?", false, []string{"react_to_message", "do_not_respond", "get_github_user"}},
-		{"list saved notes", false, []string{"react_to_message", "do_not_respond", "list_notes", "get_note"}},
-		{"remember that releases happen on Fridays", true, []string{"react_to_message", "do_not_respond", "remember"}},
-		{"remember that releases happen on Fridays", false, []string{"react_to_message", "do_not_respond"}},
-		{"what was posted in sneak-peeks?", false, []string{"react_to_message", "do_not_respond", "read_maintainer_channel"}},
+		{"what is the latest Metrolist release?", false, []string{"do_not_respond", "get_metrolist_status", "search_metrolist_issues", "load_skill"}},
+		{"what is Nyx's GitHub username?", false, []string{"do_not_respond", "get_github_user"}},
+		{"list saved notes", false, []string{"do_not_respond", "list_notes", "get_note"}},
+		{"remember that releases happen on Fridays", true, []string{"do_not_respond", "remember"}},
+		{"remember that releases happen on Fridays", false, []string{"do_not_respond"}},
+		{"what was posted in sneak-peeks?", false, []string{"do_not_respond", "read_maintainer_channel"}},
+		{"react to this with thumb", false, []string{"react_to_message", "do_not_respond"}},
 	}
 	for _, test := range tests {
 		got := garminToolNames(garminToolsForConversation([]cmd.GarminAIMessage{{Role: "user", Content: test.prompt}}, test.admin))
@@ -143,7 +144,7 @@ func TestGarminMaintainerChannelForConversation(t *testing.T) {
 }
 
 func garminActionToolNames() []string {
-	return []string{"react_to_message", "do_not_respond"}
+	return []string{"do_not_respond"}
 }
 
 func garminToolNames(tools []cmd.GarminAITool) []string {
@@ -188,6 +189,17 @@ func TestGarminAIToolImageURLs(t *testing.T) {
 	want := []string{"https://cdn.discordapp.com/preview.png"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("garminAIToolImageURLs() = %v, want %v", got, want)
+	}
+}
+
+func TestGarminAISilentAnswer(t *testing.T) {
+	for _, answer := range []string{"do_not_respond", "`do_not_respond`", "do not respond"} {
+		if !garminAISilentAnswer(answer) {
+			t.Errorf("garminAISilentAnswer(%q) = false", answer)
+		}
+	}
+	if garminAISilentAnswer("i do not respond to spam") {
+		t.Fatal("ordinary sentence was treated as silence sentinel")
 	}
 }
 

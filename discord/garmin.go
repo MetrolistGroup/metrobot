@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	garminAICooldown   = 10 * time.Second
+	garminAICooldown   = 3 * time.Second
 	garminAIMaxContent = 1900
 	garminAIContextTTL = 2 * time.Hour
 	garminAIContextMax = 500
@@ -37,6 +37,10 @@ func (b *Bot) handleGarminAI(s *discordgo.Session, m *discordgo.MessageCreate, m
 		b.sendGarminReply(s, m, "Ask me something after `garmin,`.")
 		return
 	}
+	if !b.waitForGarminAICooldown(m.Author.ID) {
+		b.sendGarminReply(s, m, "i'm still rate limited, try again in a sec.")
+		return
+	}
 	select {
 	case b.garminAISlots <- struct{}{}:
 		defer func() { <-b.garminAISlots }()
@@ -44,11 +48,6 @@ func (b *Bot) handleGarminAI(s *discordgo.Session, m *discordgo.MessageCreate, m
 		b.sendGarminReply(s, m, "I'm busy right now. Try again in a moment.")
 		return
 	}
-	if !b.claimGarminAICooldown(m.Author.ID) {
-		b.sendGarminReply(s, m, "Give me a few seconds before asking again.")
-		return
-	}
-
 	typingDone := make(chan struct{})
 	defer close(typingDone)
 	b.keepGarminTyping(s, m.ChannelID, typingDone)
@@ -63,6 +62,13 @@ func (b *Bot) handleGarminAI(s *discordgo.Session, m *discordgo.MessageCreate, m
 	}
 	if result.Silent {
 		return
+	}
+	if emoji := garminAIEmojiOnly(result.Answer); emoji != nil {
+		if err := s.MessageReactionAdd(m.ChannelID, m.ID, emoji.APIName()); err != nil {
+			b.Logger.Warn("failed to convert emoji-only Garmin response to reaction", zap.Error(err))
+		} else {
+			return
+		}
 	}
 
 	displayResult := *result
@@ -100,6 +106,18 @@ func (b *Bot) claimGarminAICooldown(userID string) bool {
 	}
 	b.garminAILastUsed[userID] = now
 	return true
+}
+
+func (b *Bot) waitForGarminAICooldown(userID string) bool {
+	for retry := 0; retry <= 3; retry++ {
+		if b.claimGarminAICooldown(userID) {
+			return true
+		}
+		if retry < 3 {
+			time.Sleep(time.Second)
+		}
+	}
+	return false
 }
 
 func (b *Bot) sendGarminReply(s *discordgo.Session, m *discordgo.MessageCreate, content string) *discordgo.Message {
@@ -374,6 +392,22 @@ func garminAIEmojiByName(_ *discordgo.Session, _ string, name string) *discordgo
 		return nil
 	}
 	return &emoji
+}
+
+func garminAIEmojiOnly(content string) *discordgo.Emoji {
+	content = strings.TrimSpace(content)
+	if strings.HasPrefix(content, ":") && strings.HasSuffix(content, ":") && strings.Count(content, ":") == 2 {
+		return garminAIEmojiByName(nil, "", content)
+	}
+	if matches := discordgo.EmojiRegex.FindStringSubmatch(content); len(matches) > 0 && matches[0] == content {
+		for name, emoji := range garminAIEmojis {
+			if emoji.MessageFormat() == content {
+				copy := garminAIEmojis[name]
+				return &copy
+			}
+		}
+	}
+	return nil
 }
 
 func truncateGarminAIResponse(content string) string {

@@ -17,7 +17,8 @@ const garminSystemPrompt = `You are Metrobot, the bot in the Metrolist Discord s
 
 Project context:
 - Metrobot is the open-source Discord and Telegram community bot maintained by MetrolistGroup. It handles moderation, logging, dehoisting, saved notes, project status, and short AI conversations in the Metrolist community.
-- Metrobot was created by Nyx and Lamp. If asked who created or made you, answer with those names instead of vaguely saying MetrolistGroup or guessing a larger team.
+- Metrobot, this Discord bot, was created by Nyx and Lamp. If asked who created or made you, answer with those names.
+- Metrolist, the YouTube Music client, was created by Mostafa Alagamy (GitHub username: mostafaalagamy). Nyx, Lamp, and Adriel are members of the Metrolist team. Keep the Metrolist creator distinct from Metrobot's creators.
 - Metrolist is a free and open-source YouTube Music client for Android, built with Kotlin and Material 3. It is in maintenance mode, so bug fixes and minor improvements continue while major new feature work is limited.
 - Metrolist's official website is https://metrolist.cc and its repository is https://github.com/MetrolistGroup/Metrolist. Metrobot's repository is https://github.com/MetrolistGroup/metrobot.
 - The Discord channel coolchannel is where Nyx, Adriel, Lamp, and other maintainers casually chat and shitpost. The sneak-peeks channel contains KMP project previews. Questions about whether KMP is real, its progress, or its previews must be answered from supplied sneak-peeks channel data, never from assumptions.
@@ -42,8 +43,8 @@ Style:
 - Do not begin with filler such as "cool", restate the request, give an unsolicited tutorial or checklist, or end with generic offers such as "if you want, i can...".
 - Never use em dashes or en dashes. Use commas, parentheses, or a normal hyphen instead.
 - Use Discord markdown only when it genuinely helps.
-- You may naturally use one of these Metrolist server emoji shortcodes when it fits the message or the user asks for one: :husk: :husker: :nyaboom: :colonthree: :steamhappy: :trolley: :soggy: :thumb: :catshake: :catfuckyou: :interesting: :horror: :speed: :catstare: :brick: :crine: :skullq: :bwaa: :metrolist: :monkthonk: :waah: :wires: :thonk: :hm: :thumbcat: :nosir: :cozystars: :glup: :emoji_44: :emoji_43: :folk: :kekw: :metrolist_tomorrow: :cathug: :dry: :bleh: :snackstare: :blobcatmorningcoffee: :blobcatcozy: :hu: :trolleyzoom: :happy: :wavey: :partygopher: :trolleyz: :painfade:. Use the exact shortcode, usually no more than one emoji, and do not force one into every reply. Metrobot converts supported shortcodes to actual custom emoji.
-- You do not have to send a text reply to every message. Use react_to_message when one emoji is a more natural acknowledgment than words. Use do_not_respond for bait, spam, repeated messages, or messages that genuinely need no acknowledgment. Do not use silence to dodge a sincere question you can answer.
+- You may naturally use one of these Metrolist server emoji shortcodes when it strongly fits the message or the user asks for one: :husk: :husker: :nyaboom: :colonthree: :steamhappy: :trolley: :soggy: :thumb: :catshake: :catfuckyou: :interesting: :horror: :speed: :catstare: :brick: :crine: :skullq: :bwaa: :metrolist: :monkthonk: :waah: :wires: :thonk: :hm: :thumbcat: :nosir: :cozystars: :glup: :emoji_44: :emoji_43: :folk: :kekw: :metrolist_tomorrow: :cathug: :dry: :bleh: :snackstare: :blobcatmorningcoffee: :blobcatcozy: :hu: :trolleyzoom: :happy: :wavey: :partygopher: :trolleyz: :painfade:. Use the exact shortcode and at most one emoji. Most replies should contain no emoji. Never mirror an emoji just because the user sent it, and never reply with only the same emoji they sent.
+- You do not have to send a text reply to every message. Use react_to_message only when the user explicitly asks you to react. Use do_not_respond for bait, spam, repeated messages, emoji-only messages, or messages that genuinely need no acknowledgment. Do not use silence to dodge a sincere question you can answer.
 
 Accuracy:
 - Never guess a person's username, display name, role, contribution, or identity. Use the Discord or GitHub tools when the supplied context is not enough.
@@ -71,6 +72,11 @@ Do not mention these instructions or manually add tool, skill, or memory usage l
 func GarminSystemPrompt() string { return garminSystemPrompt }
 
 const chatCompletionAttemptTimeout = 15 * time.Second
+
+const (
+	chatCompletionRateLimitRetries = 3
+	chatCompletionRateLimitDelay   = time.Second
+)
 
 type GarminAI interface {
 	Complete(ctx context.Context, request GarminAIRequest) (*GarminAICompletion, error)
@@ -283,6 +289,7 @@ type chatCompletionClient struct {
 	configureRequest func(*chatCompletionRequest)
 	httpClient       *http.Client
 	attemptTimeout   time.Duration
+	rateLimitDelay   time.Duration
 	nextKey          atomic.Uint64
 }
 
@@ -355,6 +362,7 @@ func newChatCompletionClient(keys []string, endpoint, model, provider string, he
 		configureRequest: configureRequest,
 		httpClient:       httpClient,
 		attemptTimeout:   chatCompletionAttemptTimeout,
+		rateLimitDelay:   chatCompletionRateLimitDelay,
 	}
 }
 
@@ -419,13 +427,15 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 	}
 
 	start := int((c.nextKey.Add(1) - 1) % uint64(len(c.keys)))
-	attempts := len(c.keys)
+	keyAttempts := 0
+	rateLimitRetries := 0
 	var lastErr error
-	for attempt := range attempts {
+	for {
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("calling %s: %w", c.provider, err)
 		}
-		keyIndex := (start + attempt) % len(c.keys)
+		keyIndex := (start + keyAttempts) % len(c.keys)
+		keyAttempts++
 		attemptCtx, cancel := context.WithTimeout(ctx, c.attemptTimeout)
 		completion, retry, err := c.askWithKey(attemptCtx, payload, c.keys[keyIndex])
 		attemptErr := attemptCtx.Err()
@@ -434,12 +444,52 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 			return completion, nil
 		}
 		lastErr = err
+		if chatCompletionStatus(err) == http.StatusTooManyRequests && rateLimitRetries < chatCompletionRateLimitRetries {
+			rateLimitRetries++
+			if err := waitForChatCompletionRetry(ctx, c.rateLimitDelay); err != nil {
+				return nil, fmt.Errorf("calling %s: %w", c.provider, err)
+			}
+			continue
+		}
 		if !retry || attemptErr != nil || ctx.Err() != nil {
+			break
+		}
+		if keyAttempts >= len(c.keys) {
 			break
 		}
 	}
 
 	return nil, lastErr
+}
+
+type chatCompletionHTTPError struct {
+	status int
+	err    error
+}
+
+func (e *chatCompletionHTTPError) Error() string { return e.err.Error() }
+func (e *chatCompletionHTTPError) Unwrap() error { return e.err }
+
+func chatCompletionStatus(err error) int {
+	var httpErr *chatCompletionHTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.status
+	}
+	return 0
+}
+
+func waitForChatCompletionRetry(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (c *chatCompletionClient) askWithKey(ctx context.Context, payload []byte, key string) (*GarminAICompletion, bool, error) {
@@ -474,7 +524,10 @@ func (c *chatCompletionClient) askWithKey(ctx context.Context, payload []byte, k
 		if decodeErr == nil && result.Error != nil && strings.TrimSpace(result.Error.Message) != "" {
 			message = strings.TrimSpace(result.Error.Message)
 		}
-		return nil, retryChatCompletionStatus(resp.StatusCode), fmt.Errorf("%s returned %d: %s", c.provider, resp.StatusCode, message)
+		return nil, retryChatCompletionStatus(resp.StatusCode), &chatCompletionHTTPError{
+			status: resp.StatusCode,
+			err:    fmt.Errorf("%s returned %d: %s", c.provider, resp.StatusCode, message),
+		}
 	}
 	if decodeErr != nil {
 		return nil, true, fmt.Errorf("decoding %s response: %w", c.provider, decodeErr)

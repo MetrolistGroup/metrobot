@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestOpenRouterClientUsesCapableRouteByDefault(t *testing.T) {
@@ -152,6 +153,7 @@ func TestOpenRouterClientRotatesAndFailsOverKeys(t *testing.T) {
 	defer server.Close()
 
 	client := newOpenRouterClient([]string{"limited", "available"}, "", server.URL, server.Client())
+	client.rateLimitDelay = 0
 	answer, err := client.Ask(context.Background(), testGarminMessages("hi"))
 	if err != nil {
 		t.Fatalf("Ask() error = %v", err)
@@ -162,5 +164,23 @@ func TestOpenRouterClientRotatesAndFailsOverKeys(t *testing.T) {
 	want := []string{"Bearer limited", "Bearer available"}
 	if !reflect.DeepEqual(authorizations, want) {
 		t.Fatalf("authorizations = %v, want %v", authorizations, want)
+	}
+}
+
+func TestOpenRouterClientRetriesRateLimitThreeTimes(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"message":"rate limited"}}`))
+	}))
+	defer server.Close()
+
+	client := newOpenRouterClient([]string{"key"}, "", server.URL, server.Client())
+	client.rateLimitDelay = time.Millisecond
+	_, err := client.Ask(context.Background(), testGarminMessages("hi"))
+	if err == nil || requests != 4 {
+		t.Fatalf("Ask() error = %v after %d requests, want initial request plus 3 retries", err, requests)
 	}
 }

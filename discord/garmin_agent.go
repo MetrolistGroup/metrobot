@@ -85,6 +85,11 @@ func (b *Bot) runGarminAI(ctx context.Context, s *discordgo.Session, m *discordg
 		conversation = append(conversation, assistantMessage)
 		if len(assistantMessage.ToolCalls) == 0 {
 			answer := normalizeGarminAIAnswer(assistantMessage.Content)
+			if garminAISilentAnswer(answer) {
+				result.Silent = true
+				result.Conversation = conversation
+				return result, nil
+			}
 			if answer == "" {
 				return nil, fmt.Errorf("AI provider returned no final response")
 			}
@@ -131,6 +136,12 @@ func (b *Bot) runGarminAI(ctx context.Context, s *discordgo.Session, m *discordg
 		}
 	}
 	return nil, fmt.Errorf("AI exceeded the tool-call limit")
+}
+
+func garminAISilentAnswer(answer string) bool {
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	answer = strings.Trim(answer, "`*_.,! ")
+	return answer == "do_not_respond" || answer == "do not respond"
 }
 
 func handleGarminAIMessageAction(s *discordgo.Session, m *discordgo.MessageCreate, call cmd.GarminAIToolCall) (bool, error) {
@@ -553,13 +564,16 @@ func garminToolsForConversation(messages []cmd.GarminAIMessage, isAdmin bool) []
 	wantsDiscordMember := containsAnyGarminPhrase(prompt,
 		"discord member", "discord user", "discord username", "display name", "server nickname", "who is <@")
 	wantsMaintainerChannel := garminMaintainerChannelForConversation(messages) != ""
+	wantsReaction := containsAnyGarminPhrase(prompt, "react to", "add a reaction", "reaction with", "react with")
 
 	selected := make([]cmd.GarminAITool, 0, len(garminAITools))
 	for _, tool := range garminAITools {
 		name := tool.Function.Name
 		include := false
 		switch name {
-		case "react_to_message", "do_not_respond":
+		case "react_to_message":
+			include = wantsReaction
+		case "do_not_respond":
 			include = true
 		case "remember":
 			include = wantsMemory

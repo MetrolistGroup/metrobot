@@ -154,6 +154,19 @@ func TestGarminAIEmojiCatalogContainsAllCurrentGuildEmojis(t *testing.T) {
 	}
 }
 
+func TestGarminAIEmojiOnlyBecomesReactionCandidate(t *testing.T) {
+	for _, content := range []string{":soggy:", "  :thumb:  ", "<a:trolleyz:1481188261274587217>"} {
+		if emoji := garminAIEmojiOnly(content); emoji == nil {
+			t.Errorf("garminAIEmojiOnly(%q) = nil", content)
+		}
+	}
+	for _, content := range []string{"ouch :soggy:", ":not_allowed:", "hello"} {
+		if emoji := garminAIEmojiOnly(content); emoji != nil {
+			t.Errorf("garminAIEmojiOnly(%q) = %#v, want nil", content, emoji)
+		}
+	}
+}
+
 func TestHandleGarminAIDoNotRespond(t *testing.T) {
 	handled, err := handleGarminAIMessageAction(nil, nil, cmd.GarminAIToolCall{Function: cmd.GarminAIFunctionCall{
 		Name:      "do_not_respond",
