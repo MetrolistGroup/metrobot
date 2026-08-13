@@ -207,7 +207,8 @@ type chatThinking struct {
 }
 
 type chatReasoning struct {
-	Enabled bool `json:"enabled"`
+	Enabled *bool  `json:"enabled,omitempty"`
+	Effort  string `json:"effort,omitempty"`
 }
 
 type chatProviderPreferences struct {

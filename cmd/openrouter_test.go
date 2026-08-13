@@ -31,8 +31,8 @@ func TestOpenRouterClientUsesCapableRouteByDefault(t *testing.T) {
 	if request.Model != openRouterDefaultModel || len(request.Models) != 0 {
 		t.Errorf("model route = (%q, %v), want %q", request.Model, request.Models, openRouterDefaultModel)
 	}
-	if request.Reasoning == nil || request.Reasoning.Enabled {
-		t.Errorf("reasoning = %#v, want disabled", request.Reasoning)
+	if request.Reasoning == nil || request.Reasoning.Effort != "minimal" || request.Reasoning.Enabled != nil {
+		t.Errorf("reasoning = %#v, want minimal effort", request.Reasoning)
 	}
 	if request.Thinking != nil {
 		t.Errorf("thinking = %#v, want omitted", request.Thinking)
@@ -103,7 +103,7 @@ func TestOpenRouterClientSupportsConfiguredModel(t *testing.T) {
 	if request.Model != "openai/gpt-4.1-mini" || len(request.Models) != 0 {
 		t.Errorf("model route = (%q, %v), want configured model", request.Model, request.Models)
 	}
-	if request.Reasoning == nil || request.Reasoning.Enabled {
+	if request.Reasoning == nil || request.Reasoning.Enabled == nil || *request.Reasoning.Enabled {
 		t.Errorf("reasoning = %#v, want disabled", request.Reasoning)
 	}
 	if request.Provider != nil {
