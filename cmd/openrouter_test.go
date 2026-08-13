@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestOpenRouterClientUsesCapableZDRRouteByDefault(t *testing.T) {
+func TestOpenRouterClientUsesCapableRouteByDefault(t *testing.T) {
 	var request chatCompletionRequest
 	var referer, title string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -37,7 +37,7 @@ func TestOpenRouterClientUsesCapableZDRRouteByDefault(t *testing.T) {
 	if request.Thinking != nil {
 		t.Errorf("thinking = %#v, want omitted", request.Thinking)
 	}
-	if request.Provider == nil || !request.Provider.ZDR || request.Provider.DataCollection != "deny" || !request.Provider.RequireParameters || request.Provider.Sort.By != "throughput" || request.Provider.Sort.Partition != "none" {
+	if request.Provider == nil || request.Provider.ZDR || request.Provider.DataCollection != "deny" || !request.Provider.RequireParameters || request.Provider.Sort.By != "throughput" || request.Provider.Sort.Partition != "none" {
 		t.Errorf("provider routing = %#v", request.Provider)
 	}
 	if referer != "https://github.com/MetrolistGroup/metrobot" || title != "Metrobot" {
@@ -80,7 +80,7 @@ func TestOpenRouterClientMigratesBrokenGraniteDefault(t *testing.T) {
 	if _, err := client.Ask(context.Background(), testGarminMessages("hi")); err != nil {
 		t.Fatalf("Ask() error = %v", err)
 	}
-	if request.Model != openRouterDefaultModel || request.Provider == nil || !request.Provider.ZDR {
+	if request.Model != openRouterDefaultModel || request.Provider == nil || request.Provider.ZDR || request.Provider.DataCollection != "deny" {
 		t.Fatalf("broken default migration = model %q, provider %#v", request.Model, request.Provider)
 	}
 }

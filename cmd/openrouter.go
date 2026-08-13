@@ -40,7 +40,6 @@ func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http
 			request.Reasoning = &chatReasoning{Enabled: false}
 			if useDefaultRoute {
 				request.Provider = &chatProviderPreferences{
-					ZDR:               true,
 					DataCollection:    "deny",
 					RequireParameters: true,
 					Sort: chatProviderSort{
