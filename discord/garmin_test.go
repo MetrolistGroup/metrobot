@@ -37,8 +37,9 @@ func TestTruncateGarminAIResponsePreservesUTF8(t *testing.T) {
 
 func TestGarminAIContinuationIncludesBoundedContext(t *testing.T) {
 	bot := &Bot{
-		garminAI:         &fakeGarminAI{},
-		garminAIContexts: make(map[string]garminAIContext),
+		garminAI:             &fakeGarminAI{},
+		garminAIContexts:     make(map[string]garminAIContext),
+		garminAIUserContexts: make(map[string]garminAIContext),
 	}
 	history := []cmd.GarminAIMessage{
 		{Role: "user", Content: "one"},
@@ -48,15 +49,18 @@ func TestGarminAIContinuationIncludesBoundedContext(t *testing.T) {
 		{Role: "user", Content: "three"},
 		{Role: "assistant", Content: "three answer"},
 	}
-	bot.rememberGarminAIContext("bot-message", history)
+	bot.rememberGarminAIContext("bot-message", "user", history)
 
 	messages, ok := bot.garminAIContinuation(&discordgo.MessageCreate{Message: &discordgo.Message{
 		MessageReference: &discordgo.MessageReference{MessageID: "bot-message"},
+		Author:           &discordgo.User{ID: "user"},
 	}}, "  follow up  ")
 	if !ok {
 		t.Fatal("garminAIContinuation() did not recognize tracked reply")
 	}
 	want := []cmd.GarminAIMessage{
+		{Role: "user", Content: "one"},
+		{Role: "assistant", Content: "one answer"},
 		{Role: "user", Content: "two"},
 		{Role: "assistant", Content: "two answer"},
 		{Role: "user", Content: "three"},
@@ -78,9 +82,80 @@ func TestGarminAIContinuationRejectsUntrackedAndExpiredReplies(t *testing.T) {
 	for _, messageID := range []string{"other-bot-message", "expired"} {
 		messages, ok := bot.garminAIContinuation(&discordgo.MessageCreate{Message: &discordgo.Message{
 			MessageReference: &discordgo.MessageReference{MessageID: messageID},
+			Author:           &discordgo.User{ID: "user"},
 		}}, "follow up")
 		if ok || messages != nil {
 			t.Fatalf("garminAIContinuation(%q) = (%#v, %v), want rejected", messageID, messages, ok)
+		}
+	}
+}
+
+func TestGarminAITriggeredConversationUsesPerUserHistory(t *testing.T) {
+	bot := &Bot{
+		garminAIContexts:     make(map[string]garminAIContext),
+		garminAIUserContexts: make(map[string]garminAIContext),
+	}
+	history := []cmd.GarminAIMessage{
+		{Role: "user", Content: "always add a heart"},
+		{Role: "assistant", Content: "got it ❤️"},
+	}
+	bot.rememberGarminAIContext("old-reply", "john", history)
+	message := &discordgo.MessageCreate{Message: &discordgo.Message{
+		Author: &discordgo.User{ID: "john"},
+	}}
+	got := bot.garminAITriggeredConversation(message, "you forgot")
+	want := append(history, cmd.GarminAIMessage{Role: "user", Content: "you forgot"})
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("triggered conversation = %#v, want %#v", got, want)
+	}
+}
+
+func TestExpandGarminAIEmojis(t *testing.T) {
+	state := discordgo.NewState()
+	if err := state.GuildAdd(&discordgo.Guild{ID: "guild", Emojis: []*discordgo.Emoji{
+		{ID: "1481187881946058922", Name: "thumb", Available: true},
+		{ID: "1481188261274587217", Name: "trolleyz", Animated: true, Available: true},
+		{ID: "999999999999999999", Name: "not_allowed", Available: true},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	session := &discordgo.Session{State: state}
+	got := expandGarminAIEmojis(session, "guild", "nice :thumb: :trolleyz: :not_allowed:")
+	want := "nice <:thumb:1481187881946058922> <a:trolleyz:1481188261274587217> :not_allowed:"
+	if got != want {
+		t.Fatalf("expandGarminAIEmojis() = %q, want %q", got, want)
+	}
+}
+
+func TestHandleGarminAIDoNotRespond(t *testing.T) {
+	handled, err := handleGarminAIMessageAction(nil, nil, cmd.GarminAIToolCall{Function: cmd.GarminAIFunctionCall{
+		Name:      "do_not_respond",
+		Arguments: `{}`,
+	}})
+	if err != nil || !handled {
+		t.Fatalf("do_not_respond = (%v, %v), want handled", handled, err)
+	}
+}
+
+func TestGarminDirectSlurDetection(t *testing.T) {
+	for _, prompt := range []string{
+		"you are a nigger",
+		"f.a.g.g.o.t",
+		"stupid r3tard",
+	} {
+		if !garminDirectSlur(prompt) {
+			t.Errorf("garminDirectSlur(%q) = false, want true", prompt)
+		}
+	}
+	for _, prompt := range []string{
+		"what does the n-word mean?",
+		"someone called me a faggot",
+		"why is nigger a slur?",
+		"fuck you",
+		"hello",
+	} {
+		if garminDirectSlur(prompt) {
+			t.Errorf("garminDirectSlur(%q) = true, want false", prompt)
 		}
 	}
 }

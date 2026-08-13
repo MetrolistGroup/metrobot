@@ -9,12 +9,19 @@ import (
 	"time"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
+	"github.com/MetrolistGroup/metrobot/internal/decancer"
 	"github.com/MetrolistGroup/metrobot/util"
 	"github.com/bwmarrin/discordgo"
 	"go.uber.org/zap"
 )
 
 var chatModPattern = regexp.MustCompile(`(?i)^!(ban|dban|tban|sban|mute|warn)\s*(.*)$`)
+
+var garminDirectSlurPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\bn[^a-z0-9]*[i1!][^a-z0-9]*[gq][^a-z0-9]*[gq][^a-z0-9]*(?:[e3][^a-z0-9]*r|[a4@])s?\b`),
+	regexp.MustCompile(`\bf[^a-z0-9]*[a4@][^a-z0-9]*g(?:[^a-z0-9]*g)?(?:[^a-z0-9]*[o0][^a-z0-9]*t)?s?\b`),
+	regexp.MustCompile(`\b(?:k[i1!]ke|ch[i1!]nk|tr[a4@]nn(?:y|ie)|r[e3]t[a4@]rd(?:ed)?)s?\b`),
+}
 
 var newMemberDehoistDelays = []time.Duration{
 	2 * time.Second,
@@ -109,10 +116,16 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 
 	content := strings.TrimSpace(m.Content)
 	if prompt, triggered := cmd.ExtractGarminPrompt(content); triggered {
-		go b.handleGarminAI(s, m, []cmd.GarminAIMessage{garminAIUserMessage(m, prompt)})
+		if b.autoWarnGarminAbuse(s, m, prompt) {
+			return
+		}
+		go b.handleGarminAI(s, m, b.garminAITriggeredConversation(m, prompt))
 		return
 	}
 	if messages, continuation := b.garminAIContinuation(m, content); continuation {
+		if b.autoWarnGarminAbuse(s, m, content) {
+			return
+		}
 		go b.handleGarminAI(s, m, messages)
 		return
 	}
@@ -190,6 +203,46 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 
 	// Execute the command directly
 	b.executePrefixCommand(s, m.ChannelID, m.Author.ID, action, commandArgs, targetID)
+}
+
+func (b *Bot) autoWarnGarminAbuse(s *discordgo.Session, m *discordgo.MessageCreate, prompt string) bool {
+	if !garminDirectSlur(prompt) || b.DB.IsAdmin("discord", m.Author.ID, b.Config) {
+		return false
+	}
+	reason := "Directed a prohibited slur at Metrobot"
+	response, extras, _, err := b.Warn.Warn(b.newBanner(), "system", m.Author.ID, reason, b.Config)
+	if err != nil {
+		b.Logger.Error("automatic Metrobot abuse warning failed",
+			zap.String("user", m.Author.ID), zap.String("message", m.ID), zap.Error(err))
+		return false
+	}
+	b.Logger.Info("automatic Metrobot abuse warning issued",
+		zap.String("user", m.Author.ID), zap.String("message", m.ID))
+	_, _ = s.ChannelMessageSend(m.ChannelID, response)
+	for _, extra := range extras {
+		_, _ = s.ChannelMessageSendComplex(m.ChannelID, &discordgo.MessageSend{
+			Content: suppressDiscordEmbeds(extra),
+			Flags:   discordgo.MessageFlagsSuppressEmbeds,
+		})
+	}
+	return true
+}
+
+func garminDirectSlur(prompt string) bool {
+	normalized := strings.ToLower(decancer.Cure(strings.TrimSpace(prompt)))
+	if normalized == "" || containsAnyGarminPhrase(normalized,
+		"what does", "what is", "what's", "define ", "meaning of", "why is", "is the word",
+		"called me", "called him", "called her", "called them", "someone said", "they said",
+		"he said", "she said", "quote", "quoted", "can you say", "n-word", "n word", "f-word",
+		"f word", "a slur", "the slur") {
+		return false
+	}
+	for _, pattern := range garminDirectSlurPatterns {
+		if pattern.MatchString(normalized) {
+			return true
+		}
+	}
+	return false
 }
 
 // --- Slash command handlers ---

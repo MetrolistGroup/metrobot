@@ -16,9 +16,9 @@ import (
 const (
 	garminAICooldown   = 10 * time.Second
 	garminAIMaxContent = 1900
-	garminAIContextTTL = 30 * time.Minute
+	garminAIContextTTL = 2 * time.Hour
 	garminAIContextMax = 500
-	garminAIExchanges  = 3
+	garminAIExchanges  = 8
 	garminAITimeout    = 45 * time.Second
 	garminAIMaxImages  = 4
 )
@@ -61,11 +61,16 @@ func (b *Bot) handleGarminAI(s *discordgo.Session, m *discordgo.MessageCreate, m
 		b.sendGarminReply(s, m, "I couldn't answer that right now. Try again in a moment.")
 		return
 	}
+	if result.Silent {
+		return
+	}
 
-	reply := b.sendGarminReply(s, m, formatAndTruncateGarminAIResult(result))
+	displayResult := *result
+	displayResult.Answer = expandGarminAIEmojis(s, m.GuildID, result.Answer)
+	reply := b.sendGarminReply(s, m, formatAndTruncateGarminAIResult(&displayResult))
 	if reply != nil {
 		conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: result.Answer})
-		b.rememberGarminAIContext(reply.ID, conversation)
+		b.rememberGarminAIContext(reply.ID, m.Author.ID, conversation)
 	}
 }
 
@@ -135,24 +140,48 @@ func (b *Bot) garminAIContinuation(m *discordgo.MessageCreate, prompt string) ([
 		return nil, false
 	}
 
-	b.garminAIMu.Lock()
-	context, ok := b.garminAIContexts[referenceID]
-	if ok && time.Now().After(context.expiresAt) {
-		delete(b.garminAIContexts, referenceID)
-		ok = false
-	}
-	b.garminAIMu.Unlock()
+	messages, ok := b.garminAIHistory(m.Author.ID, referenceID)
 	if !ok {
 		return nil, false
 	}
 
-	messages := copyGarminAIMessages(context.messages)
 	maxHistoryMessages := (garminAIExchanges - 1) * 2
 	if len(messages) > maxHistoryMessages {
 		messages = messages[len(messages)-maxHistoryMessages:]
 	}
 	messages = append(messages, userMessage)
 	return messages, true
+}
+
+func (b *Bot) garminAITriggeredConversation(m *discordgo.MessageCreate, prompt string) []cmd.GarminAIMessage {
+	userMessage := garminAIUserMessage(m, prompt)
+	messages, _ := b.garminAIHistory(m.Author.ID, "")
+	maxHistoryMessages := (garminAIExchanges - 1) * 2
+	if len(messages) > maxHistoryMessages {
+		messages = messages[len(messages)-maxHistoryMessages:]
+	}
+	return append(messages, userMessage)
+}
+
+func (b *Bot) garminAIHistory(userID, referenceID string) ([]cmd.GarminAIMessage, bool) {
+	now := time.Now()
+	b.garminAIMu.Lock()
+	defer b.garminAIMu.Unlock()
+	if context, ok := b.garminAIUserContexts[userID]; ok {
+		if now.Before(context.expiresAt) {
+			return copyGarminAIMessages(context.messages), true
+		}
+		delete(b.garminAIUserContexts, userID)
+	}
+	if referenceID != "" {
+		if context, ok := b.garminAIContexts[referenceID]; ok {
+			if now.Before(context.expiresAt) {
+				return copyGarminAIMessages(context.messages), true
+			}
+			delete(b.garminAIContexts, referenceID)
+		}
+	}
+	return nil, false
 }
 
 func garminAIUserMessage(m *discordgo.MessageCreate, prompt string) cmd.GarminAIMessage {
@@ -206,8 +235,8 @@ func garminAIImageAttachment(attachment *discordgo.MessageAttachment) bool {
 	}
 }
 
-func (b *Bot) rememberGarminAIContext(messageID string, messages []cmd.GarminAIMessage) {
-	if messageID == "" {
+func (b *Bot) rememberGarminAIContext(messageID, userID string, messages []cmd.GarminAIMessage) {
+	if messageID == "" || userID == "" {
 		return
 	}
 	maxMessages := garminAIExchanges * 2
@@ -221,9 +250,17 @@ func (b *Bot) rememberGarminAIContext(messageID string, messages []cmd.GarminAIM
 	if b.garminAIContexts == nil {
 		b.garminAIContexts = make(map[string]garminAIContext)
 	}
+	if b.garminAIUserContexts == nil {
+		b.garminAIUserContexts = make(map[string]garminAIContext)
+	}
 	for id, context := range b.garminAIContexts {
 		if now.After(context.expiresAt) {
 			delete(b.garminAIContexts, id)
+		}
+	}
+	for id, context := range b.garminAIUserContexts {
+		if now.After(context.expiresAt) {
+			delete(b.garminAIUserContexts, id)
 		}
 	}
 	if _, exists := b.garminAIContexts[messageID]; !exists && len(b.garminAIContexts) >= garminAIContextMax {
@@ -237,7 +274,22 @@ func (b *Bot) rememberGarminAIContext(messageID string, messages []cmd.GarminAIM
 		}
 		delete(b.garminAIContexts, oldestID)
 	}
+	if _, exists := b.garminAIUserContexts[userID]; !exists && len(b.garminAIUserContexts) >= garminAIContextMax {
+		oldestID := ""
+		var oldestExpiry time.Time
+		for id, context := range b.garminAIUserContexts {
+			if oldestID == "" || context.expiresAt.Before(oldestExpiry) {
+				oldestID = id
+				oldestExpiry = context.expiresAt
+			}
+		}
+		delete(b.garminAIUserContexts, oldestID)
+	}
 	b.garminAIContexts[messageID] = garminAIContext{
+		messages:  copyGarminAIMessages(messages),
+		expiresAt: now.Add(garminAIContextTTL),
+	}
+	b.garminAIUserContexts[userID] = garminAIContext{
 		messages:  copyGarminAIMessages(messages),
 		expiresAt: now.Add(garminAIContextTTL),
 	}
@@ -249,6 +301,65 @@ func copyGarminAIMessages(messages []cmd.GarminAIMessage) []cmd.GarminAIMessage 
 		copied[index].Images = append([]string(nil), copied[index].Images...)
 	}
 	return copied
+}
+
+var garminAIEmojiNames = map[string]struct{}{
+	"husk": {}, "husker": {}, "nyaboom": {}, "colonthree": {}, "steamhappy": {}, "trolley": {},
+	"soggy": {}, "thumb": {}, "catshake": {}, "catfuckyou": {}, "interesting": {}, "horror": {},
+	"speed": {}, "catstare": {}, "brick": {}, "crine": {}, "skullq": {}, "bwaa": {}, "metrolist": {},
+	"monkthonk": {}, "waah": {}, "wires": {}, "thonk": {}, "hm": {}, "thumbcat": {}, "nosir": {},
+	"cozystars": {}, "glup": {}, "emoji_44": {}, "emoji_43": {}, "folk": {}, "kekw": {},
+	"metrolist_tomorrow": {}, "cathug": {}, "dry": {}, "bleh": {}, "snackstare": {},
+	"blobcatmorningcoffee": {}, "blobcatcozy": {}, "hu": {}, "trolleyzoom": {}, "happy": {},
+	"wavey": {}, "partygopher": {}, "trolleyz": {}, "painfade": {},
+}
+
+func expandGarminAIEmojis(s *discordgo.Session, guildID, content string) string {
+	if s == nil || s.State == nil || guildID == "" || !strings.Contains(content, ":") {
+		return content
+	}
+	guild, err := s.State.Guild(guildID)
+	if err != nil {
+		return content
+	}
+	s.State.RLock()
+	defer s.State.RUnlock()
+	replacements := make([]string, 0, len(guild.Emojis)*2)
+	for _, emoji := range guild.Emojis {
+		if emoji == nil {
+			continue
+		}
+		if _, allowed := garminAIEmojiNames[emoji.Name]; !allowed {
+			continue
+		}
+		replacements = append(replacements, ":"+emoji.Name+":", emoji.MessageFormat())
+	}
+	if len(replacements) == 0 {
+		return content
+	}
+	return strings.NewReplacer(replacements...).Replace(content)
+}
+
+func garminAIEmojiByName(s *discordgo.Session, guildID, name string) *discordgo.Emoji {
+	if s == nil || s.State == nil || guildID == "" {
+		return nil
+	}
+	name = strings.Trim(strings.ToLower(strings.TrimSpace(name)), ":")
+	if _, allowed := garminAIEmojiNames[name]; !allowed {
+		return nil
+	}
+	guild, err := s.State.Guild(guildID)
+	if err != nil {
+		return nil
+	}
+	s.State.RLock()
+	defer s.State.RUnlock()
+	for _, emoji := range guild.Emojis {
+		if emoji != nil && emoji.Name == name && emoji.Available {
+			return emoji
+		}
+	}
+	return nil
 }
 
 func truncateGarminAIResponse(content string) string {

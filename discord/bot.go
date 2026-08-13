@@ -27,15 +27,16 @@ type Bot struct {
 	Ping       *cmd.PingHandler
 	Case       *cmd.CaseHandler
 
-	garminProcessor  *cmd.GarminProcessor
-	garminAI         cmd.GarminAI
-	garminMemory     *cmd.GarminMemory
-	garminGitHub     *gh.AssistantClient
-	garminAIMu       sync.Mutex
-	garminAILastUsed map[string]time.Time
-	garminAIContexts map[string]garminAIContext
-	garminAISlots    chan struct{}
-	TimedBanRestorer func()
+	garminProcessor      *cmd.GarminProcessor
+	garminAI             cmd.GarminAI
+	garminMemory         *cmd.GarminMemory
+	garminGitHub         *gh.AssistantClient
+	garminAIMu           sync.Mutex
+	garminAILastUsed     map[string]time.Time
+	garminAIContexts     map[string]garminAIContext
+	garminAIUserContexts map[string]garminAIContext
+	garminAISlots        chan struct{}
+	TimedBanRestorer     func()
 }
 
 func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
@@ -91,6 +92,7 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		bot.garminGitHub = gh.NewAssistantClient(cfg.GitHubToken, cfg.GitHubOwner, cfg.GitHubRepo)
 		bot.garminAILastUsed = make(map[string]time.Time)
 		bot.garminAIContexts = make(map[string]garminAIContext)
+		bot.garminAIUserContexts = make(map[string]garminAIContext)
 		bot.garminAISlots = make(chan struct{}, 3)
 	}
 
