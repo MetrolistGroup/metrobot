@@ -8,7 +8,8 @@ import (
 
 const (
 	openRouterEndpoint      = "https://openrouter.ai/api/v1/chat/completions"
-	openRouterDefaultModel  = "openai/gpt-5-mini"
+	openRouterDefaultModel  = "openai/gpt-5.4-nano"
+	openRouterPreviousModel = "openai/gpt-5-mini"
 	openRouterLegacyDefault = "upstage/solar-pro4"
 	openRouterBrokenDefault = "ibm-granite/granite-4.1-8b"
 )
@@ -23,7 +24,7 @@ func NewOpenRouterClient(keys []string, model string) *OpenRouterClient {
 
 func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http.Client) *OpenRouterClient {
 	model = strings.TrimSpace(model)
-	useDefaultRoute := model == "" || model == openRouterDefaultModel || model == openRouterLegacyDefault || model == openRouterBrokenDefault
+	useDefaultRoute := model == "" || model == openRouterDefaultModel || model == openRouterPreviousModel || model == openRouterLegacyDefault || model == openRouterBrokenDefault
 	if useDefaultRoute {
 		model = openRouterDefaultModel
 	}
@@ -38,7 +39,7 @@ func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http
 		},
 		func(request *chatCompletionRequest) {
 			if useDefaultRoute {
-				request.Reasoning = &chatReasoning{Effort: "minimal"}
+				request.Reasoning = &chatReasoning{Effort: "none"}
 				request.Provider = &chatProviderPreferences{
 					DataCollection:    "deny",
 					RequireParameters: true,
@@ -47,9 +48,6 @@ func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http
 						Partition: "none",
 					},
 				}
-			} else {
-				disabled := false
-				request.Reasoning = &chatReasoning{Enabled: &disabled}
 			}
 		},
 		httpClient,

@@ -289,7 +289,14 @@ func normalizeGarminAIAnswer(answer string) string {
 	for len(lines) > 0 && strings.HasPrefix(strings.TrimSpace(lines[0]), "-# ") {
 		lines = lines[1:]
 	}
-	return strings.TrimSpace(strings.Join(lines, "\n"))
+	answer = strings.TrimSpace(strings.Join(lines, "\n"))
+	lower := strings.ToLower(answer)
+	for _, prefix := range []string{"garmin,", "garmin:", "garmin -"} {
+		if strings.HasPrefix(lower, prefix) {
+			return strings.TrimSpace(answer[len(prefix):])
+		}
+	}
+	return answer
 }
 
 func truncateGarminAIToolResult(output string) string {

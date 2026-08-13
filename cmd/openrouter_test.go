@@ -31,8 +31,8 @@ func TestOpenRouterClientUsesCapableRouteByDefault(t *testing.T) {
 	if request.Model != openRouterDefaultModel || len(request.Models) != 0 {
 		t.Errorf("model route = (%q, %v), want %q", request.Model, request.Models, openRouterDefaultModel)
 	}
-	if request.Reasoning == nil || request.Reasoning.Effort != "minimal" || request.Reasoning.Enabled != nil {
-		t.Errorf("reasoning = %#v, want minimal effort", request.Reasoning)
+	if request.Reasoning == nil || request.Reasoning.Effort != "none" || request.Reasoning.Enabled != nil {
+		t.Errorf("reasoning = %#v, want no reasoning", request.Reasoning)
 	}
 	if request.Thinking != nil {
 		t.Errorf("thinking = %#v, want omitted", request.Thinking)
@@ -85,6 +85,26 @@ func TestOpenRouterClientMigratesBrokenGraniteDefault(t *testing.T) {
 	}
 }
 
+func TestOpenRouterClientMigratesPreviousGPT5MiniDefault(t *testing.T) {
+	var request chatCompletionRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decoding request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hello"}}]}`))
+	}))
+	defer server.Close()
+
+	client := newOpenRouterClient([]string{"key"}, openRouterPreviousModel, server.URL, server.Client())
+	if _, err := client.Ask(context.Background(), testGarminMessages("hi")); err != nil {
+		t.Fatalf("Ask() error = %v", err)
+	}
+	if request.Model != openRouterDefaultModel || request.Reasoning == nil || request.Reasoning.Effort != "none" {
+		t.Fatalf("previous default migration = model %q, reasoning %#v", request.Model, request.Reasoning)
+	}
+}
+
 func TestOpenRouterClientSupportsConfiguredModel(t *testing.T) {
 	var request chatCompletionRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -103,8 +123,8 @@ func TestOpenRouterClientSupportsConfiguredModel(t *testing.T) {
 	if request.Model != "openai/gpt-4.1-mini" || len(request.Models) != 0 {
 		t.Errorf("model route = (%q, %v), want configured model", request.Model, request.Models)
 	}
-	if request.Reasoning == nil || request.Reasoning.Enabled == nil || *request.Reasoning.Enabled {
-		t.Errorf("reasoning = %#v, want disabled", request.Reasoning)
+	if request.Reasoning != nil {
+		t.Errorf("reasoning = %#v, want model default", request.Reasoning)
 	}
 	if request.Provider != nil {
 		t.Errorf("provider routing = %#v, want no default restrictions for configured model", request.Provider)

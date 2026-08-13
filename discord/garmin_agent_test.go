@@ -49,6 +49,19 @@ func TestNormalizeGarminAIAnswer(t *testing.T) {
 	}
 }
 
+func TestNormalizeGarminAIAnswerStripsWakePhrase(t *testing.T) {
+	for _, answer := range []string{
+		"garmin, you triggered me, what's up?",
+		"Garmin: what's up?",
+		"GARMIN - what's up?",
+	} {
+		got := normalizeGarminAIAnswer(answer)
+		if strings.HasPrefix(strings.ToLower(got), "garmin") {
+			t.Errorf("normalizeGarminAIAnswer(%q) = %q", answer, got)
+		}
+	}
+}
+
 func TestGarminSystemPromptContainsIdentityAndMemory(t *testing.T) {
 	session := &discordgo.Session{State: discordgo.NewState()}
 	message := &discordgo.MessageCreate{Message: &discordgo.Message{
