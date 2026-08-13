@@ -1,24 +1,22 @@
 package discord
 
 import (
+	"context"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
+
+	"github.com/MetrolistGroup/metrobot/cmd"
+	"github.com/bwmarrin/discordgo"
 )
 
-func TestGarminAIFooter(t *testing.T) {
-	want := "\n\n-# This response was generated using Upstage Solar Pro 4 via OpenRouter"
-	if got := garminAIFooter("Upstage Solar Pro 4 via OpenRouter"); got != want {
-		t.Fatalf("garminAIFooter() = %q, want %q", got, want)
-	}
-}
-
 func TestTruncateGarminAIResponse(t *testing.T) {
-	footer := garminAIFooter("Upstage Solar Pro 4 via OpenRouter")
-	input := strings.Repeat("a", garminAIMaxContent)
-	got := truncateGarminAIResponse(input, footer)
-	if len(got)+len(footer) > garminAIMaxContent {
-		t.Fatalf("response length = %d, max %d", len(got)+len(footer), garminAIMaxContent)
+	input := strings.Repeat("a", garminAIMaxContent+1)
+	got := truncateGarminAIResponse(input)
+	if len(got) > garminAIMaxContent {
+		t.Fatalf("response length = %d, max %d", len(got), garminAIMaxContent)
 	}
 	if !strings.HasSuffix(got, "...") {
 		t.Fatalf("truncated response = %q, want ellipsis", got)
@@ -26,10 +24,65 @@ func TestTruncateGarminAIResponse(t *testing.T) {
 }
 
 func TestTruncateGarminAIResponsePreservesUTF8(t *testing.T) {
-	footer := garminAIFooter("Deepseek v4 Flash")
 	input := strings.Repeat("é", garminAIMaxContent)
-	got := truncateGarminAIResponse(input, footer)
+	got := truncateGarminAIResponse(input)
 	if !utf8.ValidString(got) {
 		t.Fatalf("truncated response is invalid UTF-8: %q", got)
 	}
+}
+
+func TestGarminAIContinuationIncludesBoundedContext(t *testing.T) {
+	bot := &Bot{
+		garminAI:         &fakeGarminAI{},
+		garminAIContexts: make(map[string]garminAIContext),
+	}
+	history := []cmd.GarminAIMessage{
+		{Role: "user", Content: "one"},
+		{Role: "assistant", Content: "one answer"},
+		{Role: "user", Content: "two"},
+		{Role: "assistant", Content: "two answer"},
+		{Role: "user", Content: "three"},
+		{Role: "assistant", Content: "three answer"},
+	}
+	bot.rememberGarminAIContext("bot-message", history)
+
+	messages, ok := bot.garminAIContinuation(&discordgo.MessageCreate{Message: &discordgo.Message{
+		MessageReference: &discordgo.MessageReference{MessageID: "bot-message"},
+	}}, "  follow up  ")
+	if !ok {
+		t.Fatal("garminAIContinuation() did not recognize tracked reply")
+	}
+	want := []cmd.GarminAIMessage{
+		{Role: "user", Content: "two"},
+		{Role: "assistant", Content: "two answer"},
+		{Role: "user", Content: "three"},
+		{Role: "assistant", Content: "three answer"},
+		{Role: "user", Content: "follow up"},
+	}
+	if !reflect.DeepEqual(messages, want) {
+		t.Fatalf("messages = %#v, want %#v", messages, want)
+	}
+}
+
+func TestGarminAIContinuationRejectsUntrackedAndExpiredReplies(t *testing.T) {
+	bot := &Bot{
+		garminAI: &fakeGarminAI{},
+		garminAIContexts: map[string]garminAIContext{
+			"expired": {expiresAt: time.Now().Add(-time.Minute)},
+		},
+	}
+	for _, messageID := range []string{"other-bot-message", "expired"} {
+		messages, ok := bot.garminAIContinuation(&discordgo.MessageCreate{Message: &discordgo.Message{
+			MessageReference: &discordgo.MessageReference{MessageID: messageID},
+		}}, "follow up")
+		if ok || messages != nil {
+			t.Fatalf("garminAIContinuation(%q) = (%#v, %v), want rejected", messageID, messages, ok)
+		}
+	}
+}
+
+type fakeGarminAI struct{}
+
+func (*fakeGarminAI) Ask(context.Context, []cmd.GarminAIMessage) (string, error) {
+	return "", nil
 }

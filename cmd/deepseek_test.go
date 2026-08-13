@@ -24,7 +24,7 @@ func TestDeepSeekClientRotatesKeys(t *testing.T) {
 
 	client := newDeepSeekClient([]string{"key-one", "key-two"}, server.URL, server.Client())
 	for range 3 {
-		if _, err := client.Ask(context.Background(), "hi"); err != nil {
+		if _, err := client.Ask(context.Background(), testGarminMessages("hi")); err != nil {
 			t.Fatalf("Ask() error = %v", err)
 		}
 	}
@@ -50,7 +50,7 @@ func TestDeepSeekClientFailsOverToNextKey(t *testing.T) {
 	defer server.Close()
 
 	client := newDeepSeekClient([]string{"empty", "funded"}, server.URL, server.Client())
-	answer, err := client.Ask(context.Background(), "hi")
+	answer, err := client.Ask(context.Background(), testGarminMessages("hi"))
 	if err != nil {
 		t.Fatalf("Ask() error = %v", err)
 	}
@@ -78,7 +78,7 @@ func TestDeepSeekClientFailsOverAfterNonJSONServerError(t *testing.T) {
 	defer server.Close()
 
 	client := newDeepSeekClient([]string{"key-one", "key-two"}, server.URL, server.Client())
-	answer, err := client.Ask(context.Background(), "hi")
+	answer, err := client.Ask(context.Background(), testGarminMessages("hi"))
 	if err != nil {
 		t.Fatalf("Ask() error = %v", err)
 	}
@@ -99,7 +99,12 @@ func TestDeepSeekClientSendsBoundedNonThinkingRequest(t *testing.T) {
 	defer server.Close()
 
 	client := newDeepSeekClient([]string{"key"}, server.URL, server.Client())
-	if _, err := client.Ask(context.Background(), "  explain this  "); err != nil {
+	messages := []GarminAIMessage{
+		{Role: "user", Content: "first question"},
+		{Role: "assistant", Content: "first answer"},
+		{Role: "user", Content: "  explain this  "},
+	}
+	if _, err := client.Ask(context.Background(), messages); err != nil {
 		t.Fatalf("Ask() error = %v", err)
 	}
 
@@ -112,14 +117,24 @@ func TestDeepSeekClientSendsBoundedNonThinkingRequest(t *testing.T) {
 	if request.MaxTokens != 150 {
 		t.Errorf("max tokens = %d, want 150", request.MaxTokens)
 	}
-	if len(request.Messages) != 2 || request.Messages[1].Content != "explain this" {
+	wantMessages := []chatMessage{
+		{Role: "system", Content: garminSystemPrompt},
+		{Role: "user", Content: "first question"},
+		{Role: "assistant", Content: "first answer"},
+		{Role: "user", Content: "explain this"},
+	}
+	if !reflect.DeepEqual(request.Messages, wantMessages) {
 		t.Errorf("messages = %#v", request.Messages)
 	}
 }
 
 func TestDeepSeekClientRequiresKey(t *testing.T) {
 	client := NewDeepSeekClient(nil)
-	if _, err := client.Ask(context.Background(), "hi"); err == nil {
+	if _, err := client.Ask(context.Background(), testGarminMessages("hi")); err == nil {
 		t.Fatal("Ask() error = nil, want missing-key error")
 	}
+}
+
+func testGarminMessages(prompt string) []GarminAIMessage {
+	return []GarminAIMessage{{Role: "user", Content: prompt}}
 }

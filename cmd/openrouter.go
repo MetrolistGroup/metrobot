@@ -29,7 +29,6 @@ func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http
 		endpoint,
 		model,
 		"OpenRouter",
-		openRouterAttribution(model),
 		map[string]string{
 			"HTTP-Referer":       "https://github.com/MetrolistGroup/metrobot",
 			"X-OpenRouter-Title": "Metrobot",
@@ -39,11 +38,4 @@ func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http
 		},
 		httpClient,
 	)}
-}
-
-func openRouterAttribution(model string) string {
-	if model == openRouterDefaultModel {
-		return "Upstage Solar Pro 4 via OpenRouter"
-	}
-	return model + " via OpenRouter"
 }

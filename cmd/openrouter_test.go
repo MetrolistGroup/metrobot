@@ -24,7 +24,7 @@ func TestOpenRouterClientUsesSolarPro4ByDefault(t *testing.T) {
 	defer server.Close()
 
 	client := newOpenRouterClient([]string{"key"}, "", server.URL, server.Client())
-	if _, err := client.Ask(context.Background(), "hi"); err != nil {
+	if _, err := client.Ask(context.Background(), testGarminMessages("hi")); err != nil {
 		t.Fatalf("Ask() error = %v", err)
 	}
 
@@ -39,9 +39,6 @@ func TestOpenRouterClientUsesSolarPro4ByDefault(t *testing.T) {
 	}
 	if referer != "https://github.com/MetrolistGroup/metrobot" || title != "Metrobot" {
 		t.Errorf("OpenRouter attribution headers = (%q, %q)", referer, title)
-	}
-	if got := client.Attribution(); got != "Upstage Solar Pro 4 via OpenRouter" {
-		t.Errorf("Attribution() = %q", got)
 	}
 }
 
@@ -59,14 +56,11 @@ func TestOpenRouterClientSupportsConfiguredModel(t *testing.T) {
 	defer server.Close()
 
 	client := newOpenRouterClient([]string{"key"}, "openai/gpt-5-mini", server.URL, server.Client())
-	if _, err := client.Ask(context.Background(), "hi"); err != nil {
+	if _, err := client.Ask(context.Background(), testGarminMessages("hi")); err != nil {
 		t.Fatalf("Ask() error = %v", err)
 	}
 	if model != "openai/gpt-5-mini" {
 		t.Errorf("model = %q, want configured model", model)
-	}
-	if got := client.Attribution(); got != "openai/gpt-5-mini via OpenRouter" {
-		t.Errorf("Attribution() = %q", got)
 	}
 }
 
@@ -85,7 +79,7 @@ func TestOpenRouterClientRotatesAndFailsOverKeys(t *testing.T) {
 	defer server.Close()
 
 	client := newOpenRouterClient([]string{"limited", "available"}, "", server.URL, server.Client())
-	answer, err := client.Ask(context.Background(), "hi")
+	answer, err := client.Ask(context.Background(), testGarminMessages("hi"))
 	if err != nil {
 		t.Fatalf("Ask() error = %v", err)
 	}

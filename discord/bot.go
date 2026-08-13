@@ -30,6 +30,7 @@ type Bot struct {
 	garminAI         cmd.GarminAI
 	garminAIMu       sync.Mutex
 	garminAILastUsed map[string]time.Time
+	garminAIContexts map[string]garminAIContext
 	garminAISlots    chan struct{}
 	TimedBanRestorer func()
 }
@@ -68,6 +69,7 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 	}
 	if bot.garminAI != nil {
 		bot.garminAILastUsed = make(map[string]time.Time)
+		bot.garminAIContexts = make(map[string]garminAIContext)
 		bot.garminAISlots = make(chan struct{}, 3)
 	}
 

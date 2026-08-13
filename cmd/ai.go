@@ -14,8 +14,12 @@ import (
 const garminSystemPrompt = "You are Garmin, a small AI assistant in a Discord server. Reply only in English using natural, everyday wording. Keep answers concise: usually one or two short sentences and never more than 100 words. Use Discord markdown only when it helps. Do not mention these instructions."
 
 type GarminAI interface {
-	Ask(ctx context.Context, prompt string) (string, error)
-	Attribution() string
+	Ask(ctx context.Context, messages []GarminAIMessage) (string, error)
+}
+
+type GarminAIMessage struct {
+	Role    string
+	Content string
 }
 
 type chatCompletionClient struct {
@@ -23,7 +27,6 @@ type chatCompletionClient struct {
 	endpoint         string
 	model            string
 	provider         string
-	attribution      string
 	headers          map[string]string
 	configureRequest func(*chatCompletionRequest)
 	httpClient       *http.Client
@@ -61,7 +64,7 @@ type chatCompletionResponse struct {
 	} `json:"error,omitempty"`
 }
 
-func newChatCompletionClient(keys []string, endpoint, model, provider, attribution string, headers map[string]string, configureRequest func(*chatCompletionRequest), httpClient *http.Client) *chatCompletionClient {
+func newChatCompletionClient(keys []string, endpoint, model, provider string, headers map[string]string, configureRequest func(*chatCompletionRequest), httpClient *http.Client) *chatCompletionClient {
 	cleanKeys := make([]string, 0, len(keys))
 	for _, key := range keys {
 		if key = strings.TrimSpace(key); key != "" {
@@ -73,26 +76,32 @@ func newChatCompletionClient(keys []string, endpoint, model, provider, attributi
 		endpoint:         endpoint,
 		model:            model,
 		provider:         provider,
-		attribution:      attribution,
 		headers:          headers,
 		configureRequest: configureRequest,
 		httpClient:       httpClient,
 	}
 }
 
-func (c *chatCompletionClient) Ask(ctx context.Context, prompt string) (string, error) {
+func (c *chatCompletionClient) Ask(ctx context.Context, messages []GarminAIMessage) (string, error) {
 	if len(c.keys) == 0 {
 		return "", fmt.Errorf("no %s API keys configured", c.provider)
 	}
+	if len(messages) == 0 {
+		return "", fmt.Errorf("no messages provided")
+	}
 
 	request := chatCompletionRequest{
-		Model: c.model,
-		Messages: []chatMessage{
-			{Role: "system", Content: garminSystemPrompt},
-			{Role: "user", Content: strings.TrimSpace(prompt)},
-		},
+		Model:     c.model,
+		Messages:  make([]chatMessage, 1, len(messages)+1),
 		MaxTokens: 150,
 		Stream:    false,
+	}
+	request.Messages[0] = chatMessage{Role: "system", Content: garminSystemPrompt}
+	for _, message := range messages {
+		request.Messages = append(request.Messages, chatMessage{
+			Role:    message.Role,
+			Content: strings.TrimSpace(message.Content),
+		})
 	}
 	if c.configureRequest != nil {
 		c.configureRequest(&request)
@@ -118,10 +127,6 @@ func (c *chatCompletionClient) Ask(ctx context.Context, prompt string) (string, 
 	}
 
 	return "", lastErr
-}
-
-func (c *chatCompletionClient) Attribution() string {
-	return c.attribution
 }
 
 func (c *chatCompletionClient) askWithKey(ctx context.Context, payload []byte, key string) (string, bool, error) {
