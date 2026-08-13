@@ -2,6 +2,8 @@ package discord
 
 import (
 	"context"
+	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -18,6 +20,7 @@ const (
 	garminAIContextMax = 500
 	garminAIExchanges  = 3
 	garminAITimeout    = 45 * time.Second
+	garminAIMaxImages  = 4
 )
 
 type garminAIContext struct {
@@ -30,7 +33,7 @@ func (b *Bot) handleGarminAI(s *discordgo.Session, m *discordgo.MessageCreate, m
 		b.sendGarminReply(s, m, "Metrobot AI isn't configured right now.")
 		return
 	}
-	if len(messages) == 0 || strings.TrimSpace(messages[len(messages)-1].Content) == "" {
+	if len(messages) == 0 || !garminAIMessageHasInput(messages[len(messages)-1]) {
 		b.sendGarminReply(s, m, "Ask me something after `garmin,`.")
 		return
 	}
@@ -117,7 +120,8 @@ func (b *Bot) sendGarminReply(s *discordgo.Session, m *discordgo.MessageCreate, 
 }
 
 func (b *Bot) garminAIContinuation(m *discordgo.MessageCreate, prompt string) ([]cmd.GarminAIMessage, bool) {
-	if b.garminAI == nil || strings.TrimSpace(prompt) == "" {
+	userMessage := garminAIUserMessage(m, prompt)
+	if b.garminAI == nil || !garminAIMessageHasInput(userMessage) {
 		return nil, false
 	}
 
@@ -147,8 +151,59 @@ func (b *Bot) garminAIContinuation(m *discordgo.MessageCreate, prompt string) ([
 	if len(messages) > maxHistoryMessages {
 		messages = messages[len(messages)-maxHistoryMessages:]
 	}
-	messages = append(messages, cmd.GarminAIMessage{Role: "user", Content: strings.TrimSpace(prompt)})
+	messages = append(messages, userMessage)
 	return messages, true
+}
+
+func garminAIUserMessage(m *discordgo.MessageCreate, prompt string) cmd.GarminAIMessage {
+	message := cmd.GarminAIMessage{
+		Role:    "user",
+		Content: strings.TrimSpace(prompt),
+		Images:  garminAIImageURLs(m),
+	}
+	if message.Content == "" && len(message.Images) > 0 {
+		message.Content = "what is in this image?"
+	}
+	return message
+}
+
+func garminAIMessageHasInput(message cmd.GarminAIMessage) bool {
+	return strings.TrimSpace(message.Content) != "" || len(message.Images) > 0
+}
+
+func garminAIImageURLs(m *discordgo.MessageCreate) []string {
+	if m == nil || m.Message == nil {
+		return nil
+	}
+	var images []string
+	for _, attachment := range m.Attachments {
+		if attachment == nil || !garminAIImageAttachment(attachment) {
+			continue
+		}
+		imageURL := strings.TrimSpace(attachment.URL)
+		parsed, err := url.Parse(imageURL)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+			continue
+		}
+		images = append(images, imageURL)
+		if len(images) == garminAIMaxImages {
+			break
+		}
+	}
+	return images
+}
+
+func garminAIImageAttachment(attachment *discordgo.MessageAttachment) bool {
+	contentType := strings.ToLower(strings.TrimSpace(attachment.ContentType))
+	if strings.HasPrefix(contentType, "image/") && contentType != "image/svg+xml" {
+		return true
+	}
+	switch strings.ToLower(filepath.Ext(attachment.Filename)) {
+	case ".png", ".jpg", ".jpeg", ".webp", ".gif":
+		return true
+	default:
+		return false
+	}
 }
 
 func (b *Bot) rememberGarminAIContext(messageID string, messages []cmd.GarminAIMessage) {
@@ -189,7 +244,11 @@ func (b *Bot) rememberGarminAIContext(messageID string, messages []cmd.GarminAIM
 }
 
 func copyGarminAIMessages(messages []cmd.GarminAIMessage) []cmd.GarminAIMessage {
-	return append([]cmd.GarminAIMessage(nil), messages...)
+	copied := append([]cmd.GarminAIMessage(nil), messages...)
+	for index := range copied {
+		copied[index].Images = append([]string(nil), copied[index].Images...)
+	}
+	return copied
 }
 
 func truncateGarminAIResponse(content string) string {

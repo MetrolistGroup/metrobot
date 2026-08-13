@@ -42,13 +42,15 @@ func (b *Bot) runGarminAI(ctx context.Context, s *discordgo.Session, m *discordg
 		return nil, err
 	}
 
-	systemPrompt := garminSystemPromptForMessage(s, m, memory)
+	systemPrompt := garminSystemPromptWithMemory(memory)
+	discordContext := garminDiscordContextForMessage(m)
 	conversation := copyGarminAIMessages(messages)
 	tools := garminToolsForConversation(messages, b.DB.IsAdmin("discord", m.Author.ID, b.Config))
 	result := &garminAIResult{Skills: make(map[string]struct{})}
 	for range garminAIMaxToolRounds {
 		completion, err := b.garminAI.Complete(ctx, cmd.GarminAIRequest{
 			SystemPrompt: systemPrompt,
+			Context:      discordContext,
 			Messages:     conversation,
 			Tools:        tools,
 		})
@@ -138,7 +140,11 @@ func (b *Bot) executeGarminAITool(ctx context.Context, s *discordgo.Session, m *
 	return output, skill, memoryUpdated
 }
 
-func garminSystemPromptForMessage(_ *discordgo.Session, m *discordgo.MessageCreate, memory string) string {
+func garminSystemPromptWithMemory(memory string) string {
+	return cmd.GarminSystemPrompt() + "\n\nPersistent memory (admin-managed Markdown):\n" + memory
+}
+
+func garminDiscordContextForMessage(m *discordgo.MessageCreate) string {
 	displayName := m.Author.GlobalName
 	if displayName == "" {
 		displayName = m.Author.Username
@@ -178,7 +184,7 @@ func garminSystemPromptForMessage(_ *discordgo.Session, m *discordgo.MessageCrea
 			"global_name": m.ReferencedMessage.Author.GlobalName,
 		}
 	}
-	return cmd.GarminSystemPrompt() + "\n\nCurrent Discord context (authoritative JSON):\n" + mustJSON(context) + "\n\nPersistent memory (admin-managed Markdown):\n" + memory
+	return "Current Discord context (authoritative JSON):\n" + mustJSON(context)
 }
 
 func (b *Bot) getGarminDiscordMember(s *discordgo.Session, userID string) (string, error) {

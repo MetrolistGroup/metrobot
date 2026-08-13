@@ -85,6 +85,40 @@ func TestGarminAIContinuationRejectsUntrackedAndExpiredReplies(t *testing.T) {
 	}
 }
 
+func TestGarminAIUserMessageIncludesImageAttachments(t *testing.T) {
+	message := &discordgo.MessageCreate{Message: &discordgo.Message{
+		Attachments: []*discordgo.MessageAttachment{
+			{Filename: "photo.png", ContentType: "image/png", URL: "https://cdn.discordapp.com/attachments/photo.png"},
+			{Filename: "notes.txt", ContentType: "text/plain", URL: "https://cdn.discordapp.com/attachments/notes.txt"},
+			{Filename: "fallback.webp", URL: "https://media.discordapp.net/attachments/fallback.webp"},
+		},
+	}}
+	got := garminAIUserMessage(message, "  what is this?  ")
+	want := cmd.GarminAIMessage{
+		Role:    "user",
+		Content: "what is this?",
+		Images: []string{
+			"https://cdn.discordapp.com/attachments/photo.png",
+			"https://media.discordapp.net/attachments/fallback.webp",
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("garminAIUserMessage() = %#v, want %#v", got, want)
+	}
+}
+
+func TestGarminAIUserMessageDefaultsImageOnlyPrompt(t *testing.T) {
+	message := &discordgo.MessageCreate{Message: &discordgo.Message{
+		Attachments: []*discordgo.MessageAttachment{{
+			Filename: "photo.jpg", ContentType: "image/jpeg", URL: "https://cdn.discordapp.com/photo.jpg",
+		}},
+	}}
+	got := garminAIUserMessage(message, "")
+	if got.Content != "what is in this image?" || len(got.Images) != 1 {
+		t.Fatalf("image-only message = %#v", got)
+	}
+}
+
 func TestSendGarminReplyRetriesWithoutReference(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

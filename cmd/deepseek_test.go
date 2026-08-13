@@ -122,7 +122,7 @@ func TestDeepSeekClientSendsBoundedNonThinkingRequest(t *testing.T) {
 		t.Errorf("max tokens = %d, want 160", request.MaxTokens)
 	}
 	wantMessages := []chatMessage{
-		{Role: "system", Content: garminSystemPrompt},
+		{Role: "system", Content: garminSystemPrompt + "\n\nRuntime model identity:\n- The exact API model powering this response is `" + deepSeekModel + "`.\n- If asked what model you are, state this exact model ID. You are still Metrobot, the Discord bot; do not claim to be a different model or provider."},
 		{Role: "user", Content: "first question"},
 		{Role: "assistant", Content: "first answer"},
 		{Role: "user", Content: "explain this"},
@@ -192,6 +192,56 @@ func TestChatCompletionClientRoundTripsToolCalls(t *testing.T) {
 	}
 	if requests != 1 || len(completion.Message.ToolCalls) != 1 || completion.Message.ToolCalls[0].Function.Name != "lookup" {
 		t.Fatalf("Complete() = %#v after %d requests", completion, requests)
+	}
+}
+
+func TestGarminAIMessageMarshalsVisionContent(t *testing.T) {
+	message := GarminAIMessage{
+		Role:    "user",
+		Content: "what is this?",
+		Images:  []string{"https://cdn.discordapp.com/image.png"},
+	}
+	data, err := json.Marshal(message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	parts, ok := payload["content"].([]any)
+	if !ok || len(parts) != 2 {
+		t.Fatalf("vision content = %#v", payload["content"])
+	}
+	imagePart, ok := parts[1].(map[string]any)
+	imageURL, okURL := imagePart["image_url"].(map[string]any)
+	if !ok || !okURL || imagePart["type"] != "image_url" || imageURL["url"] != "https://cdn.discordapp.com/image.png" {
+		t.Fatalf("image part = %#v", parts[1])
+	}
+}
+
+func TestChatCompletionClientSeparatesDynamicContextFromCachedPrompt(t *testing.T) {
+	var request chatCompletionRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decoding request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer server.Close()
+
+	client := newOpenRouterClient([]string{"key"}, "", server.URL, server.Client())
+	_, err := client.Complete(context.Background(), GarminAIRequest{
+		SystemPrompt: "stable prompt",
+		Context:      "dynamic context",
+		Messages:     testGarminMessages("hi"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(request.Messages) != 3 || !request.Messages[0].Cache || request.Messages[1].Cache || request.Messages[1].Content != "dynamic context" {
+		t.Fatalf("messages = %#v", request.Messages)
 	}
 }
 

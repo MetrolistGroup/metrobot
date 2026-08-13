@@ -4,7 +4,7 @@
   "github_token": "github_pat",
   "deepseek_api_keys": ["sk-example-1", "sk-example-2"],
   "openrouter_api_keys": ["sk-or-example-1", "sk-or-example-2"],
-  "openrouter_model": "openai/gpt-5.4-nano",
+  "openrouter_model": "qwen/qwen3.7-flash",
   "garmin_memory_file": "garmin-memory.md",
   "discord_guild_id": "123",
   "telegram_chat_id": -100,

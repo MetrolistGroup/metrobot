@@ -62,8 +62,7 @@ func TestNormalizeGarminAIAnswerStripsWakePhrase(t *testing.T) {
 	}
 }
 
-func TestGarminSystemPromptContainsIdentityAndMemory(t *testing.T) {
-	session := &discordgo.Session{State: discordgo.NewState()}
+func TestGarminSystemPromptAndDiscordContextContainIdentityAndMemory(t *testing.T) {
 	message := &discordgo.MessageCreate{Message: &discordgo.Message{
 		GuildID:   "guild",
 		ChannelID: "channel",
@@ -73,8 +72,8 @@ func TestGarminSystemPromptContainsIdentityAndMemory(t *testing.T) {
 			GlobalName: "Exact Name",
 		},
 	}}
-	prompt := garminSystemPromptForMessage(session, message, "# Metrobot Memory\nKnown fact")
-	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", `"display_name":"Exact Name"`, "exact_user", "Exact Name", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority"} {
+	prompt := garminSystemPromptWithMemory("# Metrobot Memory\nKnown fact") + "\n" + garminDiscordContextForMessage(message)
+	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", `"display_name":"Exact Name"`, "exact_user", "Exact Name", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority", "lowercase by default", "Refuse sexual or erotic", "Metrobot's repository"} {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("prompt missing %q", expected)
 		}
@@ -144,7 +143,7 @@ func TestGarminSystemPromptUsesNicknameWithoutMemberUser(t *testing.T) {
 		Author: &discordgo.User{ID: "123456789012345678", Username: "n7e3", GlobalName: "Nyx"},
 		Member: &discordgo.Member{Nick: "Nyxie"},
 	}}
-	prompt := garminSystemPromptForMessage(nil, message, "# Metrobot Memory")
+	prompt := garminDiscordContextForMessage(message)
 	if !strings.Contains(prompt, `"display_name":"Nyxie"`) {
 		t.Fatalf("prompt did not use nickname: %s", prompt)
 	}

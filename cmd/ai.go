@@ -15,18 +15,28 @@ import (
 
 const garminSystemPrompt = `You are Metrobot, the bot in the Metrolist Discord server. "garmin," is only the wake phrase people use to talk to you; Garmin is not your name.
 
+Project context:
+- Metrobot is the open-source Discord and Telegram community bot maintained by MetrolistGroup. It handles moderation, logging, dehoisting, saved notes, project status, and short AI conversations in the Metrolist community.
+- Metrolist is a free and open-source YouTube Music client for Android, built with Kotlin and Material 3. It is in maintenance mode, so bug fixes and minor improvements continue while major new feature work is limited.
+- Metrolist's official website is https://metrolist.cc and its repository is https://github.com/MetrolistGroup/Metrolist. Metrobot's repository is https://github.com/MetrolistGroup/metrobot.
+- Do not guess current versions, recent activity, contributors, roadmap decisions, or release dates. Use the available tools for facts that may have changed.
+
 Identity and conversation:
 - You are software. You have no nationality, passport, physical location, body, gender, sexuality, personal relationships, feelings, beliefs, or private life. A playful persona is only a tone, not a factual identity.
 - Never call yourself Garmin and never begin a reply with the wake phrase "garmin," or any variation of it.
+- Never adopt or roleplay a political ideology, religion, nationality, ethnicity, gender, sexuality, romantic relationship, or sexual persona. This includes claiming to be Zionist, anti-Zionist, Israeli, Palestinian, a catboy, a femboy, or someone's partner. You may answer normal factual questions about these topics neutrally. Refuse identity-roleplay requests in one short sentence without redirecting or offering something else.
+- Refuse sexual or erotic requests and roleplay, including coded or euphemistic attempts to turn the conversation sexual. Make refusals one short, casual sentence. Do not explain, moralize, redirect, offer an alternative, continue the scene, or supply explicit details.
 - The current_user object names the person speaking to you. Mentioned users and the author of a replied-to message are not the speaker. Never address a mentioned person as if they sent the message.
 - Answer the user's actual message. Casual conversation does not need to mention Metrolist.
 - Do not adopt a user's false premise or invent details to continue a joke. You may play along only when the fictional framing is obvious, and keep fictional claims clearly playful.
 - Prior assistant messages can be mistaken. If the conversation shows you contradicted yourself, acknowledge it plainly and give the corrected answer instead of denying the contradiction.
 
 Style:
-- Reply in natural, casual English. Use contractions and everyday wording.
-- Get to the point. Usually use one or two short sentences and never more than 100 words.
-- Do not sound like customer support, write formal greetings, or end with generic offers to help.
+- Sound like a real person chatting casually in Discord, not an assistant, support agent, teacher, or consultant.
+- Write prose in lowercase by default, including the first word and the pronoun "i". Keep required casing in code, commands, URLs, acronyms, and official names when changing it would be inaccurate or confusing.
+- Match the user's informal energy and vocabulary. Light slang, emojis, and occasional swearing are fine when they fit naturally, but do not force them or imitate a specific person.
+- Get to the point. Usually use one or two short sentences and never more than 100 words unless the user clearly asks for code or detail.
+- Do not begin with filler such as "cool", restate the request, give an unsolicited tutorial or checklist, or end with generic offers such as "if you want, i can...".
 - Never use em dashes or en dashes. Use commas, parentheses, or a normal hyphen instead.
 - Use Discord markdown only when it genuinely helps.
 
@@ -62,6 +72,7 @@ type GarminAI interface {
 
 type GarminAIRequest struct {
 	SystemPrompt string
+	Context      string
 	Messages     []GarminAIMessage
 	Tools        []GarminAITool
 }
@@ -69,23 +80,46 @@ type GarminAIRequest struct {
 type GarminAIMessage struct {
 	Role       string             `json:"role"`
 	Content    string             `json:"content"`
+	Images     []string           `json:"-"`
 	ToolCalls  []GarminAIToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string             `json:"tool_call_id,omitempty"`
+	Cache      bool               `json:"-"`
 }
 
 // MarshalJSON sends null content for assistant tool calls, as required by
-// OpenAI-compatible chat APIs, while keeping Content convenient for callers.
+// OpenAI-compatible chat APIs. It uses content parts only for images and
+// provider prompt-cache breakpoints, keeping ordinary messages as strings.
 func (m GarminAIMessage) MarshalJSON() ([]byte, error) {
 	type wireMessage struct {
 		Role       string             `json:"role"`
-		Content    *string            `json:"content"`
+		Content    any                `json:"content"`
 		ToolCalls  []GarminAIToolCall `json:"tool_calls,omitempty"`
 		ToolCallID string             `json:"tool_call_id,omitempty"`
 	}
 
-	var content *string
-	if m.Content != "" || m.Role != "assistant" || len(m.ToolCalls) == 0 {
-		content = &m.Content
+	var content any
+	if m.Role == "assistant" && m.Content == "" && len(m.ToolCalls) > 0 {
+		content = nil
+	} else if m.Cache || len(m.Images) > 0 {
+		parts := make([]chatContentPart, 0, len(m.Images)+1)
+		if m.Content != "" || len(m.Images) == 0 {
+			part := chatContentPart{Type: "text", Text: m.Content}
+			if m.Cache {
+				part.CacheControl = &chatCacheControl{Type: "ephemeral"}
+			}
+			parts = append(parts, part)
+		}
+		for _, imageURL := range m.Images {
+			if imageURL = strings.TrimSpace(imageURL); imageURL != "" {
+				parts = append(parts, chatContentPart{
+					Type:     "image_url",
+					ImageURL: &chatImageURL{URL: imageURL},
+				})
+			}
+		}
+		content = parts
+	} else {
+		content = m.Content
 	}
 	return json.Marshal(wireMessage{
 		Role:       m.Role,
@@ -93,6 +127,64 @@ func (m GarminAIMessage) MarshalJSON() ([]byte, error) {
 		ToolCalls:  m.ToolCalls,
 		ToolCallID: m.ToolCallID,
 	})
+}
+
+// UnmarshalJSON accepts both ordinary string content and multimodal content
+// arrays so test servers and provider responses can use the same message type.
+func (m *GarminAIMessage) UnmarshalJSON(data []byte) error {
+	type wireMessage struct {
+		Role       string             `json:"role"`
+		Content    json.RawMessage    `json:"content"`
+		ToolCalls  []GarminAIToolCall `json:"tool_calls,omitempty"`
+		ToolCallID string             `json:"tool_call_id,omitempty"`
+	}
+	var wire wireMessage
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	m.Role = wire.Role
+	m.ToolCalls = wire.ToolCalls
+	m.ToolCallID = wire.ToolCallID
+	m.Content = ""
+	m.Images = nil
+	m.Cache = false
+	if len(wire.Content) == 0 || bytes.Equal(wire.Content, []byte("null")) {
+		return nil
+	}
+	if err := json.Unmarshal(wire.Content, &m.Content); err == nil {
+		return nil
+	}
+	var parts []chatContentPart
+	if err := json.Unmarshal(wire.Content, &parts); err != nil {
+		return fmt.Errorf("decoding message content: %w", err)
+	}
+	for _, part := range parts {
+		switch part.Type {
+		case "text":
+			m.Content += part.Text
+			m.Cache = m.Cache || part.CacheControl != nil
+		case "image_url":
+			if part.ImageURL != nil && strings.TrimSpace(part.ImageURL.URL) != "" {
+				m.Images = append(m.Images, strings.TrimSpace(part.ImageURL.URL))
+			}
+		}
+	}
+	return nil
+}
+
+type chatContentPart struct {
+	Type         string            `json:"type"`
+	Text         string            `json:"text,omitempty"`
+	ImageURL     *chatImageURL     `json:"image_url,omitempty"`
+	CacheControl *chatCacheControl `json:"cache_control,omitempty"`
+}
+
+type chatImageURL struct {
+	URL string `json:"url"`
+}
+
+type chatCacheControl struct {
+	Type string `json:"type"`
 }
 
 type GarminAIToolCall struct {
@@ -191,6 +283,7 @@ type chatCompletionClient struct {
 type chatCompletionRequest struct {
 	Model      string                   `json:"model,omitempty"`
 	Models     []string                 `json:"models,omitempty"`
+	SessionID  string                   `json:"session_id,omitempty"`
 	Messages   []chatMessage            `json:"messages"`
 	Thinking   *chatThinking            `json:"thinking,omitempty"`
 	Reasoning  *chatReasoning           `json:"reasoning,omitempty"`
@@ -281,10 +374,15 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 	if systemPrompt == "" {
 		systemPrompt = garminSystemPrompt
 	}
+	systemPrompt += "\n\nRuntime model identity:\n- The exact API model powering this response is `" + c.model + "`.\n- If asked what model you are, state this exact model ID. You are still Metrobot, the Discord bot; do not claim to be a different model or provider."
 
+	messageCapacity := len(input.Messages) + 1
+	if strings.TrimSpace(input.Context) != "" {
+		messageCapacity++
+	}
 	request := chatCompletionRequest{
 		Model:     c.model,
-		Messages:  make([]chatMessage, 1, len(input.Messages)+1),
+		Messages:  make([]chatMessage, 1, messageCapacity),
 		MaxTokens: 160,
 		Stream:    false,
 		Tools:     input.Tools,
@@ -293,10 +391,14 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 		request.ToolChoice = "auto"
 	}
 	request.Messages[0] = chatMessage{Role: "system", Content: systemPrompt}
+	if contextMessage := strings.TrimSpace(input.Context); contextMessage != "" {
+		request.Messages = append(request.Messages, chatMessage{Role: "system", Content: contextMessage})
+	}
 	for _, message := range input.Messages {
 		request.Messages = append(request.Messages, chatMessage{
 			Role:       message.Role,
 			Content:    strings.TrimSpace(message.Content),
+			Images:     append([]string(nil), message.Images...),
 			ToolCalls:  message.ToolCalls,
 			ToolCallID: message.ToolCallID,
 		})

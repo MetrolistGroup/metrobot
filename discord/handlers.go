@@ -109,7 +109,7 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 
 	content := strings.TrimSpace(m.Content)
 	if prompt, triggered := cmd.ExtractGarminPrompt(content); triggered {
-		go b.handleGarminAI(s, m, []cmd.GarminAIMessage{{Role: "user", Content: prompt}})
+		go b.handleGarminAI(s, m, []cmd.GarminAIMessage{garminAIUserMessage(m, prompt)})
 		return
 	}
 	if messages, continuation := b.garminAIContinuation(m, content); continuation {
