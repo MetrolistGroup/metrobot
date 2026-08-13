@@ -17,6 +17,7 @@ const (
 	garminAIContextTTL = 30 * time.Minute
 	garminAIContextMax = 500
 	garminAIExchanges  = 3
+	garminAITimeout    = 80 * time.Second
 )
 
 type garminAIContext struct {
@@ -26,6 +27,7 @@ type garminAIContext struct {
 
 func (b *Bot) handleGarminAI(s *discordgo.Session, m *discordgo.MessageCreate, messages []cmd.GarminAIMessage) {
 	if b.garminAI == nil {
+		b.sendGarminReply(s, m, "Garmin AI isn't configured right now.")
 		return
 	}
 	if len(messages) == 0 || strings.TrimSpace(messages[len(messages)-1].Content) == "" {
@@ -40,25 +42,44 @@ func (b *Bot) handleGarminAI(s *discordgo.Session, m *discordgo.MessageCreate, m
 		return
 	}
 	if !b.claimGarminAICooldown(m.Author.ID) {
+		b.sendGarminReply(s, m, "Give me a few seconds before asking again.")
 		return
 	}
 
-	_ = s.ChannelTyping(m.ChannelID)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	typingDone := make(chan struct{})
+	defer close(typingDone)
+	b.keepGarminTyping(s, m.ChannelID, typingDone)
+	ctx, cancel := context.WithTimeout(context.Background(), garminAITimeout)
 	defer cancel()
 
-	answer, err := b.garminAI.Ask(ctx, messages)
+	result, err := b.runGarminAI(ctx, s, m, messages)
 	if err != nil {
 		b.Logger.Error("Garmin AI request failed", zap.String("user", m.Author.ID), zap.Error(err))
 		b.sendGarminReply(s, m, "I couldn't answer that right now. Try again in a moment.")
 		return
 	}
 
-	reply := b.sendGarminReply(s, m, truncateGarminAIResponse(answer))
+	reply := b.sendGarminReply(s, m, formatAndTruncateGarminAIResult(result))
 	if reply != nil {
-		conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: answer})
+		conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: result.Answer})
 		b.rememberGarminAIContext(reply.ID, conversation)
 	}
+}
+
+func (b *Bot) keepGarminTyping(s *discordgo.Session, channelID string, done <-chan struct{}) {
+	_ = s.ChannelTyping(channelID)
+	go func() {
+		ticker := time.NewTicker(8 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				_ = s.ChannelTyping(channelID)
+			}
+		}
+	}()
 }
 
 func (b *Bot) claimGarminAICooldown(userID string) bool {
@@ -82,8 +103,15 @@ func (b *Bot) sendGarminReply(s *discordgo.Session, m *discordgo.MessageCreate, 
 		AllowedMentions: &discordgo.MessageAllowedMentions{},
 	})
 	if err != nil {
-		b.Logger.Error("failed to send Garmin AI reply", zap.Error(err))
-		return nil
+		b.Logger.Warn("failed to send Garmin AI reply reference, retrying without it", zap.Error(err))
+		reply, err = s.ChannelMessageSendComplex(m.ChannelID, &discordgo.MessageSend{
+			Content:         content,
+			AllowedMentions: &discordgo.MessageAllowedMentions{},
+		})
+		if err != nil {
+			b.Logger.Error("failed to send Garmin AI reply", zap.Error(err))
+			return nil
+		}
 	}
 	return reply
 }
@@ -165,8 +193,20 @@ func copyGarminAIMessages(messages []cmd.GarminAIMessage) []cmd.GarminAIMessage 
 }
 
 func truncateGarminAIResponse(content string) string {
+	return truncateGarminAIResponseTo(content, garminAIMaxContent)
+}
+
+func formatAndTruncateGarminAIResult(result *garminAIResult) string {
+	prefix := formatGarminAIUsage(result)
+	available := garminAIMaxContent - len(prefix)
+	if available < 4 {
+		return truncateGarminAIResponse(prefix)
+	}
+	return prefix + truncateGarminAIResponseTo(result.Answer, available)
+}
+
+func truncateGarminAIResponseTo(content string, limit int) string {
 	content = strings.TrimSpace(content)
-	limit := garminAIMaxContent
 	if len(content) <= limit {
 		return content
 	}

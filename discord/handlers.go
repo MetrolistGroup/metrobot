@@ -89,6 +89,8 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 		b.handleAddAdmin(s, i, opts, callerID)
 	case "removeadmin":
 		b.handleRemoveAdmin(s, i, opts, callerID)
+	case "memory":
+		b.handleGarminMemory(s, i, data.Options, callerID)
 	case "ping":
 		b.handlePing(s, i)
 	case "purge":
@@ -107,11 +109,11 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 
 	content := strings.TrimSpace(m.Content)
 	if prompt, triggered := cmd.ExtractGarminPrompt(content); triggered {
-		b.handleGarminAI(s, m, []cmd.GarminAIMessage{{Role: "user", Content: prompt}})
+		go b.handleGarminAI(s, m, []cmd.GarminAIMessage{{Role: "user", Content: prompt}})
 		return
 	}
 	if messages, continuation := b.garminAIContinuation(m, content); continuation {
-		b.handleGarminAI(s, m, messages)
+		go b.handleGarminAI(s, m, messages)
 		return
 	}
 
@@ -220,6 +222,8 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		"**Admin Management (permaadmin only):**\n" +
 		"• /addadmin [user] - Add a bot admin\n" +
 		"• /removeadmin [user] - Remove a bot admin\n\n" +
+		"**Garmin AI (admin only):**\n" +
+		"• /memory view|append|replace|clear - Manage persistent AI memory\n\n" +
 		"**Prefix Commands:**\n" +
 		"Moderation actions can also be triggered via message prefix: !action [user] [args]\n" +
 		"Example: !ban @user spam\n\n" +
@@ -565,6 +569,81 @@ func (b *Bot) handleRemoveAdmin(s *discordgo.Session, i *discordgo.InteractionCr
 		return
 	}
 	respondPublic(s, i, resp)
+}
+
+func (b *Bot) handleGarminMemory(s *discordgo.Session, i *discordgo.InteractionCreate, options []*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
+	if b.garminMemory == nil {
+		respondEphemeral(s, i, "Garmin AI is not configured.")
+		return
+	}
+	if !b.DB.IsAdmin("discord", callerID, b.Config) {
+		respondEphemeral(s, i, "Only admins can manage Garmin's memory.")
+		return
+	}
+	if len(options) != 1 {
+		respondEphemeral(s, i, "Choose a memory action.")
+		return
+	}
+
+	subcommand := options[0]
+	subopts := optionMap(subcommand.Options)
+	var err error
+	switch subcommand.Name {
+	case "view":
+		var memory string
+		memory, err = b.garminMemory.Read()
+		if err == nil {
+			if responseErr := respondGarminMemory(s, i, memory); responseErr != nil {
+				b.Logger.Error("failed to send Garmin memory", zap.Error(responseErr))
+			}
+			return
+		}
+	case "append":
+		err = b.garminMemory.Append(getOptString(subopts, "content"))
+		if err == nil {
+			respondEphemeral(s, i, "-# memory updated\nGarmin memory updated.")
+			return
+		}
+	case "replace":
+		err = b.garminMemory.Replace(getOptString(subopts, "content"))
+		if err == nil {
+			respondEphemeral(s, i, "-# memory updated\nGarmin memory replaced.")
+			return
+		}
+	case "clear":
+		err = b.garminMemory.Clear()
+		if err == nil {
+			respondEphemeral(s, i, "-# memory updated\nGarmin memory cleared.")
+			return
+		}
+	default:
+		err = fmt.Errorf("unknown memory action %q", subcommand.Name)
+	}
+
+	b.Logger.Error("Garmin memory command failed", zap.String("action", subcommand.Name), zap.Error(err))
+	respondEphemeral(s, i, fmt.Sprintf("Could not update Garmin memory: %s", err))
+}
+
+func respondGarminMemory(s *discordgo.Session, i *discordgo.InteractionCreate, memory string) error {
+	if len(memory) <= 1900 {
+		return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: "```md\n" + memory + "\n```",
+				Flags:   discordgo.MessageFlagsEphemeral | discordgo.MessageFlagsSuppressEmbeds,
+			},
+		})
+	}
+	return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: "Garmin's memory is attached.",
+			Flags:   discordgo.MessageFlagsEphemeral | discordgo.MessageFlagsSuppressEmbeds,
+			Files: []*discordgo.File{
+				{Name: cmd.GarminMemoryFile, ContentType: "text/markdown", Reader: strings.NewReader(memory)},
+			},
+		},
+	})
 }
 
 func (b *Bot) handlePing(s *discordgo.Session, i *discordgo.InteractionCreate) {

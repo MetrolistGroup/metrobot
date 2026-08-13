@@ -5,6 +5,7 @@
   "deepseek_api_keys": ["sk-example-1", "sk-example-2"],
   "openrouter_api_keys": ["sk-or-example-1", "sk-or-example-2"],
   "openrouter_model": "upstage/solar-pro4",
+  "garmin_memory_file": "garmin-memory.md",
   "discord_guild_id": "123",
   "telegram_chat_id": -100,
   "permaadmin_discord_ids": ["123"],

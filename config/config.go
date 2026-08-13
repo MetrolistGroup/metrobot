@@ -14,6 +14,7 @@ type Config struct {
 	DeepSeekAPIKeys   []string `json:"deepseek_api_keys"`
 	OpenRouterAPIKeys []string `json:"openrouter_api_keys"`
 	OpenRouterModel   string   `json:"openrouter_model"`
+	GarminMemoryFile  string   `json:"garmin_memory_file"`
 
 	DiscordGuildID string `json:"discord_guild_id"`
 	TelegramChatID int64  `json:"telegram_chat_id"`

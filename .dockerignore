@@ -1,6 +1,8 @@
 .git
 .github
 *.md
+!garmin-memory.md
+!discord/garmin_skills/*.md
 .gitignore
 .dockerignore
 *_test.go

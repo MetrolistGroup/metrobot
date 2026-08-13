@@ -7,9 +7,10 @@ RUN go mod download
 COPY . .
 # Static binary for distroless (no CGO)
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64
-RUN go build -ldflags="-s -w" -o /metrobot .
+RUN go build -ldflags="-s -w" -o /metrobot . && mkdir -p /runtime-data && cp garmin-memory.md /runtime-data/garmin-memory.md
 
 # Run stage: distroless static (no shell, no package manager; CA certs included)
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=builder /metrobot /metrobot
+COPY --from=builder --chown=nonroot:nonroot /runtime-data /data
 ENTRYPOINT ["/metrobot"]

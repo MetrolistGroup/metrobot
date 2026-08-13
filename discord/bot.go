@@ -8,6 +8,7 @@ import (
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/config"
 	"github.com/MetrolistGroup/metrobot/db"
+	gh "github.com/MetrolistGroup/metrobot/github"
 	"github.com/bwmarrin/discordgo"
 	"go.uber.org/zap"
 )
@@ -28,6 +29,8 @@ type Bot struct {
 
 	garminProcessor  *cmd.GarminProcessor
 	garminAI         cmd.GarminAI
+	garminMemory     *cmd.GarminMemory
+	garminGitHub     *gh.AssistantClient
 	garminAIMu       sync.Mutex
 	garminAILastUsed map[string]time.Time
 	garminAIContexts map[string]garminAIContext
@@ -62,12 +65,30 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		Case:            cases,
 		garminProcessor: cmd.NewGarminProcessor(),
 	}
+	var aiProviders []cmd.GarminAI
 	if len(cfg.OpenRouterAPIKeys) > 0 {
-		bot.garminAI = cmd.NewOpenRouterClient(cfg.OpenRouterAPIKeys, cfg.OpenRouterModel)
-	} else if len(cfg.DeepSeekAPIKeys) > 0 {
-		bot.garminAI = cmd.NewDeepSeekClient(cfg.DeepSeekAPIKeys)
+		aiProviders = append(aiProviders, cmd.NewOpenRouterClient(cfg.OpenRouterAPIKeys, cfg.OpenRouterModel))
+	}
+	if len(cfg.DeepSeekAPIKeys) > 0 {
+		aiProviders = append(aiProviders, cmd.NewDeepSeekClient(cfg.DeepSeekAPIKeys))
+	}
+	if len(aiProviders) > 0 {
+		bot.garminAI = cmd.NewFallbackGarminAI(aiProviders...)
 	}
 	if bot.garminAI != nil {
+		memoryPath := cfg.GarminMemoryFile
+		if memoryPath == "" {
+			memoryPath = cmd.GarminMemoryFile
+		}
+		memory, err := cmd.NewGarminMemory(memoryPath)
+		if err != nil && cfg.GarminMemoryFile == "" {
+			memory, err = cmd.NewGarminMemory("/data/" + cmd.GarminMemoryFile)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("initializing Garmin memory: %w", err)
+		}
+		bot.garminMemory = memory
+		bot.garminGitHub = gh.NewAssistantClient(cfg.GitHubToken, cfg.GitHubOwner, cfg.GitHubRepo)
 		bot.garminAILastUsed = make(map[string]time.Time)
 		bot.garminAIContexts = make(map[string]garminAIContext)
 		bot.garminAISlots = make(chan struct{}, 3)
@@ -416,6 +437,48 @@ func (b *Bot) registerCommands() error {
 			},
 		},
 		{
+			Name:        "memory",
+			Description: "Manage Garmin's persistent memory (admin only)",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "view",
+					Description: "View Garmin's memory",
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "append",
+					Description: "Append Markdown to Garmin's memory",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "content",
+							Description: "Markdown to remember",
+							Required:    true,
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "replace",
+					Description: "Replace Garmin's memory",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "content",
+							Description: "Complete replacement Markdown",
+							Required:    true,
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "clear",
+					Description: "Clear Garmin's memory",
+				},
+			},
+		},
+		{
 			Name:        "ping",
 			Description: "Check latency to various services",
 		},
@@ -443,11 +506,8 @@ func (b *Bot) registerCommands() error {
 		},
 	}
 
-	for _, cmd := range commands {
-		_, err := b.Session.ApplicationCommandCreate(b.Session.State.User.ID, b.Config.DiscordGuildID, cmd)
-		if err != nil {
-			return fmt.Errorf("registering command %q: %w", cmd.Name, err)
-		}
+	if _, err := b.Session.ApplicationCommandBulkOverwrite(b.Session.State.User.ID, b.Config.DiscordGuildID, commands); err != nil {
+		return fmt.Errorf("registering slash commands: %w", err)
 	}
 
 	b.Logger.Info("registered slash commands", zap.Int("count", len(commands)))

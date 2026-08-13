@@ -16,7 +16,7 @@ type OpenRouterClient struct {
 }
 
 func NewOpenRouterClient(keys []string, model string) *OpenRouterClient {
-	return newOpenRouterClient(keys, model, openRouterEndpoint, &http.Client{Timeout: 30 * time.Second})
+	return newOpenRouterClient(keys, model, openRouterEndpoint, &http.Client{Timeout: 35 * time.Second})
 }
 
 func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http.Client) *OpenRouterClient {

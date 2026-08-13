@@ -2,6 +2,9 @@ package discord
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -10,6 +13,7 @@ import (
 
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/bwmarrin/discordgo"
+	"go.uber.org/zap"
 )
 
 func TestTruncateGarminAIResponse(t *testing.T) {
@@ -81,8 +85,58 @@ func TestGarminAIContinuationRejectsUntrackedAndExpiredReplies(t *testing.T) {
 	}
 }
 
+func TestSendGarminReplyRetriesWithoutReference(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decoding request: %v", err)
+		}
+		if requests == 1 {
+			if _, ok := payload["message_reference"]; !ok {
+				t.Error("first request omitted message reference")
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"message":"Unknown message","code":10008}`))
+			return
+		}
+		if _, ok := payload["message_reference"]; ok {
+			t.Error("fallback request included message reference")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"bot-reply","channel_id":"channel","content":"answer"}`))
+	}))
+	defer server.Close()
+
+	session, err := discordgo.New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client = server.Client()
+	session.Client.Transport = rewriteDiscordTransport{base: session.Client.Transport, target: server.URL}
+	bot := &Bot{Logger: zap.NewNop()}
+	reply := bot.sendGarminReply(session, &discordgo.MessageCreate{Message: &discordgo.Message{
+		ID: "original", ChannelID: "channel",
+	}}, "answer")
+	if reply == nil || reply.ID != "bot-reply" || requests != 2 {
+		t.Fatalf("sendGarminReply() = %#v after %d requests", reply, requests)
+	}
+}
+
+type rewriteDiscordTransport struct {
+	base   http.RoundTripper
+	target string
+}
+
+func (r rewriteDiscordTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	request.URL.Scheme = "http"
+	request.URL.Host = strings.TrimPrefix(r.target, "http://")
+	return r.base.RoundTrip(request)
+}
+
 type fakeGarminAI struct{}
 
-func (*fakeGarminAI) Ask(context.Context, []cmd.GarminAIMessage) (string, error) {
-	return "", nil
+func (*fakeGarminAI) Complete(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+	return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "ok"}}, nil
 }

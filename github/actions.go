@@ -2,7 +2,9 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +39,7 @@ type WorkflowRunInfo struct {
 func NewActionsClient(token, owner, repo, workflowFile string) *ActionsClient {
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
 	tc := oauth2.NewClient(context.Background(), ts)
+	tc.Timeout = 15 * time.Second
 	client := github.NewClient(tc)
 
 	return &ActionsClient{
@@ -63,6 +66,15 @@ func (a *ActionsClient) FetchRuns(ctx context.Context) (*ActionsResult, error) {
 			ListOptions: github.ListOptions{PerPage: 20},
 		},
 	)
+	if isForbiddenGitHubError(err) {
+		runs, _, err = newPublicGitHubClient().Actions.ListWorkflowRunsByFileName(
+			ctx, a.owner, a.repo, a.workflowFile,
+			&github.ListWorkflowRunsOptions{
+				Branch:      "main",
+				ListOptions: github.ListOptions{PerPage: 20},
+			},
+		)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("fetching workflow runs: %w", err)
 	}
@@ -133,6 +145,7 @@ type ReleasesClient struct {
 func NewReleasesClient(token, owner, repo string) *ReleasesClient {
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
 	tc := oauth2.NewClient(context.Background(), ts)
+	tc.Timeout = 15 * time.Second
 	client := github.NewClient(tc)
 
 	return &ReleasesClient{
@@ -155,6 +168,12 @@ func (r *ReleasesClient) FetchReleases(ctx context.Context) ([]*ReleaseInfo, err
 		ctx, r.owner, r.repo,
 		&github.ListOptions{PerPage: 50},
 	)
+	if isForbiddenGitHubError(err) {
+		releases, _, err = newPublicGitHubClient().Repositories.ListReleases(
+			ctx, r.owner, r.repo,
+			&github.ListOptions{PerPage: 50},
+		)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("fetching releases: %w", err)
 	}
@@ -184,6 +203,18 @@ func (r *ReleasesClient) FetchReleases(ctx context.Context) ([]*ReleaseInfo, err
 	r.mu.Unlock()
 
 	return infos, nil
+}
+
+func isForbiddenGitHubError(err error) bool {
+	var responseError *github.ErrorResponse
+	if !errors.As(err, &responseError) || responseError.Response == nil {
+		return false
+	}
+	return responseError.Response.StatusCode == http.StatusUnauthorized || responseError.Response.StatusCode == http.StatusForbidden
+}
+
+func newPublicGitHubClient() *github.Client {
+	return github.NewClient(&http.Client{Timeout: 15 * time.Second})
 }
 
 func firstLine(s string) string {
