@@ -90,6 +90,26 @@ func TestGarminAIContinuationRejectsUntrackedAndExpiredReplies(t *testing.T) {
 	}
 }
 
+func TestGarminAIContinuationDoesNotWakeOnHumanReplyWithUserHistory(t *testing.T) {
+	bot := &Bot{
+		garminAI:             &fakeGarminAI{},
+		garminAIContexts:     make(map[string]garminAIContext),
+		garminAIUserContexts: make(map[string]garminAIContext),
+	}
+	bot.rememberGarminAIContext("tracked-bot-reply", "nyx", []cmd.GarminAIMessage{
+		{Role: "user", Content: "garmin, hello"},
+		{Role: "assistant", Content: "hey nyx"},
+	})
+	messages, ok := bot.garminAIContinuation(&discordgo.MessageCreate{Message: &discordgo.Message{
+		MessageReference:  &discordgo.MessageReference{MessageID: "human-message"},
+		ReferencedMessage: &discordgo.Message{ID: "human-message", Author: &discordgo.User{ID: "human"}},
+		Author:            &discordgo.User{ID: "nyx"},
+	}}, "me and lamp")
+	if ok || messages != nil {
+		t.Fatalf("human reply woke Garmin with messages %#v", messages)
+	}
+}
+
 func TestGarminAITriggeredConversationUsesPerUserHistory(t *testing.T) {
 	bot := &Bot{
 		garminAIContexts:     make(map[string]garminAIContext),
@@ -111,19 +131,26 @@ func TestGarminAITriggeredConversationUsesPerUserHistory(t *testing.T) {
 }
 
 func TestExpandGarminAIEmojis(t *testing.T) {
-	state := discordgo.NewState()
-	if err := state.GuildAdd(&discordgo.Guild{ID: "guild", Emojis: []*discordgo.Emoji{
-		{ID: "1481187881946058922", Name: "thumb", Available: true},
-		{ID: "1481188261274587217", Name: "trolleyz", Animated: true, Available: true},
-		{ID: "999999999999999999", Name: "not_allowed", Available: true},
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	session := &discordgo.Session{State: state}
-	got := expandGarminAIEmojis(session, "guild", "nice :thumb: :trolleyz: :not_allowed:")
+	got := expandGarminAIEmojis(nil, "", "nice :thumb: :trolleyz: :not_allowed:")
 	want := "nice <:thumb:1481187881946058922> <a:trolleyz:1481188261274587217> :not_allowed:"
 	if got != want {
 		t.Fatalf("expandGarminAIEmojis() = %q, want %q", got, want)
+	}
+}
+
+func TestGarminAIEmojiCatalogContainsAllCurrentGuildEmojis(t *testing.T) {
+	if len(garminAIEmojis) != 46 {
+		t.Fatalf("emoji catalog has %d entries, want 46", len(garminAIEmojis))
+	}
+	for name, emoji := range garminAIEmojis {
+		if emoji.Name != name || emoji.ID == "" || !emoji.Available {
+			t.Errorf("invalid emoji %q: %#v", name, emoji)
+		}
+	}
+	for _, name := range []string{"soggy", "thumb", "painfade", "cozystars"} {
+		if _, ok := garminAIEmojis[name]; !ok {
+			t.Errorf("emoji catalog missing %q", name)
+		}
 	}
 }
 
