@@ -27,7 +27,7 @@ type Bot struct {
 	Case       *cmd.CaseHandler
 
 	garminProcessor  *cmd.GarminProcessor
-	garminAI         *cmd.DeepSeekClient
+	garminAI         cmd.GarminAI
 	garminAIMu       sync.Mutex
 	garminAILastUsed map[string]time.Time
 	garminAISlots    chan struct{}
@@ -61,8 +61,12 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		Case:            cases,
 		garminProcessor: cmd.NewGarminProcessor(),
 	}
-	if len(cfg.DeepSeekAPIKeys) > 0 {
+	if len(cfg.OpenRouterAPIKeys) > 0 {
+		bot.garminAI = cmd.NewOpenRouterClient(cfg.OpenRouterAPIKeys, cfg.OpenRouterModel)
+	} else if len(cfg.DeepSeekAPIKeys) > 0 {
 		bot.garminAI = cmd.NewDeepSeekClient(cfg.DeepSeekAPIKeys)
+	}
+	if bot.garminAI != nil {
 		bot.garminAILastUsed = make(map[string]time.Time)
 		bot.garminAISlots = make(chan struct{}, 3)
 	}

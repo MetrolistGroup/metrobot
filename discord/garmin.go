@@ -13,7 +13,6 @@ import (
 const (
 	garminAICooldown   = 10 * time.Second
 	garminAIMaxContent = 1900
-	garminAILabel      = "\n\n-# This response was generated using Deepseek v4 Flash"
 )
 
 func (b *Bot) handleGarminAI(s *discordgo.Session, m *discordgo.MessageCreate, prompt string) {
@@ -46,7 +45,8 @@ func (b *Bot) handleGarminAI(s *discordgo.Session, m *discordgo.MessageCreate, p
 		return
 	}
 
-	b.sendGarminReply(s, m, truncateGarminAIResponse(answer)+garminAILabel)
+	footer := garminAIFooter(b.garminAI.Attribution())
+	b.sendGarminReply(s, m, truncateGarminAIResponse(answer, footer)+footer)
 }
 
 func (b *Bot) claimGarminAICooldown(userID string) bool {
@@ -74,9 +74,13 @@ func (b *Bot) sendGarminReply(s *discordgo.Session, m *discordgo.MessageCreate, 
 	}
 }
 
-func truncateGarminAIResponse(content string) string {
+func garminAIFooter(attribution string) string {
+	return "\n\n-# This response was generated using " + attribution
+}
+
+func truncateGarminAIResponse(content, footer string) string {
 	content = strings.TrimSpace(content)
-	limit := garminAIMaxContent - len(garminAILabel)
+	limit := garminAIMaxContent - len(footer)
 	if len(content) <= limit {
 		return content
 	}

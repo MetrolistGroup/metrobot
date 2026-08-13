@@ -88,7 +88,7 @@ func TestDeepSeekClientFailsOverAfterNonJSONServerError(t *testing.T) {
 }
 
 func TestDeepSeekClientSendsBoundedNonThinkingRequest(t *testing.T) {
-	var request deepSeekRequest
+	var request chatCompletionRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Errorf("decoding request: %v", err)

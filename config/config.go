@@ -8,10 +8,12 @@ import (
 )
 
 type Config struct {
-	DiscordToken    string   `json:"discord_token"`
-	TelegramToken   string   `json:"telegram_token"`
-	GitHubToken     string   `json:"github_token"`
-	DeepSeekAPIKeys []string `json:"deepseek_api_keys"`
+	DiscordToken      string   `json:"discord_token"`
+	TelegramToken     string   `json:"telegram_token"`
+	GitHubToken       string   `json:"github_token"`
+	DeepSeekAPIKeys   []string `json:"deepseek_api_keys"`
+	OpenRouterAPIKeys []string `json:"openrouter_api_keys"`
+	OpenRouterModel   string   `json:"openrouter_model"`
 
 	DiscordGuildID string `json:"discord_guild_id"`
 	TelegramChatID int64  `json:"telegram_chat_id"`
@@ -91,6 +93,11 @@ func (c *Config) validate() error {
 	for i, key := range c.DeepSeekAPIKeys {
 		if strings.TrimSpace(key) == "" {
 			return fmt.Errorf("deepseek_api_keys[%d] is empty", i)
+		}
+	}
+	for i, key := range c.OpenRouterAPIKeys {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("openrouter_api_keys[%d] is empty", i)
 		}
 	}
 
