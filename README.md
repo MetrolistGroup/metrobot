@@ -4,7 +4,7 @@ this is the discord and telegram bot we use for logging, punishments, dehoisting
 
 ## Metrobot AI
 
-Discord messages beginning with `garmin,` use a short AI response from Metrobot. Replying directly to Metrobot's response continues the conversation with limited recent context. Configure OpenRouter with `openrouter_api_keys` and optionally `openrouter_model`. The default fast route uses `ibm-granite/granite-4.1-8b`, `meta-llama/llama-3.1-8b-instruct`, and `qwen/qwen-2.5-7b-instruct`, requires zero-data-retention endpoints and native tool support, and prioritizes throughput. The legacy `upstage/solar-pro4` default is automatically migrated to this route. If no OpenRouter keys are configured, `deepseek_api_keys` enables direct DeepSeek V4 Flash instead.
+Discord messages beginning with `garmin,` use a short AI response from Metrobot. Replying directly to Metrobot's response continues the conversation with limited recent context. Configure OpenRouter with `openrouter_api_keys` and optionally `openrouter_model`. The default route uses `openai/gpt-5-mini`, requires zero-data-retention endpoints and native tool support, and prioritizes throughput. The former `upstage/solar-pro4` and `ibm-granite/granite-4.1-8b` defaults are automatically migrated to this route. If no OpenRouter keys are configured, `deepseek_api_keys` enables direct DeepSeek V4 Flash instead.
 
 Requests rotate across the configured keys, retry transient timeouts, and fall back from OpenRouter to DeepSeek when both are configured. Prompts and tool results are sent to the selected AI provider, so do not include private or sensitive information.
 

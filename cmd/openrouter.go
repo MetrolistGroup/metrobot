@@ -7,18 +7,11 @@ import (
 )
 
 const (
-	openRouterEndpoint       = "https://openrouter.ai/api/v1/chat/completions"
-	openRouterDefaultModel   = "ibm-granite/granite-4.1-8b"
-	openRouterLegacyDefault  = "upstage/solar-pro4"
-	openRouterFallbackModel1 = "meta-llama/llama-3.1-8b-instruct"
-	openRouterFallbackModel2 = "qwen/qwen-2.5-7b-instruct"
+	openRouterEndpoint      = "https://openrouter.ai/api/v1/chat/completions"
+	openRouterDefaultModel  = "openai/gpt-5-mini"
+	openRouterLegacyDefault = "upstage/solar-pro4"
+	openRouterBrokenDefault = "ibm-granite/granite-4.1-8b"
 )
-
-var openRouterDefaultModels = []string{
-	openRouterDefaultModel,
-	openRouterFallbackModel1,
-	openRouterFallbackModel2,
-}
 
 type OpenRouterClient struct {
 	*chatCompletionClient
@@ -30,8 +23,8 @@ func NewOpenRouterClient(keys []string, model string) *OpenRouterClient {
 
 func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http.Client) *OpenRouterClient {
 	model = strings.TrimSpace(model)
-	useFastRoute := model == "" || model == openRouterDefaultModel || model == openRouterLegacyDefault
-	if useFastRoute {
+	useDefaultRoute := model == "" || model == openRouterDefaultModel || model == openRouterLegacyDefault || model == openRouterBrokenDefault
+	if useDefaultRoute {
 		model = openRouterDefaultModel
 	}
 	return &OpenRouterClient{newChatCompletionClient(
@@ -44,9 +37,8 @@ func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http
 			"X-OpenRouter-Title": "Metrobot",
 		},
 		func(request *chatCompletionRequest) {
-			if useFastRoute {
-				request.Model = ""
-				request.Models = append([]string(nil), openRouterDefaultModels...)
+			request.Reasoning = &chatReasoning{Enabled: false}
+			if useDefaultRoute {
 				request.Provider = &chatProviderPreferences{
 					ZDR:               true,
 					DataCollection:    "deny",
@@ -55,13 +47,7 @@ func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http
 						By:        "throughput",
 						Partition: "none",
 					},
-					MaxPrice: chatProviderPrice{
-						Prompt:     0.10,
-						Completion: 0.20,
-					},
 				}
-			} else {
-				request.Reasoning = &chatReasoning{Enabled: false}
 			}
 		},
 		httpClient,

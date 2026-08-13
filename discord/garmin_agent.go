@@ -44,12 +44,13 @@ func (b *Bot) runGarminAI(ctx context.Context, s *discordgo.Session, m *discordg
 
 	systemPrompt := garminSystemPromptForMessage(s, m, memory)
 	conversation := copyGarminAIMessages(messages)
+	tools := garminToolsForConversation(messages, b.DB.IsAdmin("discord", m.Author.ID, b.Config))
 	result := &garminAIResult{Skills: make(map[string]struct{})}
 	for range garminAIMaxToolRounds {
 		completion, err := b.garminAI.Complete(ctx, cmd.GarminAIRequest{
 			SystemPrompt: systemPrompt,
 			Messages:     conversation,
-			Tools:        garminAITools,
+			Tools:        tools,
 		})
 		if err != nil {
 			return nil, err
@@ -119,6 +120,9 @@ func (b *Bot) executeGarminAITool(ctx context.Context, s *discordgo.Session, m *
 	case "remember":
 		if !b.DB.IsAdmin("discord", m.Author.ID, b.Config) {
 			return toolError(fmt.Errorf("only bot admins can update memory")), "", false
+		}
+		if !garminRememberRequested(m.Content) {
+			return toolError(fmt.Errorf("memory updates require an explicit request to remember or save something")), "", false
 		}
 		err = b.garminMemory.Append(args.Content)
 		if err == nil {
@@ -305,6 +309,74 @@ func mustJSON(value any) string {
 		return `{"error":"failed to encode result"}`
 	}
 	return string(data)
+}
+
+func garminToolsForConversation(messages []cmd.GarminAIMessage, isAdmin bool) []cmd.GarminAITool {
+	prompt := strings.ToLower(garminUserText(messages))
+	if prompt == "" {
+		return nil
+	}
+
+	wantsMemory := isAdmin && garminRememberRequested(prompt)
+	wantsNotes := containsAnyGarminPhrase(prompt, "saved note", "bot note", "list notes", "get note", "read note")
+	wantsProjectFacts := strings.Contains(prompt, "metrolist") && containsAnyGarminPhrase(prompt,
+		"latest", "release", "version", "update", "status", "maintained", "maintenance", "development",
+		"roadmap", "when", "repository", "github", "issue", "bug", "feature", "download", "apk", "website")
+	wantsGitHubUser := strings.Contains(prompt, "github") && containsAnyGarminPhrase(prompt,
+		"who", "user", "username", "profile", "account", "contributor", "commit")
+	wantsDiscordMember := containsAnyGarminPhrase(prompt,
+		"discord member", "discord user", "discord username", "display name", "server nickname", "who is <@")
+
+	if !wantsMemory && !wantsNotes && !wantsProjectFacts && !wantsGitHubUser && !wantsDiscordMember {
+		return nil
+	}
+
+	selected := make([]cmd.GarminAITool, 0, len(garminAITools))
+	for _, tool := range garminAITools {
+		name := tool.Function.Name
+		include := false
+		switch name {
+		case "remember":
+			include = wantsMemory
+		case "list_notes", "get_note":
+			include = wantsNotes
+		case "get_metrolist_status", "search_metrolist_issues", "load_skill":
+			include = wantsProjectFacts
+		case "get_github_user":
+			include = wantsGitHubUser
+		case "get_discord_member", "search_discord_members":
+			include = wantsDiscordMember
+		}
+		if include {
+			selected = append(selected, tool)
+		}
+	}
+	return selected
+}
+
+func garminUserText(messages []cmd.GarminAIMessage) string {
+	for index := len(messages) - 1; index >= 0; index-- {
+		if messages[index].Role == "user" {
+			return strings.TrimSpace(messages[index].Content)
+		}
+	}
+	return ""
+}
+
+func garminRememberRequested(content string) bool {
+	content = strings.ToLower(strings.TrimSpace(content))
+	return containsAnyGarminPhrase(content,
+		"remember that", "remember this", "remember:", "save that to memory", "save this to memory",
+		"save to memory", "add that to memory", "add this to memory", "add to memory")
+}
+
+func containsAnyGarminPhrase(content string, phrases ...string) bool {
+	for _, phrase := range phrases {
+		if strings.Contains(content, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 var garminAITools = []cmd.GarminAITool{

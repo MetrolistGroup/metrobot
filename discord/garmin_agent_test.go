@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -60,11 +61,68 @@ func TestGarminSystemPromptContainsIdentityAndMemory(t *testing.T) {
 		},
 	}}
 	prompt := garminSystemPromptForMessage(session, message, "# Metrobot Memory\nKnown fact")
-	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", `"display_name":"Exact Name"`, "exact_user", "Exact Name", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes"} {
+	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", `"display_name":"Exact Name"`, "exact_user", "Exact Name", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority"} {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("prompt missing %q", expected)
 		}
 	}
+}
+
+func TestGarminToolsForConversationUsesCurrentPromptOnly(t *testing.T) {
+	messages := []cmd.GarminAIMessage{
+		{Role: "user", Content: "what is the latest Metrolist release?"},
+		{Role: "assistant", Content: "The latest release is v1."},
+		{Role: "user", Content: "let's play 20 questions instead"},
+	}
+	if tools := garminToolsForConversation(messages, false); len(tools) != 0 {
+		t.Fatalf("casual follow-up received lingering tools %v", garminToolNames(tools))
+	}
+}
+
+func TestGarminToolsForConversationSkipsCasualChat(t *testing.T) {
+	casualPrompts := []string{
+		"who said im human you catboy femboy",
+		"heavenly tung music plays on metrolist",
+		"No tool was used for that reply, right?",
+		"let's play 20 questions",
+	}
+	for _, prompt := range casualPrompts {
+		tools := garminToolsForConversation([]cmd.GarminAIMessage{{Role: "user", Content: prompt}}, true)
+		if len(tools) != 0 {
+			t.Errorf("casual prompt %q received tools %v", prompt, garminToolNames(tools))
+		}
+	}
+}
+
+func TestGarminToolsForConversationSelectsRelevantTools(t *testing.T) {
+	tests := []struct {
+		prompt string
+		admin  bool
+		want   []string
+	}{
+		{"what is the latest Metrolist release?", false, []string{"get_metrolist_status", "search_metrolist_issues", "load_skill"}},
+		{"what is Nyx's GitHub username?", false, []string{"get_github_user"}},
+		{"list saved notes", false, []string{"list_notes", "get_note"}},
+		{"remember that releases happen on Fridays", true, []string{"remember"}},
+		{"remember that releases happen on Fridays", false, nil},
+	}
+	for _, test := range tests {
+		got := garminToolNames(garminToolsForConversation([]cmd.GarminAIMessage{{Role: "user", Content: test.prompt}}, test.admin))
+		if !reflect.DeepEqual(got, test.want) {
+			t.Errorf("tools for %q = %v, want %v", test.prompt, got, test.want)
+		}
+	}
+}
+
+func garminToolNames(tools []cmd.GarminAITool) []string {
+	if len(tools) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.Function.Name)
+	}
+	return names
 }
 
 func TestGarminSystemPromptUsesNicknameWithoutMemberUser(t *testing.T) {
@@ -134,7 +192,10 @@ func TestRememberToolRequiresAdmin(t *testing.T) {
 		Arguments: `{"content":"durable fact"}`,
 	}}
 
-	output, _, updated := bot.executeGarminAITool(context.Background(), nil, &discordgo.MessageCreate{Message: &discordgo.Message{Author: &discordgo.User{ID: "user"}}}, call)
+	request := func(userID, content string) *discordgo.MessageCreate {
+		return &discordgo.MessageCreate{Message: &discordgo.Message{Author: &discordgo.User{ID: userID}, Content: content}}
+	}
+	output, _, updated := bot.executeGarminAITool(context.Background(), nil, request("user", "garmin, remember that durable fact"), call)
 	if updated || !strings.Contains(output, "only bot admins") {
 		t.Fatalf("non-admin remember = (%q, %v)", output, updated)
 	}
@@ -143,7 +204,12 @@ func TestRememberToolRequiresAdmin(t *testing.T) {
 		t.Fatal("non-admin updated memory")
 	}
 
-	output, _, updated = bot.executeGarminAITool(context.Background(), nil, &discordgo.MessageCreate{Message: &discordgo.Message{Author: &discordgo.User{ID: "admin"}}}, call)
+	output, _, updated = bot.executeGarminAITool(context.Background(), nil, request("admin", "garmin, hello"), call)
+	if updated || !strings.Contains(output, "explicit request") {
+		t.Fatalf("implicit admin remember = (%q, %v)", output, updated)
+	}
+
+	output, _, updated = bot.executeGarminAITool(context.Background(), nil, request("admin", "garmin, remember that durable fact"), call)
 	if !updated || !strings.Contains(output, `"saved":true`) {
 		t.Fatalf("admin remember = (%q, %v)", output, updated)
 	}
