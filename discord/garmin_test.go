@@ -167,6 +167,29 @@ func TestGarminAIEmojiOnlyBecomesReactionCandidate(t *testing.T) {
 	}
 }
 
+func TestEnforceGarminGeneralReplyIsShortAndRedirectsToBots(t *testing.T) {
+	got := enforceGarminChannelReply(garminGeneralID, "yeah, sure. what's on your mind?")
+	want := "yeah, sure. continue in <#" + garminBotsID + "> if you wanna chat more."
+	if got != want {
+		t.Fatalf("enforceGarminChannelReply() = %q, want %q", got, want)
+	}
+	if got := enforceGarminChannelReply("another-channel", "yeah, sure. what's on your mind?"); got != "yeah, sure. what's on your mind?" {
+		t.Fatalf("non-general reply changed to %q", got)
+	}
+}
+
+func TestEnforceGarminGeneralReplyDoesNotRedirectRefusalsOrDuplicateBots(t *testing.T) {
+	for _, answer := range []string{
+		"i can't do that.",
+		"take it to <#" + garminBotsID + ">.",
+		"take it to #bots.",
+	} {
+		if got := enforceGarminChannelReply(garminGeneralID, answer); got != answer {
+			t.Errorf("enforceGarminChannelReply(%q) = %q", answer, got)
+		}
+	}
+}
+
 func TestHandleGarminAIDoNotRespond(t *testing.T) {
 	handled, err := handleGarminAIMessageAction(nil, nil, cmd.GarminAIToolCall{Function: cmd.GarminAIFunctionCall{
 		Name:      "do_not_respond",

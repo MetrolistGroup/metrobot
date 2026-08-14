@@ -70,6 +70,7 @@ func (b *Bot) handleGarminAI(s *discordgo.Session, m *discordgo.MessageCreate, m
 			return
 		}
 	}
+	result.Answer = enforceGarminChannelReply(m.ChannelID, result.Answer)
 
 	displayResult := *result
 	displayResult.Answer = expandGarminAIEmojis(s, m.GuildID, result.Answer)
@@ -78,6 +79,47 @@ func (b *Bot) handleGarminAI(s *discordgo.Session, m *discordgo.MessageCreate, m
 		conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: result.Answer})
 		b.rememberGarminAIContext(reply.ID, m.Author.ID, conversation)
 	}
+}
+
+func enforceGarminChannelReply(channelID, answer string) string {
+	if channelID != garminGeneralID {
+		return answer
+	}
+	answer = firstGarminSentence(answer)
+	if answer == "" {
+		return answer
+	}
+	lower := strings.ToLower(answer)
+	if containsAnyGarminPhrase(lower, "<#"+garminBotsID+">", "#bots") || garminRefusalAnswer(lower) {
+		return answer
+	}
+	return strings.TrimSpace(answer) + " continue in <#" + garminBotsID + "> if you wanna chat more."
+}
+
+func firstGarminSentence(answer string) string {
+	answer = strings.Join(strings.Fields(strings.TrimSpace(answer)), " ")
+	for index, r := range answer {
+		if r != '.' && r != '!' && r != '?' {
+			continue
+		}
+		next := index + utf8.RuneLen(r)
+		if next == len(answer) || (next < len(answer) && answer[next] == ' ') {
+			answer = answer[:next]
+			break
+		}
+	}
+	runes := []rune(answer)
+	if len(runes) > 180 {
+		answer = strings.TrimSpace(string(runes[:177])) + "..."
+	}
+	return answer
+}
+
+func garminRefusalAnswer(answer string) bool {
+	answer = strings.TrimSpace(answer)
+	return containsAnyGarminPhrase(answer,
+		"i can't do that", "i cant do that", "can't help with that", "cant help with that",
+		"not doing that", "i won't do that", "i wont do that")
 }
 
 func (b *Bot) keepGarminTyping(s *discordgo.Session, channelID string, done <-chan struct{}) {
