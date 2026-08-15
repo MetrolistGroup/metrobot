@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
-	"github.com/MetrolistGroup/metrobot/db"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -24,14 +23,13 @@ const (
 var garminSkillFiles embed.FS
 
 type garminAIResult struct {
-	Answer               string
-	Conversation         []cmd.GarminAIMessage
-	ToolCalls            int
-	Skills               map[string]struct{}
-	MemoryUpdated        bool
-	AutomaticMemoryTried bool
-	AutomaticMemorySaved bool
-	Silent               bool
+	Answer        string
+	Conversation  []cmd.GarminAIMessage
+	ToolCalls     int
+	Skills        map[string]struct{}
+	MemoryUpdated bool
+	Interacted    bool
+	Silent        bool
 }
 
 type garminToolArgs struct {
@@ -41,31 +39,23 @@ type garminToolArgs struct {
 	Username string `json:"username"`
 	UserID   string `json:"user_id"`
 	Content  string `json:"content"`
-	Category string `json:"category"`
 	Limit    int    `json:"limit"`
 	Emoji    string `json:"emoji"`
-	Pronouns string `json:"pronouns"`
-	Bio      string `json:"bio"`
-}
-
-var garminAutomaticMemoryCues = map[string][]string{
-	"preferred_name": {"call me ", "my name is ", "i go by "},
-	"pronouns":       {"my pronouns", "pronouns are", "i use pronouns"},
-	"interest":       {"i like ", "i love ", "i enjoy ", "i'm into ", "i am into ", "my favorite "},
-	"preference":     {"i prefer ", "i don't like ", "i do not like ", "i hate ", "my favorite "},
-	"community_role": {"my role ", "i am a ", "i'm a ", "i moderate ", "i help with "},
-	"project_role":   {"my role ", "i work on ", "i contribute ", "i maintain ", "i am a ", "i'm a "},
 }
 
 var (
-	garminSensitiveMemoryPattern = regexp.MustCompile(`(?i)\b(?:password|passcode|pin code|api[- ]?key|access token|secret key|credit card|debit card|bank account|social security|ssn|phone number|email address|my address|address is|home address|street address|i live at|i live in|i live near|i am from|i'm from|my location|located at|zip code|postcode|latitude|longitude|date of birth|birthday|years old|my age|nationality|citizen|passport|medical|diagnos(?:is|ed)|disease|disorder|medication|therapy|therapist|health condition|cancer|diabetes|depression|anxiety|adhd|autis\w*|pregnan\w*|allerg\w*|religion|religious|christian|muslim|jewish|hindu|buddhist|political|democrat|republican|sexuality|gay|lesbian|bisexual|transgender)\b`)
-	garminEmailMemoryPattern     = regexp.MustCompile(`(?i)\b[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}\b`)
-	garminLongNumberPattern      = regexp.MustCompile(`\d{7,}`)
-	garminPhoneMemoryPattern     = regexp.MustCompile(`(?:^|[^\d])\+?\d[\d .()\-]{6,}\d(?:$|[^\d])`)
-	garminSecretTokenPattern     = regexp.MustCompile(`\b[A-Za-z0-9_-]{24,}\b`)
+	garminAIControlTokenPattern    = regexp.MustCompile(`<\|[^|>\r\n]{1,64}\|>`)
+	garminAITextToolCallPattern    = regexp.MustCompile(`(?is)<function\s*=\s*[^>\r\n]+>.*?</function\s*>`)
+	garminAITextEmojiPattern       = regexp.MustCompile(`<a?:[A-Za-z0-9_]+:\d+>`)
+	garminAITextShortcodePattern   = regexp.MustCompile(`:[A-Za-z_][A-Za-z0-9_]{1,31}:`)
+	garminAIUserMemoryOfferPattern = regexp.MustCompile(`(?i)\b(?:(?:do you want|would you like|want me|should i|shall i|can i|could i|may i)(?:\s+me)?\s+(?:to\s+)?(?:save|store|remember|retain|keep|note)\b|(?:do you want|would you like|want)\s+(?:this|that|it)\s+(?:saved|stored|remembered|retained|kept|noted)\b|(?:let me|how about i|i\s+(?:can|could|will|'ll|would like to|'d like to))\s+(?:save|store|remember|retain|keep|note)\s+(?:this|that|it|your)\b)`)
 )
 
 func (b *Bot) runGarminAI(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, messages []cmd.GarminAIMessage) (*garminAIResult, error) {
+	return b.runGarminAIWithMode(ctx, s, m, messages, false)
+}
+
+func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, messages []cmd.GarminAIMessage, ambient bool) (*garminAIResult, error) {
 	if m.ChannelID == garminAppSupportID {
 		return b.runGarminAppSupport(messages)
 	}
@@ -73,22 +63,13 @@ func (b *Bot) runGarminAI(ctx context.Context, s *discordgo.Session, m *discordg
 	if err != nil {
 		return nil, err
 	}
-	consent, err := b.DB.GetGarminMemoryConsent("discord", m.Author.ID)
-	if err != nil {
-		return nil, fmt.Errorf("reading user memory consent: %w", err)
-	}
-	var userMemory db.GarminUserMemory
-	if consent.Enabled {
-		userMemory, err = b.DB.GetGarminUserMemory("discord", m.Author.ID)
-		if err != nil {
-			return nil, fmt.Errorf("reading user memory: %w", err)
-		}
-	}
-
 	systemPrompt := garminSystemPromptWithMemory(memory)
-	discordContext := b.garminDiscordContextForMessage(s, m, userMemory, consent.Enabled)
+	discordContext := b.garminDiscordContextForMessage(s, m)
+	if ambient {
+		discordContext += "\n\nThis is an unprefixed message from the same user and channel during an active Metrobot conversation. Reply only if it clearly continues or addresses that conversation. For a lightweight acknowledgment, react_to_message may be more natural. Otherwise use do_not_respond."
+	}
 	conversation := copyGarminAIMessages(messages)
-	tools := garminToolsForConversation(messages, isGarminOwner(m.Author.ID), consent.Enabled)
+	tools := garminToolsForConversation(messages, isGarminOwner(m.Author.ID), ambient)
 	result := &garminAIResult{Skills: make(map[string]struct{})}
 	if channelName := garminReadableChannelForConversation(messages); channelName != "" {
 		channelOutput, channelErr := b.readGarminCommunityChannel(s, channelName, "", 15)
@@ -123,9 +104,6 @@ func (b *Bot) runGarminAI(ctx context.Context, s *discordgo.Session, m *discordg
 		conversation = append(conversation, assistantMessage)
 		if len(assistantMessage.ToolCalls) == 0 {
 			answer := normalizeGarminAIAnswer(assistantMessage.Content)
-			if result.AutomaticMemoryTried {
-				answer = suppressGarminAutomaticMemoryDisclosure(answer)
-			}
 			if garminAISilentAnswer(answer) {
 				result.Silent = true
 				result.Conversation = conversation
@@ -141,10 +119,7 @@ func (b *Bot) runGarminAI(ctx context.Context, s *discordgo.Session, m *discordg
 
 		var toolImages []string
 		for _, toolCall := range assistantMessage.ToolCalls {
-			explicitUserMemory := garminUserMemoryRequested(m.Content)
-			if toolCall.Function.Name != "remember_user_info" || explicitUserMemory {
-				result.ToolCalls++
-			}
+			result.ToolCalls++
 			handled, actionErr := handleGarminAIMessageAction(s, m, toolCall)
 			if actionErr != nil {
 				conversation = append(conversation, cmd.GarminAIMessage{
@@ -155,16 +130,12 @@ func (b *Bot) runGarminAI(ctx context.Context, s *discordgo.Session, m *discordg
 				continue
 			}
 			if handled {
+				result.Interacted = toolCall.Function.Name == "react_to_message"
 				result.Silent = true
 				result.Conversation = conversation
 				return result, nil
 			}
 			output, skill, memoryUpdated := b.executeGarminAITool(ctx, s, m, toolCall)
-			if toolCall.Function.Name == "remember_user_info" && !explicitUserMemory {
-				result.AutomaticMemoryTried = true
-				result.AutomaticMemorySaved = result.AutomaticMemorySaved || strings.Contains(output, `"saved":true`)
-				output = `{"instruction":"continue without mentioning this internal action"}`
-			}
 			if skill != "" {
 				result.Skills[skill] = struct{}{}
 			}
@@ -240,7 +211,7 @@ func (b *Bot) executeGarminAITool(ctx context.Context, s *discordgo.Session, m *
 	case "get_discord_member":
 		output, err = b.getGarminDiscordMember(s, args.UserID)
 	case "get_discord_profile":
-		output, err = b.getGarminDiscordProfile(s, m.Author.ID, args.UserID)
+		output, err = b.getGarminDiscordProfile(s, args.UserID)
 	case "search_discord_members":
 		output, err = b.searchGarminDiscordMembers(s, args.Query)
 	case "read_community_channel":
@@ -262,21 +233,6 @@ func (b *Bot) executeGarminAITool(ctx context.Context, s *discordgo.Session, m *
 			output = `{"saved":true}`
 			memoryUpdated = true
 		}
-	case "remember_user_info":
-		output, memoryUpdated, err = b.rememberGarminUserInfo(m, args)
-	case "forget_user_info":
-		if !garminForgetUserMemoryRequested(m.Content) {
-			return toolError(fmt.Errorf("clearing user memory requires an explicit request to forget it")), "", false
-		}
-		targetID, targetErr := garminUserMemoryTarget(m.Author.ID, args.UserID)
-		if targetErr != nil {
-			return toolError(targetErr), "", false
-		}
-		err = b.setGarminMemoryConsent("discord", targetID, false)
-		if err == nil {
-			output = mustJSON(map[string]any{"deleted": true, "memory_enabled": false, "user_id": targetID})
-			memoryUpdated = true
-		}
 	default:
 		err = fmt.Errorf("unknown tool %q", call.Function.Name)
 	}
@@ -284,138 +240,6 @@ func (b *Bot) executeGarminAITool(ctx context.Context, s *discordgo.Session, m *
 		return toolError(err), "", false
 	}
 	return output, skill, memoryUpdated
-}
-
-func (b *Bot) rememberGarminUserInfo(m *discordgo.MessageCreate, args garminToolArgs) (string, bool, error) {
-	explicitRequest := garminUserMemoryRequested(m.Content)
-	if !explicitRequest && strings.TrimSpace(args.UserID) != "" {
-		return "", false, fmt.Errorf("automatic memory can only target the current user")
-	}
-	targetID, err := garminUserMemoryTarget(m.Author.ID, args.UserID)
-	if err != nil {
-		return "", false, err
-	}
-	args, err = prepareGarminUserMemory(args, m.Content, explicitRequest)
-	if err != nil {
-		return "", false, err
-	}
-
-	b.garminMemoryMu.Lock()
-	defer b.garminMemoryMu.Unlock()
-	consent, err := b.DB.GetGarminMemoryConsent("discord", targetID)
-	if err != nil {
-		return "", false, err
-	}
-	if !consent.Enabled {
-		return "", false, fmt.Errorf("personalization memory is disabled for this user")
-	}
-	userMemory, err := b.DB.GetGarminUserMemory("discord", targetID)
-	if err != nil {
-		return "", false, err
-	}
-	userMemory.Info = appendGarminUserInfo(userMemory.Info, args.Content)
-	if args.Pronouns != "" {
-		userMemory.Pronouns = args.Pronouns
-	}
-	if args.Bio != "" {
-		userMemory.Bio = args.Bio
-	}
-	if err := b.DB.SetGarminUserMemory("discord", targetID, userMemory); err != nil {
-		return "", false, err
-	}
-	return mustJSON(map[string]any{"saved": true, "user_id": targetID}), explicitRequest, nil
-}
-
-func prepareGarminUserMemory(args garminToolArgs, message string, explicitRequest bool) (garminToolArgs, error) {
-	args.Category = strings.ToLower(strings.TrimSpace(args.Category))
-	args.Content = strings.Join(strings.Fields(args.Content), " ")
-	args.Pronouns = strings.Join(strings.Fields(args.Pronouns), " ")
-	args.Bio = strings.Join(strings.Fields(args.Bio), " ")
-	if args.Content == "" {
-		return args, fmt.Errorf("memory content is required")
-	}
-	if _, valid := garminAutomaticMemoryCues[args.Category]; !valid && args.Category != "other" {
-		return args, fmt.Errorf("invalid memory category %q", args.Category)
-	}
-	if len([]rune(args.Content)) > 500 || len([]rune(args.Pronouns)) > 100 || len([]rune(args.Bio)) > 500 {
-		return args, fmt.Errorf("memory profile field is too long")
-	}
-	combined := strings.Join([]string{args.Content, args.Pronouns, args.Bio}, " ")
-	if garminSensitiveUserMemory(combined) {
-		return args, fmt.Errorf("sensitive information cannot be saved to personalization memory")
-	}
-	if explicitRequest {
-		return args, nil
-	}
-	if args.Category == "other" || args.Bio != "" {
-		return args, fmt.Errorf("automatic memory requires an approved profile category")
-	}
-	if len([]rune(args.Content)) > 160 {
-		return args, fmt.Errorf("automatic memory content is too long")
-	}
-	lowerMessage := strings.ToLower(strings.Join(strings.Fields(message), " "))
-	lowerContent := strings.ToLower(args.Content)
-	if !strings.Contains(lowerMessage, lowerContent) {
-		return args, fmt.Errorf("automatic memory must quote the current user's message")
-	}
-	if !containsAnyGarminPhrase(lowerMessage, garminAutomaticMemoryCues[args.Category]...) {
-		return args, fmt.Errorf("current message does not support memory category %q", args.Category)
-	}
-	if args.Category == "pronouns" && args.Pronouns == "" {
-		return args, fmt.Errorf("automatic pronoun memory requires the pronouns field")
-	}
-	if args.Pronouns != "" && (args.Category != "pronouns" || !strings.Contains(lowerMessage, strings.ToLower(args.Pronouns))) {
-		return args, fmt.Errorf("automatic pronouns must be directly stated by the current user")
-	}
-	if (args.Category == "community_role" || args.Category == "project_role") && !containsAnyGarminPhrase(lowerContent,
-		"admin", "contributor", "design", "develop", "helper", "maintain", "member", "moderator",
-		"staff", "test", "translat") {
-		return args, fmt.Errorf("automatic role memory requires a directly stated community or project role")
-	}
-	args.Content = args.Category + ": " + args.Content
-	return args, nil
-}
-
-func garminSensitiveUserMemory(content string) bool {
-	lower := strings.ToLower(content)
-	return strings.Contains(lower, "http://") || strings.Contains(lower, "https://") ||
-		garminSensitiveMemoryPattern.MatchString(content) || garminEmailMemoryPattern.MatchString(content) ||
-		garminLongNumberPattern.MatchString(content) || garminPhoneMemoryPattern.MatchString(content) ||
-		garminSecretTokenPattern.MatchString(content)
-}
-
-func suppressGarminAutomaticMemoryDisclosure(answer string) string {
-	var kept []string
-	start := 0
-	for index, r := range answer {
-		if r != '.' && r != '!' && r != '?' {
-			continue
-		}
-		next := index + 1
-		if next < len(answer) && answer[next] != ' ' && answer[next] != '\n' {
-			continue
-		}
-		sentence := strings.TrimSpace(answer[start:next])
-		if sentence != "" && !garminAutomaticMemoryDisclosureSentence(sentence) {
-			kept = append(kept, sentence)
-		}
-		start = next
-	}
-	if rest := strings.TrimSpace(answer[start:]); rest != "" && !garminAutomaticMemoryDisclosureSentence(rest) {
-		kept = append(kept, rest)
-	}
-	if len(kept) == 0 {
-		return "got it."
-	}
-	return strings.Join(kept, " ")
-}
-
-func garminAutomaticMemoryDisclosureSentence(sentence string) bool {
-	lower := strings.ToLower(sentence)
-	return containsAnyGarminPhrase(lower,
-		"i'll remember", "i will remember", "i've saved", "i have saved", "i saved", "saved that",
-		"saved this", "got that saved", "added that to your profile", "personalization memory",
-		"keep that in mind", "noted for future")
 }
 
 func garminSystemPromptWithMemory(memory string) string {
@@ -618,6 +442,15 @@ func formatGarminAIUsage(result *garminAIResult) string {
 }
 
 func normalizeGarminAIAnswer(answer string) string {
+	hadInternalMarkup := garminAIControlTokenPattern.MatchString(answer) || garminAITextToolCallPattern.MatchString(answer) || garminAITextEmojiPattern.MatchString(answer) || garminAITextShortcodePattern.MatchString(answer)
+	answer = garminAIControlTokenPattern.ReplaceAllString(answer, "")
+	answer = garminAITextToolCallPattern.ReplaceAllString(answer, "")
+	if functionStart := strings.Index(strings.ToLower(answer), "<function="); functionStart >= 0 {
+		hadInternalMarkup = true
+		answer = answer[:functionStart]
+	}
+	answer = garminAITextEmojiPattern.ReplaceAllString(answer, "")
+	answer = garminAITextShortcodePattern.ReplaceAllString(answer, "")
 	answer = strings.TrimSpace(answer)
 	answer = strings.NewReplacer(" — ", ", ", "—", ",", " – ", " - ", "–", "-").Replace(answer)
 	lines := strings.Split(answer, "\n")
@@ -628,10 +461,53 @@ func normalizeGarminAIAnswer(answer string) string {
 	lower := strings.ToLower(answer)
 	for _, prefix := range []string{"garmin,", "garmin:", "garmin -"} {
 		if strings.HasPrefix(lower, prefix) {
-			return strings.TrimSpace(answer[len(prefix):])
+			answer = strings.TrimSpace(answer[len(prefix):])
+			break
 		}
 	}
+	answerBeforeMemoryFilter := answer
+	answer = suppressGarminUserMemoryLanguage(answer)
+	if answer == "" && (hadInternalMarkup || answerBeforeMemoryFilter != "") {
+		return "got it."
+	}
 	return answer
+}
+
+func suppressGarminUserMemoryLanguage(answer string) string {
+	var kept []string
+	start := 0
+	for index, r := range answer {
+		if r != '.' && r != '!' && r != '?' {
+			continue
+		}
+		next := index + 1
+		if next < len(answer) && answer[next] != ' ' && answer[next] != '\n' {
+			continue
+		}
+		sentence := strings.TrimSpace(answer[start:next])
+		if sentence != "" && !garminUserMemorySentence(sentence) {
+			kept = append(kept, sentence)
+		}
+		start = next
+	}
+	if rest := strings.TrimSpace(answer[start:]); rest != "" && !garminUserMemorySentence(rest) {
+		kept = append(kept, rest)
+	}
+	return strings.Join(kept, " ")
+}
+
+func garminUserMemorySentence(sentence string) bool {
+	lower := strings.ToLower(sentence)
+	if garminAIUserMemoryOfferPattern.MatchString(lower) {
+		return true
+	}
+	return containsAnyGarminPhrase(lower,
+		"do you want me to save", "would you like me to save", "want me to save", "should i save", "shall i save",
+		"do you want me to remember", "would you like me to remember", "want me to remember", "should i remember",
+		"i can save that", "i can save this", "i can remember that", "i can remember this", "i can store that", "i can store this",
+		"i'll remember", "i will remember", "i've saved", "i have saved", "i saved", "saved that",
+		"saved this", "got that saved", "save that for future", "added that to your profile", "add that to your profile", "store that in your profile", "personalization memory",
+		"permanent preference", "keep that in mind", "noted for future")
 }
 
 func truncateGarminAIToolResult(output string) string {
@@ -703,15 +579,13 @@ func mustJSON(value any) string {
 	return string(data)
 }
 
-func garminToolsForConversation(messages []cmd.GarminAIMessage, isAdmin, memoryEnabled bool) []cmd.GarminAITool {
+func garminToolsForConversation(messages []cmd.GarminAIMessage, isAdmin, ambient bool) []cmd.GarminAITool {
 	prompt := strings.ToLower(garminUserText(messages))
 	if prompt == "" {
 		return nil
 	}
 
-	wantsRememberUser := garminUserMemoryRequested(prompt)
-	wantsForgetUser := garminForgetUserMemoryRequested(prompt)
-	wantsUserMemory := wantsRememberUser || wantsForgetUser
+	wantsUserMemory := garminPerUserMemoryRequest(prompt)
 	wantsMemory := isAdmin && garminRememberRequested(prompt) && !wantsUserMemory
 	wantsNotes := containsAnyGarminPhrase(prompt, "saved note", "bot note", "list notes", "get note", "read note")
 	wantsProjectFacts := strings.Contains(prompt, "metrolist") && containsAnyGarminPhrase(prompt,
@@ -734,15 +608,11 @@ func garminToolsForConversation(messages []cmd.GarminAIMessage, isAdmin, memoryE
 		include := false
 		switch name {
 		case "react_to_message":
-			include = wantsReaction
+			include = wantsReaction || ambient
 		case "do_not_respond":
 			include = true
 		case "remember":
 			include = wantsMemory
-		case "remember_user_info":
-			include = memoryEnabled
-		case "forget_user_info":
-			include = wantsForgetUser
 		case "list_notes", "get_note":
 			include = wantsNotes
 		case "get_metrolist_status", "search_metrolist_issues", "load_skill":
@@ -804,53 +674,12 @@ func garminRememberRequested(content string) bool {
 		"save to memory", "add that to memory", "add this to memory", "add to memory")
 }
 
-func garminUserMemoryRequested(content string) bool {
+func garminPerUserMemoryRequest(content string) bool {
 	content = strings.ToLower(strings.TrimSpace(content))
 	return containsAnyGarminPhrase(content,
 		"remember me", "remember my", "remember that i", "remember that i'm", "remember that im",
-		"remember <@", "save my profile", "save this about me")
-}
-
-func garminForgetUserMemoryRequested(content string) bool {
-	content = strings.ToLower(strings.TrimSpace(content))
-	return containsAnyGarminPhrase(content,
-		"forget me", "forget about me", "forget what you know about me", "clear my profile",
-		"clear my memory", "delete my memory", "forget <@", "clear <@")
-}
-
-func garminUserMemoryTarget(requesterID, requestedID string) (string, error) {
-	targetID := strings.TrimSpace(requestedID)
-	if targetID == "" {
-		return requesterID, nil
-	}
-	targetID = normalizeDiscordUserID(targetID)
-	if targetID == "" {
-		return "", fmt.Errorf("a valid Discord user ID is required")
-	}
-	if targetID != requesterID && !isGarminOwner(requesterID) {
-		return "", fmt.Errorf("users can only change their own memory")
-	}
-	return targetID, nil
-}
-
-func appendGarminUserInfo(existing, content string) string {
-	existing = strings.TrimSpace(existing)
-	content = strings.TrimSpace(content)
-	if existing == "" {
-		return truncateGarminUserProfileField(content, 4000)
-	}
-	if strings.Contains(strings.ToLower(existing), strings.ToLower(content)) {
-		return existing
-	}
-	return truncateGarminUserProfileField(existing+"\n- "+content, 4000)
-}
-
-func truncateGarminUserProfileField(content string, limit int) string {
-	runes := []rune(strings.TrimSpace(content))
-	if len(runes) <= limit {
-		return string(runes)
-	}
-	return string(runes[:limit])
+		"save my profile", "save this about me", "forget me", "forget about me", "clear my profile",
+		"clear my memory", "delete my memory", "personalization memory")
 }
 
 func containsAnyGarminPhrase(content string, phrases ...string) bool {
@@ -863,7 +692,7 @@ func containsAnyGarminPhrase(content string, phrases ...string) bool {
 }
 
 var garminAITools = []cmd.GarminAITool{
-	garminTool("react_to_message", "React to the user's message with one approved Metrolist custom emoji and send no text reply. Use when a reaction is more natural than words.", `{"type":"object","properties":{"emoji":{"type":"string","enum":["husk","husker","nyaboom","colonthree","steamhappy","trolley","soggy","thumb","catshake","catfuckyou","interesting","horror","speed","catstare","brick","crine","skullq","bwaa","metrolist","monkthonk","waah","wires","thonk","hm","thumbcat","nosir","cozystars","glup","emoji_44","emoji_43","folk","kekw","metrolist_tomorrow","cathug","dry","bleh","snackstare","blobcatmorningcoffee","blobcatcozy","hu","trolleyzoom","happy","wavey","partygopher","trolleyz","painfade"]}},"required":["emoji"],"additionalProperties":false}`),
+	garminTool("react_to_message", "React to the user's message with one approved Metrolist custom emoji and send no text reply. Use when explicitly asked, or when a lightweight reaction is more natural than text during an active unprefixed conversation.", `{"type":"object","properties":{"emoji":{"type":"string","enum":["husk","husker","nyaboom","colonthree","steamhappy","trolley","soggy","thumb","catshake","catfuckyou","interesting","horror","speed","catstare","brick","crine","skullq","bwaa","metrolist","monkthonk","waah","wires","thonk","hm","thumbcat","nosir","cozystars","glup","emoji_44","emoji_43","folk","kekw","metrolist_tomorrow","cathug","dry","bleh","snackstare","blobcatmorningcoffee","blobcatcozy","hu","trolleyzoom","happy","wavey","partygopher","trolleyz","painfade"]}},"required":["emoji"],"additionalProperties":false}`),
 	garminTool("do_not_respond", "Intentionally send no reply and no reaction. Use for bait, spam, repetition, or a message that genuinely needs no acknowledgment. Do not use to avoid a sincere answerable question.", `{"type":"object","properties":{},"additionalProperties":false}`),
 	garminTool("get_metrolist_status", "Get live Metrolist repository status, latest release, and recent commits. Use for current project status, activity, versions, and releases.", `{"type":"object","properties":{},"additionalProperties":false}`),
 	garminTool("search_metrolist_issues", "Search current and past issues in the official Metrolist GitHub repository.", `{"type":"object","properties":{"query":{"type":"string","description":"Short GitHub issue search terms, optionally including is:open or is:closed"}},"required":["query"],"additionalProperties":false}`),
@@ -871,13 +700,11 @@ var garminAITools = []cmd.GarminAITool{
 	garminTool("list_notes", "List every saved Metrobot note name. Use before get_note when the relevant note name is unknown.", `{"type":"object","properties":{},"additionalProperties":false}`),
 	garminTool("get_note", "Read a saved Metrobot note by exact name.", `{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":false}`),
 	garminTool("get_discord_member", "Get exact username, global name, server nickname, and display name for a Discord member ID or mention.", `{"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"],"additionalProperties":false}`),
-	garminTool("get_discord_profile", "Get a Discord member's public names, server roles, and role-based pronouns. The current user and bot admins can also access that user's consented saved profile. Discord account About Me bios are not exposed to bots.", `{"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"],"additionalProperties":false}`),
+	garminTool("get_discord_profile", "Get a Discord member's public names, server roles, and role-based pronouns. Discord account About Me bios are not exposed to bots.", `{"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"],"additionalProperties":false}`),
 	garminTool("search_discord_members", "Search server members by the beginning of a username or nickname. Results may be ambiguous, so do not claim a match when several are returned.", `{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}`),
 	garminTool("read_community_channel", "Read recent messages from approved channels: staff shitposts in coolchannel, KMP previews in sneak-peeks, design and feature questions in polls, or Elissa's Minky cat pictures in minky. Optionally search within the latest 100 messages.", `{"type":"object","properties":{"channel":{"type":"string","enum":["coolchannel","sneak-peeks","polls","minky"]},"query":{"type":"string","description":"Optional case-insensitive text to find within the latest 100 messages"},"limit":{"type":"integer","minimum":1,"maximum":25,"description":"Maximum messages to return; defaults to 15"}},"required":["channel"],"additionalProperties":false}`),
 	garminTool("load_skill", "Load focused reference instructions. Available skills: metrolist for project facts and official resources, support for troubleshooting.", `{"type":"object","properties":{"name":{"type":"string","enum":["metrolist","support"]}},"required":["name"],"additionalProperties":false}`),
 	garminTool("remember", "Append durable global Markdown memory. Only Nyx or Lamp can use this after explicitly asking to save durable, non-sensitive bot or project information.", `{"type":"object","properties":{"content":{"type":"string"}},"required":["content"],"additionalProperties":false}`),
-	garminTool("remember_user_info", "Silently save a new, stable, non-sensitive fact directly stated by the current speaker when useful later, even without a request. Use sparingly for preferred names, pronouns, lasting interests or preferences, and community or project roles. For automatic saves, content must be an exact short quote from the current message; omit user_id and bio. Use category other only for an explicit request. Never save raw chat, transient moods or jokes, inferred traits, secrets, health data, precise locations, or facts about mentioned users. Only Nyx or Lamp may explicitly target another consenting user. Never mention an automatic save.", `{"type":"object","properties":{"user_id":{"type":"string","description":"Optional Discord user ID or mention; omit for automatic saves about the current speaker"},"category":{"type":"string","enum":["preferred_name","pronouns","interest","preference","community_role","project_role","other"]},"content":{"type":"string","description":"For automatic saves, an exact short quote from the current user message"},"pronouns":{"type":"string","description":"Pronouns exactly as directly stated, when applicable"},"bio":{"type":"string","description":"User-provided public bio; explicit requests only"}},"required":["category","content"],"additionalProperties":false}`),
-	garminTool("forget_user_info", "Delete durable per-user memory only when the user explicitly asks. Defaults to the current user; only Nyx or Lamp may target another user.", `{"type":"object","properties":{"user_id":{"type":"string","description":"Optional Discord user ID or mention; omit for the current user"}},"additionalProperties":false}`),
 }
 
 func garminTool(name, description, schema string) cmd.GarminAITool {

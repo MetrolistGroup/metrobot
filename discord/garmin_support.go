@@ -76,7 +76,7 @@ func (b *Bot) handleGarminAppSupport(s *discordgo.Session, m *discordgo.MessageC
 	reply := b.sendGarminAppSupportReply(s, m, result.Answer)
 	if reply != nil {
 		conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: result.Answer})
-		b.rememberGarminAIContext(reply.ID, m.Author.ID, conversation)
+		b.rememberGarminAIContext(reply.ID, m, conversation)
 	}
 }
 

@@ -32,7 +32,6 @@ type Bot struct {
 	garminMemory         *cmd.GarminMemory
 	garminGitHub         *gh.AssistantClient
 	garminAIMu           sync.Mutex
-	garminMemoryMu       sync.Mutex
 	garminAILastUsed     map[string]time.Time
 	garminAIContexts     map[string]garminAIContext
 	garminAIUserContexts map[string]garminAIContext
@@ -441,30 +440,12 @@ func (b *Bot) registerCommands() error {
 		},
 		{
 			Name:        "memory",
-			Description: "Manage Metrobot AI memory and personalization",
+			Description: "Manage Metrobot AI memory",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "view",
 					Description: "View Metrobot's memory",
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionSubCommand,
-					Name:        "users",
-					Description: "View all saved user memories",
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionSubCommand,
-					Name:        "personalization",
-					Description: "Enable or disable your personalization memory",
-					Options: []*discordgo.ApplicationCommandOption{
-						{
-							Type:        discordgo.ApplicationCommandOptionBoolean,
-							Name:        "enabled",
-							Description: "Allow Metrobot to retain profile details for personalized replies",
-							Required:    true,
-						},
-					},
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,

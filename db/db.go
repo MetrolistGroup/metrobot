@@ -118,22 +118,8 @@ func (d *DB) migrate() error {
 			star_count      INTEGER NOT NULL DEFAULT 0,
 			timestamp       INTEGER NOT NULL
 		)`,
-		`CREATE TABLE IF NOT EXISTS garmin_user_memory (
-			platform   TEXT NOT NULL,
-			user_id    TEXT NOT NULL,
-			info       TEXT NOT NULL DEFAULT '',
-			pronouns   TEXT NOT NULL DEFAULT '',
-			bio        TEXT NOT NULL DEFAULT '',
-			updated_at INTEGER NOT NULL,
-			PRIMARY KEY (platform, user_id)
-		)`,
-		`CREATE TABLE IF NOT EXISTS garmin_memory_consent (
-			platform       TEXT NOT NULL,
-			user_id        TEXT NOT NULL,
-			memory_enabled INTEGER NOT NULL,
-			updated_at     INTEGER NOT NULL,
-			PRIMARY KEY (platform, user_id)
-		)`,
+		`DROP TABLE IF EXISTS garmin_memory_consent`,
+		`DROP TABLE IF EXISTS garmin_user_memory`,
 	}
 
 	for _, m := range migrations {

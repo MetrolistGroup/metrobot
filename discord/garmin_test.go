@@ -49,9 +49,14 @@ func TestGarminAIContinuationIncludesBoundedContext(t *testing.T) {
 		{Role: "user", Content: "three"},
 		{Role: "assistant", Content: "three answer"},
 	}
-	bot.rememberGarminAIContext("bot-message", "user", history)
+	original := &discordgo.MessageCreate{Message: &discordgo.Message{
+		GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "user"},
+	}}
+	bot.rememberGarminAIContext("bot-message", original, history)
 
 	messages, ok := bot.garminAIContinuation(&discordgo.MessageCreate{Message: &discordgo.Message{
+		GuildID:          "guild",
+		ChannelID:        "channel",
 		MessageReference: &discordgo.MessageReference{MessageID: "bot-message"},
 		Author:           &discordgo.User{ID: "user"},
 	}}, "  follow up  ")
@@ -76,11 +81,13 @@ func TestGarminAIContinuationRejectsUntrackedAndExpiredReplies(t *testing.T) {
 	bot := &Bot{
 		garminAI: &fakeGarminAI{},
 		garminAIContexts: map[string]garminAIContext{
-			"expired": {expiresAt: time.Now().Add(-time.Minute)},
+			"expired": {userID: "user", channelID: "channel", expiresAt: time.Now().Add(-time.Minute)},
 		},
 	}
 	for _, messageID := range []string{"other-bot-message", "expired"} {
 		messages, ok := bot.garminAIContinuation(&discordgo.MessageCreate{Message: &discordgo.Message{
+			GuildID:          "guild",
+			ChannelID:        "channel",
 			MessageReference: &discordgo.MessageReference{MessageID: messageID},
 			Author:           &discordgo.User{ID: "user"},
 		}}, "follow up")
@@ -96,11 +103,16 @@ func TestGarminAIContinuationDoesNotWakeOnHumanReplyWithUserHistory(t *testing.T
 		garminAIContexts:     make(map[string]garminAIContext),
 		garminAIUserContexts: make(map[string]garminAIContext),
 	}
-	bot.rememberGarminAIContext("tracked-bot-reply", "nyx", []cmd.GarminAIMessage{
+	original := &discordgo.MessageCreate{Message: &discordgo.Message{
+		GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "nyx"},
+	}}
+	bot.rememberGarminAIContext("tracked-bot-reply", original, []cmd.GarminAIMessage{
 		{Role: "user", Content: "garmin, hello"},
 		{Role: "assistant", Content: "hey nyx"},
 	})
 	messages, ok := bot.garminAIContinuation(&discordgo.MessageCreate{Message: &discordgo.Message{
+		GuildID:           "guild",
+		ChannelID:         "channel",
 		MessageReference:  &discordgo.MessageReference{MessageID: "human-message"},
 		ReferencedMessage: &discordgo.Message{ID: "human-message", Author: &discordgo.User{ID: "human"}},
 		Author:            &discordgo.User{ID: "nyx"},
@@ -110,7 +122,7 @@ func TestGarminAIContinuationDoesNotWakeOnHumanReplyWithUserHistory(t *testing.T
 	}
 }
 
-func TestGarminAITriggeredConversationUsesPerUserHistory(t *testing.T) {
+func TestGarminAITriggeredConversationUsesActiveHistory(t *testing.T) {
 	bot := &Bot{
 		garminAIContexts:     make(map[string]garminAIContext),
 		garminAIUserContexts: make(map[string]garminAIContext),
@@ -119,10 +131,10 @@ func TestGarminAITriggeredConversationUsesPerUserHistory(t *testing.T) {
 		{Role: "user", Content: "always add a heart"},
 		{Role: "assistant", Content: "got it ❤️"},
 	}
-	bot.rememberGarminAIContext("old-reply", "john", history)
 	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		Author: &discordgo.User{ID: "john"},
+		GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "john"},
 	}}
+	bot.rememberGarminAIContext("old-reply", message, history)
 	got := bot.garminAITriggeredConversation(message, "you forgot")
 	want := append(history, cmd.GarminAIMessage{Role: "user", Content: "you forgot"})
 	if !reflect.DeepEqual(got, want) {
@@ -130,11 +142,59 @@ func TestGarminAITriggeredConversationUsesPerUserHistory(t *testing.T) {
 	}
 }
 
-func TestExpandGarminAIEmojis(t *testing.T) {
-	got := expandGarminAIEmojis(nil, "", "nice :thumb: :trolleyz: :not_allowed:")
-	want := "nice <:thumb:1481187881946058922> <a:trolleyz:1481188261274587217> :not_allowed:"
-	if got != want {
-		t.Fatalf("expandGarminAIEmojis() = %q, want %q", got, want)
+func TestGarminAIContextIsScopedToUserAndChannel(t *testing.T) {
+	bot := &Bot{
+		garminAI:             &fakeGarminAI{},
+		garminAIContexts:     make(map[string]garminAIContext),
+		garminAIUserContexts: make(map[string]garminAIContext),
+	}
+	original := &discordgo.MessageCreate{Message: &discordgo.Message{
+		GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "owner"},
+	}}
+	history := []cmd.GarminAIMessage{{Role: "user", Content: "private thread"}, {Role: "assistant", Content: "reply"}}
+	bot.rememberGarminAIContext("bot-message", original, history)
+
+	for _, attempt := range []*discordgo.MessageCreate{
+		{Message: &discordgo.Message{GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "other"}, MessageReference: &discordgo.MessageReference{MessageID: "bot-message"}}},
+		{Message: &discordgo.Message{GuildID: "guild", ChannelID: "other-channel", Author: &discordgo.User{ID: "owner"}, MessageReference: &discordgo.MessageReference{MessageID: "bot-message"}}},
+		{Message: &discordgo.Message{GuildID: "other-guild", ChannelID: "channel", Author: &discordgo.User{ID: "owner"}, MessageReference: &discordgo.MessageReference{MessageID: "bot-message"}}},
+	} {
+		if messages, ok := bot.garminAIContinuation(attempt, "show me"); ok || messages != nil {
+			t.Fatalf("cross-user/channel reply exposed context: %#v", messages)
+		}
+	}
+
+	sameUser := &discordgo.MessageCreate{Message: &discordgo.Message{
+		GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "owner"},
+		MessageReference: &discordgo.MessageReference{MessageID: "bot-message"},
+	}}
+	if _, ok := bot.garminAIContinuation(sameUser, "continue"); !ok {
+		t.Fatal("authorized reply context was lost after rejected attempts")
+	}
+
+	ambient := &discordgo.MessageCreate{Message: &discordgo.Message{
+		GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "owner"},
+	}}
+	messages, ok := bot.garminAIAmbientContinuation(ambient, "one more thing")
+	if !ok || len(messages) != 3 || messages[2].Content != "one more thing" {
+		t.Fatalf("ambient continuation = (%#v, %v)", messages, ok)
+	}
+	for _, attempt := range []*discordgo.MessageCreate{
+		{Message: &discordgo.Message{GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "other"}}},
+		{Message: &discordgo.Message{GuildID: "guild", ChannelID: "other-channel", Author: &discordgo.User{ID: "owner"}}},
+		{Message: &discordgo.Message{GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "owner"}, MessageReference: &discordgo.MessageReference{MessageID: "human"}}},
+	} {
+		if messages, ok := bot.garminAIAmbientContinuation(attempt, "one more thing"); ok || messages != nil {
+			t.Fatalf("invalid ambient continuation exposed context: %#v", messages)
+		}
+	}
+
+	key := garminAIUserContextKey(original)
+	context := bot.garminAIUserContexts[key]
+	context.ambientUntil = time.Now().Add(-time.Minute)
+	bot.garminAIUserContexts[key] = context
+	if messages, ok := bot.garminAIAmbientContinuation(ambient, "too late"); ok || messages != nil {
+		t.Fatalf("expired ambient continuation = (%#v, %v)", messages, ok)
 	}
 }
 
@@ -150,19 +210,6 @@ func TestGarminAIEmojiCatalogContainsAllCurrentGuildEmojis(t *testing.T) {
 	for _, name := range []string{"soggy", "thumb", "painfade", "cozystars"} {
 		if _, ok := garminAIEmojis[name]; !ok {
 			t.Errorf("emoji catalog missing %q", name)
-		}
-	}
-}
-
-func TestGarminAIEmojiOnlyBecomesReactionCandidate(t *testing.T) {
-	for _, content := range []string{":soggy:", "  :thumb:  ", "<a:trolleyz:1481188261274587217>"} {
-		if emoji := garminAIEmojiOnly(content); emoji == nil {
-			t.Errorf("garminAIEmojiOnly(%q) = nil", content)
-		}
-	}
-	for _, content := range []string{"ouch :soggy:", ":not_allowed:", "hello"} {
-		if emoji := garminAIEmojiOnly(content); emoji != nil {
-			t.Errorf("garminAIEmojiOnly(%q) = %#v, want nil", content, emoji)
 		}
 	}
 }

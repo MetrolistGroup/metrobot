@@ -76,7 +76,7 @@ func TestGarminAppSupportNoteMatchingUsesAppNotesOnly(t *testing.T) {
 	}
 }
 
-func TestHandleGarminAppSupportNeedsNeitherAIProviderNorMemoryConsent(t *testing.T) {
+func TestHandleGarminAppSupportNeedsNoAIProvider(t *testing.T) {
 	database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -113,9 +113,6 @@ func TestHandleGarminAppSupportNeedsNeitherAIProviderNorMemoryConsent(t *testing
 	bot.handleGarminAI(session, message, []cmd.GarminAIMessage{{Role: "user", Content: "where are downloads?"}})
 	if !strings.Contains(requestBody, "Use the Downloads tab in Metrolist.") {
 		t.Fatalf("support reply = %s", requestBody)
-	}
-	if consent, err := database.GetGarminMemoryConsent("discord", userID); err != nil || consent.Decided {
-		t.Fatalf("app-support changed memory consent = %#v, %v", consent, err)
 	}
 }
 

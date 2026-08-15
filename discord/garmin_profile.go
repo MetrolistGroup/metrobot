@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/MetrolistGroup/metrobot/db"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -26,17 +25,17 @@ func isGarminOwner(userID string) bool {
 	return ok
 }
 
-func (b *Bot) garminDiscordContextForMessage(s *discordgo.Session, m *discordgo.MessageCreate, memory db.GarminUserMemory, memoryEnabled bool) string {
-	return garminDiscordContext(s, m, memory, memoryEnabled)
+func (b *Bot) garminDiscordContextForMessage(s *discordgo.Session, m *discordgo.MessageCreate) string {
+	return garminDiscordContext(s, m)
 }
 
 // garminDiscordContextForMessage keeps simple unit tests and callers that do not
 // have a live Discord session working. Production uses the Bot method above.
 func garminDiscordContextForMessage(m *discordgo.MessageCreate) string {
-	return garminDiscordContext(nil, m, db.GarminUserMemory{}, false)
+	return garminDiscordContext(nil, m)
 }
 
-func garminDiscordContext(s *discordgo.Session, m *discordgo.MessageCreate, memory db.GarminUserMemory, memoryEnabled bool) string {
+func garminDiscordContext(s *discordgo.Session, m *discordgo.MessageCreate) string {
 	displayName := m.Author.GlobalName
 	if displayName == "" {
 		displayName = m.Author.Username
@@ -57,36 +56,16 @@ func garminDiscordContext(s *discordgo.Session, m *discordgo.MessageCreate, memo
 		if len(roles) > 0 {
 			author["roles"] = roles
 		}
-		if memory.Pronouns == "" {
-			if pronouns := garminPronounsFromRoles(roles); len(pronouns) > 0 {
-				author["pronouns"] = pronouns
-				author["pronouns_source"] = "server roles"
-			}
+		if pronouns := garminPronounsFromRoles(roles); len(pronouns) > 0 {
+			author["pronouns"] = pronouns
+			author["pronouns_source"] = "server roles"
 		}
-	}
-	if memory.Pronouns != "" {
-		author["pronouns"] = memory.Pronouns
-		author["pronouns_source"] = "user-saved profile"
 	}
 
 	context := map[string]any{
-		"current_user":                   author,
-		"channel_id":                     m.ChannelID,
-		"guild_id":                       m.GuildID,
-		"personalization_memory_enabled": memoryEnabled,
-	}
-	if !memory.Empty() {
-		profile := map[string]any{}
-		if memory.Info != "" {
-			profile["remembered_info"] = memory.Info
-		}
-		if memory.Bio != "" {
-			profile["bio"] = memory.Bio
-		}
-		if memory.Pronouns != "" {
-			profile["pronouns"] = memory.Pronouns
-		}
-		context["current_user_memory"] = profile
+		"current_user": author,
+		"channel_id":   m.ChannelID,
+		"guild_id":     m.GuildID,
 	}
 	if channel := garminCurrentChannel(s, m.ChannelID); channel != nil {
 		channelContext := map[string]any{
@@ -216,7 +195,7 @@ func garminPronounsFromRoles(roles []map[string]string) []string {
 	return result
 }
 
-func (b *Bot) getGarminDiscordProfile(s *discordgo.Session, requesterID, userID string) (string, error) {
+func (b *Bot) getGarminDiscordProfile(s *discordgo.Session, userID string) (string, error) {
 	userID = normalizeDiscordUserID(userID)
 	if userID == "" {
 		return "", fmt.Errorf("Discord user ID is required")
@@ -224,20 +203,6 @@ func (b *Bot) getGarminDiscordProfile(s *discordgo.Session, requesterID, userID 
 	member, err := s.GuildMember(b.Config.DiscordGuildID, userID)
 	if err != nil {
 		return "", fmt.Errorf("fetching Discord member: %w", err)
-	}
-	canViewSavedProfile := requesterID == userID || b.DB.IsAdmin("discord", requesterID, b.Config)
-	var memory db.GarminUserMemory
-	if canViewSavedProfile {
-		consent, consentErr := b.DB.GetGarminMemoryConsent("discord", userID)
-		if consentErr != nil {
-			return "", fmt.Errorf("reading user profile consent: %w", consentErr)
-		}
-		if consent.Enabled {
-			memory, err = b.DB.GetGarminUserMemory("discord", userID)
-		}
-		if err != nil {
-			return "", fmt.Errorf("reading user profile memory: %w", err)
-		}
 	}
 	rolesByID := garminGuildRolesByID(s, b.Config.DiscordGuildID)
 	if len(rolesByID) == 0 {
@@ -254,25 +219,14 @@ func (b *Bot) getGarminDiscordProfile(s *discordgo.Session, requesterID, userID 
 	result := discordMemberToolResult(member)
 	roles := garminRoleDetails(member.Roles, rolesByID)
 	result["roles"] = roles
-	if memory.Pronouns != "" {
-		result["pronouns"] = memory.Pronouns
-		result["pronouns_source"] = "user-saved profile"
-	} else if pronouns := garminPronounsFromRoles(roles); len(pronouns) > 0 {
+	if pronouns := garminPronounsFromRoles(roles); len(pronouns) > 0 {
 		result["pronouns"] = pronouns
 		result["pronouns_source"] = "server roles"
 	} else {
 		result["pronouns"] = nil
 		result["pronouns_source"] = "not provided"
 	}
-	if memory.Bio != "" {
-		result["bio"] = memory.Bio
-		result["bio_source"] = "user-saved profile"
-	} else {
-		result["bio"] = nil
-		result["bio_source"] = "Discord's bot API does not expose account About Me bios"
-	}
-	if canViewSavedProfile {
-		result["remembered_info"] = memory.Info
-	}
+	result["bio"] = nil
+	result["bio_source"] = "Discord's bot API does not expose account About Me bios"
 	return mustJSON(result), nil
 }
