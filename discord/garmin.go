@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
@@ -34,11 +35,18 @@ type garminAIContext struct {
 }
 
 func (b *Bot) handleGarminAI(s *discordgo.Session, m *discordgo.MessageCreate, messages []cmd.GarminAIMessage) {
-	b.handleGarminAIWithMode(s, m, messages, false)
+	b.cancelGarminAIAmbient(m)
+	b.handleGarminAIWithMode(s, m, messages, false, 0)
 }
 
-func (b *Bot) handleGarminAIWithMode(s *discordgo.Session, m *discordgo.MessageCreate, messages []cmd.GarminAIMessage, ambient bool) {
+func (b *Bot) handleGarminAIWithMode(s *discordgo.Session, m *discordgo.MessageCreate, messages []cmd.GarminAIMessage, ambient bool, ambientToken uint64) {
+	if ambient && !b.garminAIAmbientRequestActive(m, ambientToken) {
+		return
+	}
 	if len(messages) == 0 || !garminAIMessageHasInput(messages[len(messages)-1]) {
+		if ambient {
+			return
+		}
 		b.sendGarminReply(s, m, "Ask me something after `garmin,`.")
 		return
 	}
@@ -50,10 +58,13 @@ func (b *Bot) handleGarminAIWithMode(s *discordgo.Session, m *discordgo.MessageC
 		return
 	}
 	if b.garminAI == nil {
+		if ambient {
+			return
+		}
 		b.sendGarminReply(s, m, "Metrobot AI isn't configured right now.")
 		return
 	}
-	if !b.waitForGarminAICooldown(m.Author.ID) {
+	if !ambient && !b.waitForGarminAICooldown(m.Author.ID) {
 		b.sendGarminReply(s, m, "i'm still rate limited, try again in a sec.")
 		return
 	}
@@ -61,6 +72,9 @@ func (b *Bot) handleGarminAIWithMode(s *discordgo.Session, m *discordgo.MessageC
 	case b.garminAISlots <- struct{}{}:
 		defer func() { <-b.garminAISlots }()
 	default:
+		if ambient {
+			return
+		}
 		b.sendGarminReply(s, m, "I'm busy right now. Try again in a moment.")
 		return
 	}
@@ -70,23 +84,45 @@ func (b *Bot) handleGarminAIWithMode(s *discordgo.Session, m *discordgo.MessageC
 	ctx, cancel := context.WithTimeout(context.Background(), garminAITimeout)
 	defer cancel()
 
-	result, err := b.runGarminAIWithMode(ctx, s, m, messages, ambient)
+	result, err := b.runGarminAIWithMode(ctx, s, m, messages, ambient, ambientToken)
 	if err != nil {
 		b.Logger.Error("Metrobot AI request failed", zap.String("user", m.Author.ID), zap.Error(err))
+		if ambient {
+			return
+		}
 		b.sendGarminReply(s, m, "I couldn't answer that right now. Try again in a moment.")
 		return
 	}
 	if result.Silent {
 		if result.Interacted {
-			b.rememberGarminAIUserContext(m, messages)
+			if ambient {
+				b.rememberGarminAmbientUserContext(m, messages, ambientToken)
+			} else {
+				b.rememberGarminAIUserContext(m, messages)
+			}
 		}
+		return
+	}
+	if ambient && !b.garminAIAmbientRequestActive(m, ambientToken) {
+		return
+	}
+	if strings.TrimSpace(result.Answer) == "" {
+		if ambient {
+			return
+		}
+		b.sendGarminReply(s, m, "I couldn't produce a useful answer for that.")
 		return
 	}
 	result.Answer = enforceGarminChannelReply(m.ChannelID, result.Answer)
 
-	reply := b.sendGarminReply(s, m, formatAndTruncateGarminAIResult(result))
-	if reply != nil {
-		conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: result.Answer})
+	conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: result.Answer})
+	var reply *discordgo.Message
+	if ambient {
+		reply = b.sendGarminAmbientReply(s, m, formatAndTruncateGarminAIResult(result), conversation, ambientToken)
+	} else {
+		reply = b.sendGarminReply(s, m, formatAndTruncateGarminAIResult(result))
+	}
+	if reply != nil && !ambient {
 		b.rememberGarminAIContext(reply.ID, m, conversation)
 	}
 }
@@ -129,7 +165,8 @@ func garminRefusalAnswer(answer string) bool {
 	answer = strings.TrimSpace(answer)
 	return containsAnyGarminPhrase(answer,
 		"i can't do that", "i cant do that", "can't help with that", "cant help with that",
-		"not doing that", "i won't do that", "i wont do that")
+		"not doing that", "i won't do that", "i wont do that", "won't help", "wont help", "not helping",
+		"not engaging", "keep it civil", "switch to english", "server rules")
 }
 
 func (b *Bot) keepGarminTyping(s *discordgo.Session, channelID string, done <-chan struct{}) {
@@ -170,6 +207,185 @@ func (b *Bot) waitForGarminAICooldown(userID string) bool {
 		}
 	}
 	return false
+}
+
+func (b *Bot) tryBeginGarminAIAmbient(m *discordgo.MessageCreate) uint64 {
+	key := garminAIUserContextKey(m)
+	if key == "" {
+		return 0
+	}
+	now := time.Now()
+	b.garminAIMu.Lock()
+	defer b.garminAIMu.Unlock()
+	if b.garminAIAmbientBusy == nil {
+		b.garminAIAmbientBusy = make(map[string]uint64)
+	}
+	if b.garminAILastUsed == nil {
+		b.garminAILastUsed = make(map[string]time.Time)
+	}
+	if _, busy := b.garminAIAmbientBusy[key]; busy || now.Sub(b.garminAILastUsed[m.Author.ID]) < garminAICooldown {
+		return 0
+	}
+	b.garminAIAmbientSeq++
+	if b.garminAIAmbientSeq == 0 {
+		b.garminAIAmbientSeq++
+	}
+	token := b.garminAIAmbientSeq
+	b.garminAIAmbientBusy[key] = token
+	b.garminAILastUsed[m.Author.ID] = now
+	return token
+}
+
+func (b *Bot) endGarminAIAmbient(m *discordgo.MessageCreate, token uint64) {
+	key := garminAIUserContextKey(m)
+	b.garminAIMu.Lock()
+	if b.garminAIAmbientBusy[key] == token {
+		delete(b.garminAIAmbientBusy, key)
+	}
+	b.garminAIMu.Unlock()
+}
+
+func (b *Bot) cancelGarminAIAmbient(m *discordgo.MessageCreate) {
+	key := garminAIUserContextKey(m)
+	b.garminAIMu.Lock()
+	delete(b.garminAIAmbientBusy, key)
+	b.garminAIMu.Unlock()
+}
+
+func (b *Bot) stopGarminAIAmbient(m *discordgo.MessageCreate, content string) bool {
+	if !containsAnyGarminPhrase(strings.ToLower(content), "shut up", "stop replying", "stop talking", "be quiet", "go away", "leave me alone") {
+		return false
+	}
+	key := garminAIUserContextKey(m)
+	b.garminAIMu.Lock()
+	defer b.garminAIMu.Unlock()
+	context, active := b.garminAIUserContexts[key]
+	if !active || time.Now().After(context.ambientUntil) {
+		return false
+	}
+	delete(b.garminAIUserContexts, key)
+	delete(b.garminAIAmbientBusy, key)
+	return true
+}
+
+func (b *Bot) garminAIAmbientRequestActive(m *discordgo.MessageCreate, token uint64) bool {
+	b.garminAIMu.Lock()
+	defer b.garminAIMu.Unlock()
+	return b.garminAIAmbientRequestActiveLocked(m, token)
+}
+
+func (b *Bot) garminAIAmbientRequestActiveLocked(m *discordgo.MessageCreate, token uint64) bool {
+	key := garminAIUserContextKey(m)
+	context, active := b.garminAIUserContexts[key]
+	return token != 0 && active && b.garminAIAmbientBusy[key] == token && time.Now().Before(context.ambientUntil)
+}
+
+func (b *Bot) sendGarminAmbientReply(s *discordgo.Session, m *discordgo.MessageCreate, content string, conversation []cmd.GarminAIMessage, token uint64) *discordgo.Message {
+	b.garminAIMu.Lock()
+	defer b.garminAIMu.Unlock()
+	if !b.garminAIAmbientRequestActiveLocked(m, token) {
+		return nil
+	}
+	reply := b.sendGarminReply(s, m, content)
+	if reply != nil {
+		b.storeGarminAIContextLocked(reply.ID, m, conversation, time.Now())
+	}
+	return reply
+}
+
+func (b *Bot) addGarminAmbientReactions(s *discordgo.Session, m *discordgo.MessageCreate, reactions []string, token uint64) (bool, error) {
+	b.garminAIMu.Lock()
+	defer b.garminAIMu.Unlock()
+	if !b.garminAIAmbientRequestActiveLocked(m, token) {
+		return false, nil
+	}
+	return addGarminReactions(s, m, reactions)
+}
+
+func garminAIAmbientTargetsOtherUser(s *discordgo.Session, m *discordgo.MessageCreate) bool {
+	if m == nil || m.Message == nil {
+		return false
+	}
+	if m.MentionEveryone || len(m.MentionRoles) > 0 {
+		return true
+	}
+	botID := ""
+	if s != nil && s.State != nil && s.State.User != nil {
+		botID = s.State.User.ID
+	}
+	for _, mention := range m.Mentions {
+		if mention != nil && mention.ID != botID {
+			return true
+		}
+	}
+	return false
+}
+
+func garminAIAmbientTextReplyEligible(s *discordgo.Session, m *discordgo.MessageCreate, content string) bool {
+	if m == nil || m.Message == nil {
+		return false
+	}
+	botID := ""
+	if s != nil && s.State != nil && s.State.User != nil {
+		botID = s.State.User.ID
+	}
+	for _, mention := range m.Mentions {
+		if mention != nil && mention.ID == botID {
+			return true
+		}
+	}
+
+	lower := strings.ToLower(strings.TrimSpace(content))
+	if containsAnyGarminPhrase(lower,
+		"metrobot,", "metrobot:", "hey metrobot", "yo metrobot", "metrobot can", "metrobot could",
+		"metrobot would", "metrobot will", "metrobot what", "metrobot why", "metrobot how") {
+		return true
+	}
+	words := strings.FieldsFunc(lower, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '\''
+	})
+	hasSecondPerson := false
+	for _, word := range words {
+		if word == "you" || word == "your" || word == "yours" || word == "you're" || word == "youre" {
+			hasSecondPerson = true
+			break
+		}
+	}
+	if len(words) > 0 {
+		directQuestion := containsAnyGarminPhrase(words[0],
+			"what", "why", "how", "when", "where", "which", "who", "can", "could", "would", "should", "is", "are", "do", "does", "did")
+		if (strings.HasSuffix(lower, "?") && (directQuestion || hasSecondPerson)) || (hasSecondPerson && directQuestion) {
+			return true
+		}
+	}
+	return containsAnyGarminPhrase(lower, "explain ", "tell me ", "show me ", "go on", "continue", "elaborate")
+}
+
+func (b *Bot) garminAIAmbientFallbackReaction(s *discordgo.Session, m *discordgo.MessageCreate, content string, token uint64) bool {
+	content = strings.TrimSpace(content)
+	if s == nil || m == nil || m.Message == nil || content == "" || strings.Contains(content, "?") || strings.HasSuffix(content, "*") || len([]rune(content)) > 100 {
+		return false
+	}
+	words := strings.Fields(content)
+	if len(words) > 12 || garminAIAmbientTargetsOtherUser(s, m) {
+		return false
+	}
+	lower := strings.ToLower(content)
+	emojiName := ""
+	switch {
+	case containsAnyGarminPhrase(lower, "thanks", "thank you", "nice", "cool", "great", "good", "lovely", "alive", "rejoice", "yay", "let's go", "lets go"):
+		emojiName = "happy"
+	case containsAnyGarminPhrase(lower, "wow", "waow", "interesting", "wild", "damn"):
+		emojiName = "interesting"
+	case containsAnyGarminPhrase(lower, "ok", "okay", "got it", "sure"):
+		emojiName = "thumb"
+	case containsAnyGarminPhrase(lower, "lol", "lmao", "lmfao", "haha", "hehe"):
+		emojiName = "kekw"
+	default:
+		return false
+	}
+	interacted, _ := b.addGarminAmbientReactions(s, m, []string{emojiName}, token)
+	return interacted
 }
 
 func (b *Bot) sendGarminReply(s *discordgo.Session, m *discordgo.MessageCreate, content string) *discordgo.Message {
@@ -344,6 +560,15 @@ func (b *Bot) rememberGarminAIUserContext(m *discordgo.MessageCreate, messages [
 	b.storeGarminAIContext("", m, messages)
 }
 
+func (b *Bot) rememberGarminAmbientUserContext(m *discordgo.MessageCreate, messages []cmd.GarminAIMessage, token uint64) {
+	b.garminAIMu.Lock()
+	defer b.garminAIMu.Unlock()
+	if !b.garminAIAmbientRequestActiveLocked(m, token) {
+		return
+	}
+	b.storeGarminAIContextLocked("", m, messages, time.Now())
+}
+
 func (b *Bot) storeGarminAIContext(messageID string, m *discordgo.MessageCreate, messages []cmd.GarminAIMessage) {
 	userKey := garminAIUserContextKey(m)
 	if userKey == "" {
@@ -357,6 +582,18 @@ func (b *Bot) storeGarminAIContext(messageID string, m *discordgo.MessageCreate,
 	now := time.Now()
 	b.garminAIMu.Lock()
 	defer b.garminAIMu.Unlock()
+	b.storeGarminAIContextLocked(messageID, m, messages, now)
+}
+
+func (b *Bot) storeGarminAIContextLocked(messageID string, m *discordgo.MessageCreate, messages []cmd.GarminAIMessage, now time.Time) {
+	userKey := garminAIUserContextKey(m)
+	if userKey == "" {
+		return
+	}
+	maxMessages := garminAIExchanges * 2
+	if len(messages) > maxMessages {
+		messages = messages[len(messages)-maxMessages:]
+	}
 	if b.garminAIContexts == nil {
 		b.garminAIContexts = make(map[string]garminAIContext)
 	}

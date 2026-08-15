@@ -17,7 +17,7 @@ func TestGetGarminDiscordProfileUsesOnlyDiscordData(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.Contains(r.URL.Path, "/members/"):
-			_, _ = w.Write([]byte(`{"user":{"id":"123456789012345678","username":"target"},"roles":["pronouns"]}`))
+			_, _ = w.Write([]byte(`{"user":{"id":"123456789012345678","username":"target","global_name":"Global Name"},"nick":"Server Name","roles":["pronouns"]}`))
 		case strings.HasSuffix(r.URL.Path, "/roles"):
 			_, _ = w.Write([]byte(`[{"id":"pronouns","name":"she/her"}]`))
 		default:
@@ -37,12 +37,12 @@ func TestGetGarminDiscordProfileUsesOnlyDiscordData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"target", "she/her", "server roles", `"bio":null`} {
+	for _, expected := range []string{"target", "Server Name", "she/her", "server roles", `"bio":null`} {
 		if !strings.Contains(profile, expected) {
 			t.Errorf("Discord profile missing %q: %s", expected, profile)
 		}
 	}
-	for _, removed := range []string{"remembered_info", "user-saved", "personalization"} {
+	for _, removed := range []string{"Global Name", "global_name", "remembered_info", "user-saved", "personalization"} {
 		if strings.Contains(profile, removed) {
 			t.Errorf("Discord profile contains removed field %q: %s", removed, profile)
 		}

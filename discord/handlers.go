@@ -115,6 +115,7 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 
 	content := strings.TrimSpace(m.Content)
 	if prompt, triggered := cmd.ExtractGarminPrompt(content); triggered {
+		b.cancelGarminAIAmbient(m)
 		if b.autoWarnGarminAbuse(s, m, prompt) {
 			return
 		}
@@ -122,6 +123,7 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		return
 	}
 	if messages, continuation := b.garminAIContinuation(m, content); continuation {
+		b.cancelGarminAIAmbient(m)
 		if b.autoWarnGarminAbuse(s, m, content) {
 			return
 		}
@@ -147,11 +149,22 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 
 	matches := chatModPattern.FindStringSubmatch(content)
 	if matches == nil {
+		if garminAIAmbientTargetsOtherUser(s, m) || b.stopGarminAIAmbient(m, content) {
+			return
+		}
 		if messages, active := b.garminAIAmbientContinuation(m, content); active {
-			if b.autoWarnGarminAbuse(s, m, content) {
+			ambientToken := b.tryBeginGarminAIAmbient(m)
+			if ambientToken == 0 {
 				return
 			}
-			go b.handleGarminAIWithMode(s, m, messages, true)
+			if b.autoWarnGarminAbuse(s, m, content) {
+				b.endGarminAIAmbient(m, ambientToken)
+				return
+			}
+			go func() {
+				defer b.endGarminAIAmbient(m, ambientToken)
+				b.handleGarminAIWithMode(s, m, messages, true, ambientToken)
+			}()
 		}
 		return
 	}

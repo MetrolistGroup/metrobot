@@ -35,6 +35,8 @@ type Bot struct {
 	garminAILastUsed     map[string]time.Time
 	garminAIContexts     map[string]garminAIContext
 	garminAIUserContexts map[string]garminAIContext
+	garminAIAmbientBusy  map[string]uint64
+	garminAIAmbientSeq   uint64
 	garminAISlots        chan struct{}
 	TimedBanRestorer     func()
 }
@@ -68,6 +70,7 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		garminAILastUsed:     make(map[string]time.Time),
 		garminAIContexts:     make(map[string]garminAIContext),
 		garminAIUserContexts: make(map[string]garminAIContext),
+		garminAIAmbientBusy:  make(map[string]uint64),
 	}
 	var aiProviders []cmd.GarminAI
 	if len(cfg.OpenRouterAPIKeys) > 0 {

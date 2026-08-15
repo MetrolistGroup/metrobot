@@ -188,6 +188,13 @@ func TestGarminAIContextIsScopedToUserAndChannel(t *testing.T) {
 			t.Fatalf("invalid ambient continuation exposed context: %#v", messages)
 		}
 	}
+	if !bot.stopGarminAIAmbient(ambient, "bor shut up") {
+		t.Fatal("ambient stop request was ignored")
+	}
+	if messages, ok := bot.garminAIAmbientContinuation(ambient, "still there?"); ok || messages != nil {
+		t.Fatalf("ambient context survived stop request: %#v", messages)
+	}
+	bot.rememberGarminAIContext("bot-message-2", original, history)
 
 	key := garminAIUserContextKey(original)
 	context := bot.garminAIUserContexts[key]
@@ -195,6 +202,42 @@ func TestGarminAIContextIsScopedToUserAndChannel(t *testing.T) {
 	bot.garminAIUserContexts[key] = context
 	if messages, ok := bot.garminAIAmbientContinuation(ambient, "too late"); ok || messages != nil {
 		t.Fatalf("expired ambient continuation = (%#v, %v)", messages, ok)
+	}
+	context.ambientUntil = time.Now().Add(time.Minute)
+	bot.garminAIUserContexts[key] = context
+	ambientToken := bot.tryBeginGarminAIAmbient(ambient)
+	if ambientToken == 0 || bot.tryBeginGarminAIAmbient(ambient) != 0 {
+		t.Fatal("ambient single-flight gate did not drop overlap")
+	}
+	bot.endGarminAIAmbient(ambient, ambientToken)
+	if bot.tryBeginGarminAIAmbient(ambient) != 0 {
+		t.Fatal("ambient cooldown did not drop immediate retry")
+	}
+}
+
+func TestGarminAIAmbientReplyPolicy(t *testing.T) {
+	session, err := discordgo.New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.State.User = &discordgo.User{ID: "bot"}
+	message := &discordgo.MessageCreate{Message: &discordgo.Message{Author: &discordgo.User{ID: "user"}}}
+	for content, want := range map[string]bool{
+		"waow":                    false,
+		"LOVELY":                  false,
+		"metrobot is alive again": false,
+		"they*":                   false,
+		"what do you mean?":       true,
+		"can you explain that":    true,
+		"metrobot, are you okay?": true,
+	} {
+		if got := garminAIAmbientTextReplyEligible(session, message, content); got != want {
+			t.Errorf("ambient reply eligibility for %q = %v, want %v", content, got, want)
+		}
+	}
+	message.Mentions = []*discordgo.User{{ID: "other"}}
+	if !garminAIAmbientTargetsOtherUser(session, message) {
+		t.Fatal("ambient message addressing another user was accepted")
 	}
 }
 
@@ -238,10 +281,10 @@ func TestEnforceGarminGeneralReplyDoesNotRedirectRefusalsOrDuplicateBots(t *test
 }
 
 func TestHandleGarminAIDoNotRespond(t *testing.T) {
-	handled, err := handleGarminAIMessageAction(nil, nil, cmd.GarminAIToolCall{Function: cmd.GarminAIFunctionCall{
+	handled, err := (&Bot{}).handleGarminAIMessageAction(nil, nil, cmd.GarminAIToolCall{Function: cmd.GarminAIFunctionCall{
 		Name:      "do_not_respond",
 		Arguments: `{}`,
-	}})
+	}}, 0)
 	if err != nil || !handled {
 		t.Fatalf("do_not_respond = (%v, %v), want handled", handled, err)
 	}

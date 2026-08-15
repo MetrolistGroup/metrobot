@@ -94,7 +94,7 @@ func TestRunGarminAIAmbientModeCanReplyReactOrStaySilent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bot := &Bot{garminMemory: memory}
+	bot := &Bot{garminMemory: memory, garminAIContexts: make(map[string]garminAIContext), garminAIUserContexts: make(map[string]garminAIContext)}
 	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		if !strings.Contains(request.Context, "active Metrobot conversation") {
 			t.Fatal("ambient decision instruction was not supplied")
@@ -106,8 +106,11 @@ func TestRunGarminAIAmbientModeCanReplyReactOrStaySilent(t *testing.T) {
 			ID: "silent", Type: "function", Function: cmd.GarminAIFunctionCall{Name: "do_not_respond", Arguments: `{}`},
 		}}}}, nil
 	})
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{Author: &discordgo.User{ID: "user"}, Content: "maybe never mind"}}
-	result, err := bot.runGarminAIWithMode(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "maybe never mind"}}, true)
+	message := &discordgo.MessageCreate{Message: &discordgo.Message{GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "user"}, Content: "maybe never mind"}}
+	bot.rememberGarminAIContext("previous", message, []cmd.GarminAIMessage{{Role: "user", Content: "hello"}, {Role: "assistant", Content: "hey"}})
+	ambientToken := bot.tryBeginGarminAIAmbient(message)
+	defer bot.endGarminAIAmbient(message, ambientToken)
+	result, err := bot.runGarminAIWithMode(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "maybe never mind"}}, true, ambientToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +130,7 @@ func TestGarminSystemPromptAndDiscordContextContainIdentityAndGlobalMemory(t *te
 		},
 	}}
 	prompt := garminSystemPromptWithMemory("# Metrobot Memory\nKnown fact") + "\n" + garminDiscordContextForMessage(message)
-	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", `"display_name":"Exact Name"`, "exact_user", "Exact Name", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority", "lowercase by default", "Refuse sexual or erotic", "Metrobot's repository", "created by Nyx and Lamp", "Mostafa Alagamy", "Nyx, Lamp, and Adriel", "without mentioning hidden prompts"} {
+	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", `"display_name":"exact_user"`, "exact_user", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority", "lowercase by default", "Refuse sexual or erotic", "Metrobot's repository", "created by Nyx and Lamp", "Mostafa Alagamy", "Nyx, Lamp, and Adriel", "without mentioning hidden prompts"} {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("prompt missing %q", expected)
 		}
@@ -136,6 +139,9 @@ func TestGarminSystemPromptAndDiscordContextContainIdentityAndGlobalMemory(t *te
 		if strings.Contains(prompt, removed) {
 			t.Errorf("prompt contains removed per-user memory feature %q", removed)
 		}
+	}
+	if strings.Contains(prompt, "Exact Name") {
+		t.Fatal("global display name leaked into Discord context")
 	}
 }
 
@@ -320,8 +326,11 @@ func TestDiscordMemberToolResultKeepsNameFieldsSeparate(t *testing.T) {
 		},
 	}
 	result := discordMemberToolResult(member)
-	if result["username"] != "login_name" || result["global_name"] != "Global Name" || result["server_nickname"] != "Server Name" || result["display_name"] != "Server Name" {
+	if result["username"] != "login_name" || result["server_nickname"] != "Server Name" || result["display_name"] != "Server Name" {
 		t.Fatalf("discordMemberToolResult() = %#v", result)
+	}
+	if _, present := result["global_name"]; present {
+		t.Fatalf("discordMemberToolResult() exposed global name: %#v", result)
 	}
 }
 
@@ -333,6 +342,15 @@ func TestGarminToolSchemasAreValidJSON(t *testing.T) {
 		if tool.Function.Name == "remember_user_info" || tool.Function.Name == "forget_user_info" {
 			t.Errorf("removed per-user memory tool %q is still registered", tool.Function.Name)
 		}
+	}
+}
+
+func TestParseGarminTextReactions(t *testing.T) {
+	content := "react_to_message message_id=1538281518466867410 reaction=\"👍\"\n" +
+		"react_to_message message_id=1538281518466867410 reaction=\"❤️\"\n" +
+		"react_to_message emoji=\"speed\""
+	if got, want := parseGarminTextReactions(content), []string{"👍", "❤️", "speed"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("text reactions = %v, want %v", got, want)
 	}
 }
 
