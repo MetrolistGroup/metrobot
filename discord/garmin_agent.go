@@ -33,15 +33,16 @@ type garminAIResult struct {
 }
 
 type garminToolArgs struct {
-	Query    string   `json:"query"`
-	Name     string   `json:"name"`
-	Channel  string   `json:"channel"`
-	Username string   `json:"username"`
-	UserID   string   `json:"user_id"`
-	Content  string   `json:"content"`
-	Limit    int      `json:"limit"`
-	Emoji    string   `json:"emoji"`
-	Emojis   []string `json:"emojis"`
+	Query      string   `json:"query"`
+	Name       string   `json:"name"`
+	Channel    string   `json:"channel"`
+	Username   string   `json:"username"`
+	UserID     string   `json:"user_id"`
+	Repository string   `json:"repository"`
+	Content    string   `json:"content"`
+	Limit      int      `json:"limit"`
+	Emoji      string   `json:"emoji"`
+	Emojis     []string `json:"emojis"`
 }
 
 var (
@@ -282,6 +283,10 @@ func (b *Bot) executeGarminAITool(ctx context.Context, s *discordgo.Session, m *
 		output, err = b.garminGitHub.SearchIssues(ctx, args.Query)
 	case "get_github_user":
 		output, err = b.garminGitHub.User(ctx, args.Username)
+	case "search_github_repositories":
+		output, err = b.garminGitHub.SearchRepositories(ctx, args.Query)
+	case "get_github_repository":
+		output, err = b.garminGitHub.Repository(ctx, args.Repository)
 	case "list_notes":
 		var names []string
 		names, err = b.DB.ListNotes()
@@ -668,6 +673,9 @@ func garminToolsForConversation(messages []cmd.GarminAIMessage, isAdmin, ambient
 		"roadmap", "when", "repository", "github", "issue", "bug", "feature", "download", "apk", "website")
 	wantsGitHubUser := strings.Contains(prompt, "github") && containsAnyGarminPhrase(prompt,
 		"who", "user", "username", "profile", "account", "contributor", "commit")
+	paddedPrompt := " " + prompt + " "
+	wantsGitHubRepository := (containsAnyGarminPhrase(paddedPrompt, " repo ", " repos ", " repository ", " repositories ") || garminHasGitHubRepositoryReference(prompt)) &&
+		containsAnyGarminPhrase(prompt, "github", "search", "find", "look", "show", "describe", "description", "about", "details", "what", "stars", "forks", "language", "topic")
 	wantsDiscordMember := containsAnyGarminPhrase(prompt,
 		"discord member", "discord user", "discord username", "display name", "server nickname", "who is <@")
 	wantsDiscordProfile := !wantsUserMemory && containsAnyGarminPhrase(prompt,
@@ -694,6 +702,8 @@ func garminToolsForConversation(messages []cmd.GarminAIMessage, isAdmin, ambient
 			include = wantsProjectFacts
 		case "get_github_user":
 			include = wantsGitHubUser
+		case "search_github_repositories", "get_github_repository":
+			include = wantsGitHubRepository
 		case "get_discord_member":
 			include = wantsDiscordMember
 		case "search_discord_members":
@@ -708,6 +718,20 @@ func garminToolsForConversation(messages []cmd.GarminAIMessage, isAdmin, ambient
 		}
 	}
 	return selected
+}
+
+func garminHasGitHubRepositoryReference(prompt string) bool {
+	if strings.Contains(prompt, "github.com/") {
+		return true
+	}
+	for _, field := range strings.Fields(prompt) {
+		field = strings.Trim(field, "<>[](){}.,!?;:\"'")
+		parts := strings.Split(field, "/")
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func garminReadableChannelForConversation(messages []cmd.GarminAIMessage) string {
@@ -772,9 +796,11 @@ var garminAITools = []cmd.GarminAITool{
 	garminTool("get_metrolist_status", "Get live Metrolist repository status, latest release, and recent commits. Use for current project status, activity, versions, and releases.", `{"type":"object","properties":{},"additionalProperties":false}`),
 	garminTool("search_metrolist_issues", "Search current and past issues in the official Metrolist GitHub repository.", `{"type":"object","properties":{"query":{"type":"string","description":"Short GitHub issue search terms, optionally including is:open or is:closed"}},"required":["query"],"additionalProperties":false}`),
 	garminTool("get_github_user", "Get a public GitHub profile by exact GitHub username. Do not use it to guess which Discord member owns an account.", `{"type":"object","properties":{"username":{"type":"string"}},"required":["username"],"additionalProperties":false}`),
+	garminTool("search_github_repositories", "Search public GitHub repositories using keywords and GitHub search qualifiers. Returns up to eight relevant repositories with descriptions and metadata.", `{"type":"object","properties":{"query":{"type":"string","description":"Repository keywords and optional GitHub qualifiers such as language:kotlin, user:name, org:name, or topic:music"}},"required":["query"],"additionalProperties":false}`),
+	garminTool("get_github_repository", "Get public details and description for an exact GitHub repository. Use owner/name from the user or repository search results.", `{"type":"object","properties":{"repository":{"type":"string","description":"Exact owner/name or github.com repository URL"}},"required":["repository"],"additionalProperties":false}`),
 	garminTool("list_notes", "List every saved Metrobot note name. Use before get_note when the relevant note name is unknown.", `{"type":"object","properties":{},"additionalProperties":false}`),
 	garminTool("get_note", "Read a saved Metrobot note by exact name.", `{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":false}`),
-	garminTool("get_discord_member", "Get exact username, global name, server nickname, and display name for a Discord member ID or mention.", `{"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"],"additionalProperties":false}`),
+	garminTool("get_discord_member", "Get exact account username, server nickname, and server-authoritative display name for a Discord member ID or mention.", `{"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"],"additionalProperties":false}`),
 	garminTool("get_discord_profile", "Get a Discord member's public names, server roles, and role-based pronouns. Discord account About Me bios are not exposed to bots.", `{"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"],"additionalProperties":false}`),
 	garminTool("search_discord_members", "Search server members by the beginning of a username or nickname. Results may be ambiguous, so do not claim a match when several are returned.", `{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}`),
 	garminTool("read_community_channel", "Read recent messages from approved channels: staff shitposts in coolchannel, KMP previews in sneak-peeks, design and feature questions in polls, or Elissa's Minky cat pictures in minky. Optionally search within the latest 100 messages.", `{"type":"object","properties":{"channel":{"type":"string","enum":["coolchannel","sneak-peeks","polls","minky"]},"query":{"type":"string","description":"Optional case-insensitive text to find within the latest 100 messages"},"limit":{"type":"integer","minimum":1,"maximum":25,"description":"Maximum messages to return; defaults to 15"}},"required":["channel"],"additionalProperties":false}`),

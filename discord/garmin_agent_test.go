@@ -179,6 +179,9 @@ func TestGarminToolsForConversationSelectsRelevantTools(t *testing.T) {
 	}{
 		{"what is the latest Metrolist release?", false, []string{"do_not_respond", "get_metrolist_status", "search_metrolist_issues", "load_skill"}},
 		{"what is Nyx's GitHub username?", false, []string{"do_not_respond", "get_github_user"}},
+		{"search GitHub repos for a Kotlin music client", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository"}},
+		{"show details for the facebook/react repository", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository"}},
+		{"what is https://github.com/facebook/react?", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository"}},
 		{"list saved notes", false, []string{"do_not_respond", "list_notes", "get_note"}},
 		{"remember that releases happen on Fridays", true, []string{"do_not_respond", "remember"}},
 		{"remember that releases happen on Fridays", false, []string{"do_not_respond"}},

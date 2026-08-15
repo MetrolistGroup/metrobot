@@ -181,6 +181,149 @@ func (c *AssistantClient) User(ctx context.Context, username string) (string, er
 	return marshalToolResult(user)
 }
 
+func (c *AssistantClient) SearchRepositories(ctx context.Context, query string) (string, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return "", fmt.Errorf("repository search query is required")
+	}
+	lower := strings.ToLower(query)
+	if strings.Contains(lower, "is:private") || strings.Contains(lower, "visibility:private") {
+		return "", fmt.Errorf("private repository search is not allowed")
+	}
+	if !strings.Contains(lower, "is:public") {
+		query += " is:public"
+	}
+	values := url.Values{
+		"q":        {query},
+		"per_page": {"8"},
+	}
+	var search struct {
+		TotalCount        int                `json:"total_count"`
+		IncompleteResults bool               `json:"incomplete_results"`
+		Items             []githubRepository `json:"items"`
+	}
+	if err := c.get(ctx, "/search/repositories?"+values.Encode(), &search); err != nil {
+		return "", err
+	}
+	items := make([]githubRepositoryResult, 0, len(search.Items))
+	for _, repository := range search.Items {
+		if !repository.Private {
+			items = append(items, repository.result())
+		}
+	}
+	return marshalToolResult(struct {
+		TotalCount        int                      `json:"total_count"`
+		IncompleteResults bool                     `json:"incomplete_results"`
+		Items             []githubRepositoryResult `json:"items"`
+	}{search.TotalCount, search.IncompleteResults, items})
+}
+
+func (c *AssistantClient) Repository(ctx context.Context, repository string) (string, error) {
+	owner, name, err := githubRepositoryName(repository, c.owner)
+	if err != nil {
+		return "", err
+	}
+	var result githubRepository
+	if err := c.get(ctx, "/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(name), &result); err != nil {
+		return "", err
+	}
+	if result.Private {
+		return "", fmt.Errorf("private repository details are not allowed")
+	}
+	return marshalToolResult(result.result())
+}
+
+type githubRepository struct {
+	FullName        string     `json:"full_name"`
+	Name            string     `json:"name"`
+	Description     string     `json:"description"`
+	HTMLURL         string     `json:"html_url"`
+	Homepage        string     `json:"homepage"`
+	Language        string     `json:"language"`
+	Topics          []string   `json:"topics"`
+	Visibility      string     `json:"visibility"`
+	Private         bool       `json:"private"`
+	Archived        bool       `json:"archived"`
+	Disabled        bool       `json:"disabled"`
+	Fork            bool       `json:"fork"`
+	DefaultBranch   string     `json:"default_branch"`
+	StargazersCount int        `json:"stargazers_count"`
+	ForksCount      int        `json:"forks_count"`
+	OpenIssuesCount int        `json:"open_issues_count"`
+	CreatedAt       *time.Time `json:"created_at"`
+	UpdatedAt       *time.Time `json:"updated_at"`
+	PushedAt        *time.Time `json:"pushed_at"`
+	Owner           struct {
+		Login string `json:"login"`
+	} `json:"owner"`
+	License *struct {
+		SPDXID string `json:"spdx_id"`
+		Name   string `json:"name"`
+	} `json:"license"`
+}
+
+type githubRepositoryResult struct {
+	FullName      string     `json:"full_name"`
+	Name          string     `json:"name"`
+	Owner         string     `json:"owner"`
+	Description   string     `json:"description"`
+	URL           string     `json:"url"`
+	Homepage      string     `json:"homepage,omitempty"`
+	Language      string     `json:"language,omitempty"`
+	Topics        []string   `json:"topics,omitempty"`
+	Visibility    string     `json:"visibility,omitempty"`
+	Archived      bool       `json:"archived"`
+	Disabled      bool       `json:"disabled"`
+	Fork          bool       `json:"fork"`
+	DefaultBranch string     `json:"default_branch"`
+	Stars         int        `json:"stars"`
+	Forks         int        `json:"forks"`
+	OpenIssues    int        `json:"open_issues"`
+	License       string     `json:"license,omitempty"`
+	CreatedAt     *time.Time `json:"created_at,omitempty"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
+	PushedAt      *time.Time `json:"pushed_at,omitempty"`
+}
+
+func (r githubRepository) result() githubRepositoryResult {
+	license := ""
+	if r.License != nil {
+		license = r.License.SPDXID
+		if license == "" || license == "NOASSERTION" {
+			license = r.License.Name
+		}
+	}
+	return githubRepositoryResult{
+		FullName: r.FullName, Name: r.Name, Owner: r.Owner.Login, Description: r.Description,
+		URL: r.HTMLURL, Homepage: r.Homepage, Language: r.Language, Topics: r.Topics,
+		Visibility: r.Visibility, Archived: r.Archived, Disabled: r.Disabled, Fork: r.Fork,
+		DefaultBranch: r.DefaultBranch, Stars: r.StargazersCount, Forks: r.ForksCount,
+		OpenIssues: r.OpenIssuesCount, License: license, CreatedAt: r.CreatedAt,
+		UpdatedAt: r.UpdatedAt, PushedAt: r.PushedAt,
+	}
+}
+
+func githubRepositoryName(repository, defaultOwner string) (string, string, error) {
+	repository = strings.TrimSpace(repository)
+	if parsed, err := url.Parse(repository); err == nil && parsed.Host != "" {
+		if !strings.EqualFold(parsed.Host, "github.com") && !strings.EqualFold(parsed.Host, "www.github.com") {
+			return "", "", fmt.Errorf("repository URL must use github.com")
+		}
+		repository = parsed.Path
+	}
+	repository = strings.Trim(strings.TrimSpace(repository), "/")
+	repository = strings.TrimSuffix(repository, ".git")
+	parts := strings.Split(repository, "/")
+	if len(parts) == 1 && strings.TrimSpace(defaultOwner) != "" {
+		parts = []string{strings.TrimSpace(defaultOwner), parts[0]}
+	}
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" ||
+		strings.ContainsAny(parts[0]+parts[1], " \t\r\n") {
+		return "", "", fmt.Errorf("repository must be an owner/name or github.com URL")
+	}
+	return parts[0], parts[1], nil
+}
+
 func (c *AssistantClient) get(ctx context.Context, path string, target any) error {
 	status, body, err := c.request(ctx, path, c.token)
 	if err != nil {
