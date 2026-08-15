@@ -7,8 +7,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
+	"github.com/MetrolistGroup/metrobot/db"
 	"github.com/MetrolistGroup/metrobot/internal/decancer"
 	"github.com/MetrolistGroup/metrobot/util"
 	"github.com/bwmarrin/discordgo"
@@ -37,6 +39,10 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 
 	if i.Type == discordgo.InteractionApplicationCommandAutocomplete {
 		b.handleAutocomplete(s, i)
+		return
+	}
+	if i.Type == discordgo.InteractionMessageComponent {
+		b.handleGarminMemoryConsent(s, i)
 		return
 	}
 
@@ -134,6 +140,9 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	content = b.garminProcessor.ProcessTrigger(content)
 
 	if noteName := extractNoteName(content); noteName != "" {
+		if m.ChannelID == garminAppSupportID && !garminAppSupportNoteName(noteName) {
+			return
+		}
 		text, err := b.Notes.GetNote(noteName)
 		if err != nil {
 			b.Logger.Debug("note not found", zap.String("note", noteName), zap.Error(err))
@@ -254,7 +263,8 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		"• /note [name] - Show a specific note\n" +
 		"• /addnote [name] [content] - Add a new note (admin only)\n" +
 		"• /editnote [name] [content] - Edit a note (admin only)\n" +
-		"• /delnote [name] - Delete a note (admin only)\n\n" +
+		"• /delnote [name] - Delete a note (admin only)\n" +
+		"• app-support and app-support-* notes are available in #app-support\n\n" +
 		"**Bot Info:**\n" +
 		"• /version [version] - Show release info\n" +
 		"• /latest - Show the latest release\n" +
@@ -276,7 +286,9 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		"• /addadmin [user] - Add a bot admin\n" +
 		"• /removeadmin [user] - Remove a bot admin\n\n" +
 		"**Metrobot AI (admin only):**\n" +
-		"• /memory view|append|replace|clear - Manage persistent AI memory\n\n" +
+		"• /memory view|users|append|replace|clear - Manage persistent AI memory\n\n" +
+		"**Metrobot AI personalization:**\n" +
+		"• /memory personalization [enabled] - Enable or disable your profile memory\n\n" +
 		"**Prefix Commands:**\n" +
 		"Moderation actions can also be triggered via message prefix: !action [user] [args]\n" +
 		"Example: !ban @user spam\n\n" +
@@ -286,6 +298,23 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 func (b *Bot) handleNotes(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	if i.ChannelID == garminAppSupportID {
+		names, err := b.DB.ListNotes()
+		if err != nil {
+			b.Logger.Error("app support notes error", zap.Error(err))
+			respondEphemeral(s, i, "Error listing app-support notes.")
+			return
+		}
+		var text strings.Builder
+		text.WriteString("**Available app-support notes:**\n")
+		for _, name := range names {
+			if garminAppSupportNoteName(name) {
+				fmt.Fprintf(&text, "• `%s`\n", name)
+			}
+		}
+		respondEphemeral(s, i, text.String())
+		return
+	}
 	text, err := b.Notes.ListNotes()
 	if err != nil {
 		b.Logger.Error("notes error", zap.Error(err))
@@ -297,6 +326,10 @@ func (b *Bot) handleNotes(s *discordgo.Session, i *discordgo.InteractionCreate) 
 
 func (b *Bot) handleNote(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, stay bool) {
 	name := opts["name"].StringValue()
+	if i.ChannelID == garminAppSupportID && !garminAppSupportNoteName(name) {
+		respondEphemeral(s, i, "Only app-support notes are available in this channel.")
+		return
+	}
 	text, err := b.Notes.GetNote(name)
 	if err != nil {
 		b.Logger.Error("note error", zap.Error(err))
@@ -625,6 +658,27 @@ func (b *Bot) handleRemoveAdmin(s *discordgo.Session, i *discordgo.InteractionCr
 }
 
 func (b *Bot) handleGarminMemory(s *discordgo.Session, i *discordgo.InteractionCreate, options []*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
+	if len(options) != 1 {
+		respondEphemeral(s, i, "Choose a memory action.")
+		return
+	}
+
+	subcommand := options[0]
+	subopts := optionMap(subcommand.Options)
+	if subcommand.Name == "personalization" {
+		enabled := getOptBool(subopts, "enabled")
+		if err := b.setGarminMemoryConsent("discord", callerID, enabled); err != nil {
+			b.Logger.Error("failed to update Garmin personalization", zap.String("user", callerID), zap.Error(err))
+			respondEphemeral(s, i, "Could not update your personalization preference.")
+			return
+		}
+		if enabled {
+			respondEphemeral(s, i, "Personalization memory enabled. Metrobot retains stable profile details only to personalize future replies. Bot admins can review saved profiles to manage the feature. The data is not sold, used for advertising, or used for profit.")
+		} else {
+			respondEphemeral(s, i, "Personalization memory disabled and your saved profile deleted. Metrobot AI will still work without durable profile memory.")
+		}
+		return
+	}
 	if b.garminMemory == nil {
 		respondEphemeral(s, i, "Metrobot AI is not configured.")
 		return
@@ -633,13 +687,7 @@ func (b *Bot) handleGarminMemory(s *discordgo.Session, i *discordgo.InteractionC
 		respondEphemeral(s, i, "Only admins can manage Metrobot's memory.")
 		return
 	}
-	if len(options) != 1 {
-		respondEphemeral(s, i, "Choose a memory action.")
-		return
-	}
 
-	subcommand := options[0]
-	subopts := optionMap(subcommand.Options)
 	var err error
 	switch subcommand.Name {
 	case "view":
@@ -648,6 +696,20 @@ func (b *Bot) handleGarminMemory(s *discordgo.Session, i *discordgo.InteractionC
 		if err == nil {
 			if responseErr := respondGarminMemory(s, i, memory); responseErr != nil {
 				b.Logger.Error("failed to send Metrobot memory", zap.Error(responseErr))
+			}
+			return
+		}
+	case "users":
+		var memories []db.GarminUserMemoryEntry
+		memories, err = b.DB.ListGarminUserMemories("discord")
+		if err == nil {
+			if len(memories) == 0 {
+				respondEphemeral(s, i, "No saved user memories.")
+				return
+			}
+			if responseErr := respondGarminUserMemories(s, i, memories); responseErr != nil {
+				b.Logger.Error("failed to send Garmin user memories", zap.Error(responseErr))
+				respondEphemeral(s, i, "Could not export saved user memories.")
 			}
 			return
 		}
@@ -674,7 +736,7 @@ func (b *Bot) handleGarminMemory(s *discordgo.Session, i *discordgo.InteractionC
 	}
 
 	b.Logger.Error("Metrobot memory command failed", zap.String("action", subcommand.Name), zap.Error(err))
-	respondEphemeral(s, i, fmt.Sprintf("Could not update Metrobot memory: %s", err))
+	respondEphemeral(s, i, fmt.Sprintf("Could not manage Metrobot memory: %s", err))
 }
 
 func respondGarminMemory(s *discordgo.Session, i *discordgo.InteractionCreate, memory string) error {
@@ -697,6 +759,97 @@ func respondGarminMemory(s *discordgo.Session, i *discordgo.InteractionCreate, m
 			},
 		},
 	})
+}
+
+func respondGarminUserMemories(s *discordgo.Session, i *discordgo.InteractionCreate, memories []db.GarminUserMemoryEntry) error {
+	chunks, err := formatGarminUserMemoryExport(memories)
+	if err != nil {
+		return err
+	}
+	files := make([]*discordgo.File, 0, len(chunks))
+	for index, chunk := range chunks {
+		name := "garmin-user-memories.md"
+		if len(chunks) > 1 {
+			name = fmt.Sprintf("garmin-user-memories-%d.md", index+1)
+		}
+		files = append(files, &discordgo.File{Name: name, ContentType: "text/markdown", Reader: strings.NewReader(chunk)})
+	}
+	return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: fmt.Sprintf("Attached %d saved user memories across %d file(s).", len(memories), len(files)),
+			Flags:   discordgo.MessageFlagsEphemeral | discordgo.MessageFlagsSuppressEmbeds,
+			Files:   files,
+		},
+	})
+}
+
+func formatGarminUserMemoryExport(memories []db.GarminUserMemoryEntry) ([]string, error) {
+	const (
+		header         = "# Garmin User Memories\n"
+		maxFileSize    = 7 * 1024 * 1024
+		maxExportFiles = 10
+	)
+	chunks := make([]string, 0, 1)
+	var content strings.Builder
+	content.WriteString(header)
+	flush := func() error {
+		if len(chunks) == maxExportFiles {
+			return fmt.Errorf("user memory export exceeds Discord's %d-file limit", maxExportFiles)
+		}
+		chunks = append(chunks, content.String())
+		content.Reset()
+		content.WriteString(header)
+		return nil
+	}
+	for _, entry := range memories {
+		var formatted strings.Builder
+		fmt.Fprintf(&formatted, "\n## %s\n- Updated: %s\n", entry.UserID, entry.UpdatedAt.Format(time.RFC3339))
+		if entry.Pronouns != "" {
+			fmt.Fprintf(&formatted, "- Pronouns: %s\n", entry.Pronouns)
+		}
+		if entry.Bio != "" {
+			fmt.Fprintf(&formatted, "- Bio: %s\n", entry.Bio)
+		}
+		if entry.Info != "" {
+			fmt.Fprintf(&formatted, "- Info: %s\n", entry.Info)
+		}
+		remaining := formatted.String()
+		for remaining != "" {
+			available := maxFileSize - content.Len()
+			if available == 0 {
+				if err := flush(); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			if len(remaining) <= available {
+				content.WriteString(remaining)
+				break
+			}
+			cut := min(available, len(remaining))
+			for cut > 0 && !utf8.ValidString(remaining[:cut]) {
+				cut--
+			}
+			if cut == 0 {
+				if err := flush(); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			content.WriteString(remaining[:cut])
+			remaining = remaining[cut:]
+			if err := flush(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if content.Len() > len(header) || len(chunks) == 0 {
+		if err := flush(); err != nil {
+			return nil, err
+		}
+	}
+	return chunks, nil
 }
 
 func (b *Bot) handlePing(s *discordgo.Session, i *discordgo.InteractionCreate) {

@@ -29,12 +29,19 @@ type garminAIContext struct {
 }
 
 func (b *Bot) handleGarminAI(s *discordgo.Session, m *discordgo.MessageCreate, messages []cmd.GarminAIMessage) {
+	if len(messages) == 0 || !garminAIMessageHasInput(messages[len(messages)-1]) {
+		b.sendGarminReply(s, m, "Ask me something after `garmin,`.")
+		return
+	}
+	if m.ChannelID == garminAppSupportID {
+		b.handleGarminAppSupport(s, m, messages)
+		return
+	}
 	if b.garminAI == nil {
 		b.sendGarminReply(s, m, "Metrobot AI isn't configured right now.")
 		return
 	}
-	if len(messages) == 0 || !garminAIMessageHasInput(messages[len(messages)-1]) {
-		b.sendGarminReply(s, m, "Ask me something after `garmin,`.")
+	if b.requireGarminMemoryConsent(s, m) {
 		return
 	}
 	if !b.waitForGarminAICooldown(m.Author.ID) {

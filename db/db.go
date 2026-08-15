@@ -127,6 +127,13 @@ func (d *DB) migrate() error {
 			updated_at INTEGER NOT NULL,
 			PRIMARY KEY (platform, user_id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS garmin_memory_consent (
+			platform       TEXT NOT NULL,
+			user_id        TEXT NOT NULL,
+			memory_enabled INTEGER NOT NULL,
+			updated_at     INTEGER NOT NULL,
+			PRIMARY KEY (platform, user_id)
+		)`,
 	}
 
 	for _, m := range migrations {

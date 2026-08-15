@@ -32,6 +32,7 @@ type Bot struct {
 	garminMemory         *cmd.GarminMemory
 	garminGitHub         *gh.AssistantClient
 	garminAIMu           sync.Mutex
+	garminMemoryMu       sync.Mutex
 	garminAILastUsed     map[string]time.Time
 	garminAIContexts     map[string]garminAIContext
 	garminAIUserContexts map[string]garminAIContext
@@ -52,19 +53,22 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 	session.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsGuildMembers | discordgo.IntentsGuildBans | discordgo.IntentsGuildMessageReactions | discordgo.IntentsMessageContent
 
 	bot := &Bot{
-		Session:         session,
-		Config:          cfg,
-		DB:              database,
-		Logger:          logger.With(zap.String("platform", "discord")),
-		Notes:           notes,
-		Version:         version,
-		Actions:         actions,
-		Moderation:      moderation,
-		Warn:            warn,
-		Admin:           admin,
-		Ping:            ping,
-		Case:            cases,
-		garminProcessor: cmd.NewGarminProcessor(),
+		Session:              session,
+		Config:               cfg,
+		DB:                   database,
+		Logger:               logger.With(zap.String("platform", "discord")),
+		Notes:                notes,
+		Version:              version,
+		Actions:              actions,
+		Moderation:           moderation,
+		Warn:                 warn,
+		Admin:                admin,
+		Ping:                 ping,
+		Case:                 cases,
+		garminProcessor:      cmd.NewGarminProcessor(),
+		garminAILastUsed:     make(map[string]time.Time),
+		garminAIContexts:     make(map[string]garminAIContext),
+		garminAIUserContexts: make(map[string]garminAIContext),
 	}
 	var aiProviders []cmd.GarminAI
 	if len(cfg.OpenRouterAPIKeys) > 0 {
@@ -90,9 +94,6 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		}
 		bot.garminMemory = memory
 		bot.garminGitHub = gh.NewAssistantClient(cfg.GitHubToken, cfg.GitHubOwner, cfg.GitHubRepo)
-		bot.garminAILastUsed = make(map[string]time.Time)
-		bot.garminAIContexts = make(map[string]garminAIContext)
-		bot.garminAIUserContexts = make(map[string]garminAIContext)
 		bot.garminAISlots = make(chan struct{}, 3)
 	}
 
@@ -440,12 +441,30 @@ func (b *Bot) registerCommands() error {
 		},
 		{
 			Name:        "memory",
-			Description: "Manage Metrobot's persistent memory (admin only)",
+			Description: "Manage Metrobot AI memory and personalization",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "view",
 					Description: "View Metrobot's memory",
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "users",
+					Description: "View all saved user memories",
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "personalization",
+					Description: "Enable or disable your personalization memory",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionBoolean,
+							Name:        "enabled",
+							Description: "Allow Metrobot to retain profile details for personalized replies",
+							Required:    true,
+						},
+					},
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,

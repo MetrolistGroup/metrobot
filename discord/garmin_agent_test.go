@@ -3,9 +3,11 @@ package discord
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
@@ -13,6 +15,12 @@ import (
 	"github.com/MetrolistGroup/metrobot/db"
 	"github.com/bwmarrin/discordgo"
 )
+
+type garminAITestFunc func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error)
+
+func (f garminAITestFunc) Complete(ctx context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+	return f(ctx, request)
+}
 
 func TestFormatGarminAIUsage(t *testing.T) {
 	result := &garminAIResult{
@@ -86,8 +94,8 @@ func TestGarminToolsForConversationUsesCurrentPromptOnly(t *testing.T) {
 		{Role: "assistant", Content: "The latest release is v1."},
 		{Role: "user", Content: "let's play 20 questions instead"},
 	}
-	if got := garminToolNames(garminToolsForConversation(messages, false)); !reflect.DeepEqual(got, garminActionToolNames()) {
-		t.Fatalf("casual follow-up tools = %v, want message actions only", got)
+	if got := garminToolNames(garminToolsForConversation(messages, false, true)); !reflect.DeepEqual(got, garminDefaultToolNames()) {
+		t.Fatalf("casual follow-up tools = %v, want default tools", got)
 	}
 }
 
@@ -99,10 +107,17 @@ func TestGarminToolsForConversationSkipsCasualChat(t *testing.T) {
 		"let's play 20 questions",
 	}
 	for _, prompt := range casualPrompts {
-		tools := garminToolsForConversation([]cmd.GarminAIMessage{{Role: "user", Content: prompt}}, true)
-		if got := garminToolNames(tools); !reflect.DeepEqual(got, garminActionToolNames()) {
-			t.Errorf("casual prompt %q received tools %v, want message actions only", prompt, got)
+		tools := garminToolsForConversation([]cmd.GarminAIMessage{{Role: "user", Content: prompt}}, true, true)
+		if got := garminToolNames(tools); !reflect.DeepEqual(got, garminDefaultToolNames()) {
+			t.Errorf("casual prompt %q received tools %v, want default tools", prompt, got)
 		}
+	}
+}
+
+func TestGarminToolsForConversationOmitsMemoryWhenDisabled(t *testing.T) {
+	tools := garminToolsForConversation([]cmd.GarminAIMessage{{Role: "user", Content: "i love cats"}}, false, false)
+	if got := garminToolNames(tools); !reflect.DeepEqual(got, garminActionToolNames()) {
+		t.Fatalf("tools with memory disabled = %v, want message actions only", got)
 	}
 }
 
@@ -112,19 +127,19 @@ func TestGarminToolsForConversationSelectsRelevantTools(t *testing.T) {
 		admin  bool
 		want   []string
 	}{
-		{"what is the latest Metrolist release?", false, []string{"do_not_respond", "get_metrolist_status", "search_metrolist_issues", "load_skill"}},
-		{"what is Nyx's GitHub username?", false, []string{"do_not_respond", "get_github_user"}},
-		{"list saved notes", false, []string{"do_not_respond", "list_notes", "get_note"}},
-		{"remember that releases happen on Fridays", true, []string{"do_not_respond", "remember"}},
-		{"remember that releases happen on Fridays", false, []string{"do_not_respond"}},
+		{"what is the latest Metrolist release?", false, []string{"do_not_respond", "get_metrolist_status", "search_metrolist_issues", "load_skill", "remember_user_info"}},
+		{"what is Nyx's GitHub username?", false, []string{"do_not_respond", "get_github_user", "remember_user_info"}},
+		{"list saved notes", false, []string{"do_not_respond", "list_notes", "get_note", "remember_user_info"}},
+		{"remember that releases happen on Fridays", true, []string{"do_not_respond", "remember", "remember_user_info"}},
+		{"remember that releases happen on Fridays", false, []string{"do_not_respond", "remember_user_info"}},
 		{"remember my pronouns are they/them", false, []string{"do_not_respond", "remember_user_info"}},
-		{"what roles are on <@123456789012345678>'s user profile?", false, []string{"do_not_respond", "get_discord_profile"}},
-		{"what was posted in sneak-peeks?", false, []string{"do_not_respond", "read_community_channel"}},
-		{"show me the latest minky picture", false, []string{"do_not_respond", "read_community_channel"}},
-		{"react to this with thumb", false, []string{"react_to_message", "do_not_respond"}},
+		{"what roles are on <@123456789012345678>'s user profile?", false, []string{"do_not_respond", "get_discord_profile", "remember_user_info"}},
+		{"what was posted in sneak-peeks?", false, []string{"do_not_respond", "read_community_channel", "remember_user_info"}},
+		{"show me the latest minky picture", false, []string{"do_not_respond", "read_community_channel", "remember_user_info"}},
+		{"react to this with thumb", false, []string{"react_to_message", "do_not_respond", "remember_user_info"}},
 	}
 	for _, test := range tests {
-		got := garminToolNames(garminToolsForConversation([]cmd.GarminAIMessage{{Role: "user", Content: test.prompt}}, test.admin))
+		got := garminToolNames(garminToolsForConversation([]cmd.GarminAIMessage{{Role: "user", Content: test.prompt}}, test.admin, true))
 		if !reflect.DeepEqual(got, test.want) {
 			t.Errorf("tools for %q = %v, want %v", test.prompt, got, test.want)
 		}
@@ -150,6 +165,10 @@ func TestGarminReadableChannelForConversation(t *testing.T) {
 
 func garminActionToolNames() []string {
 	return []string{"do_not_respond"}
+}
+
+func garminDefaultToolNames() []string {
+	return []string{"do_not_respond", "remember_user_info"}
 }
 
 func garminToolNames(tools []cmd.GarminAITool) []string {
@@ -207,8 +226,8 @@ func TestGarminDiscordContextIncludesChannelRolesPronounsAndMemory(t *testing.T)
 		Author: &discordgo.User{ID: "123456789012345678", Username: "speaker"},
 		Member: &discordgo.Member{Roles: []string{"role-pronouns", "role-team"}},
 	}}
-	context := (&Bot{}).garminDiscordContextForMessage(session, message, db.GarminUserMemory{Info: "likes cats", Bio: "hello"})
-	for _, expected := range []string{`"name":"general"`, `"name":"they/them"`, `"pronouns":["they/them"]`, "likes cats", "#bots"} {
+	context := (&Bot{}).garminDiscordContextForMessage(session, message, db.GarminUserMemory{Info: "likes cats", Bio: "hello"}, true)
+	for _, expected := range []string{`"name":"general"`, `"name":"they/them"`, `"pronouns":["they/them"]`, `"personalization_memory_enabled":true`, "likes cats", "#bots"} {
 		if !strings.Contains(context, expected) {
 			t.Errorf("context missing %q: %s", expected, context)
 		}
@@ -324,9 +343,12 @@ func TestRememberUserInfoIsDurableAndSelfScoped(t *testing.T) {
 	}
 	defer database.Close()
 	bot := &Bot{DB: database}
+	if err := database.SetGarminMemoryConsent("discord", "123456789012345678", true); err != nil {
+		t.Fatal(err)
+	}
 	call := cmd.GarminAIToolCall{Function: cmd.GarminAIFunctionCall{
 		Name:      "remember_user_info",
-		Arguments: `{"content":"likes cats","pronouns":"they/them","bio":"cat enjoyer"}`,
+		Arguments: `{"category":"pronouns","content":"likes cats","pronouns":"they/them","bio":"cat enjoyer"}`,
 	}}
 	request := func(userID, content string) *discordgo.MessageCreate {
 		return &discordgo.MessageCreate{Message: &discordgo.Message{Author: &discordgo.User{ID: userID}, Content: content}}
@@ -341,11 +363,213 @@ func TestRememberUserInfoIsDurableAndSelfScoped(t *testing.T) {
 		t.Fatalf("saved memory = %#v, %v", memory, err)
 	}
 
-	call.Function.Arguments = `{"user_id":"987654321098765432","content":"not allowed"}`
+	call.Function.Arguments = `{"category":"preference","content":"i prefer dark themes"}`
+	output, _, updated = bot.executeGarminAITool(context.Background(), nil, request("123456789012345678", "garmin, i prefer dark themes"), call)
+	if updated || !strings.Contains(output, `"saved":true`) {
+		t.Fatalf("automatic memory update = (%q, %v)", output, updated)
+	}
+	memory, err = database.GetGarminUserMemory("discord", "123456789012345678")
+	if err != nil || !strings.Contains(memory.Info, "i prefer dark themes") {
+		t.Fatalf("automatic memory = %#v, %v", memory, err)
+	}
+
+	call.Function.Arguments = `{"user_id":"987654321098765432","category":"other","content":"not allowed"}`
 	output, _, updated = bot.executeGarminAITool(context.Background(), nil, request("123456789012345678", "garmin, remember <@987654321098765432>"), call)
 	if updated || !strings.Contains(output, "only change their own memory") {
 		t.Fatalf("cross-user memory update = (%q, %v)", output, updated)
 	}
+
+	if err := database.SetGarminMemoryConsent("discord", "123456789012345678", false); err != nil {
+		t.Fatal(err)
+	}
+	call.Function.Arguments = `{"category":"interest","content":"i like trains"}`
+	output, _, updated = bot.executeGarminAITool(context.Background(), nil, request("123456789012345678", "garmin, i like trains"), call)
+	if updated || !strings.Contains(output, "memory is disabled") {
+		t.Fatalf("disabled memory update = (%q, %v)", output, updated)
+	}
+}
+
+func TestPrepareGarminAutomaticUserMemoryValidatesSourceAndSensitivity(t *testing.T) {
+	got, err := prepareGarminUserMemory(garminToolArgs{
+		Category: "preference", Content: "i prefer dark themes",
+	}, "garmin, i prefer dark themes", false)
+	if err != nil || got.Content != "preference: i prefer dark themes" {
+		t.Fatalf("valid automatic memory = %#v, %v", got, err)
+	}
+	pronouns, err := prepareGarminUserMemory(garminToolArgs{
+		Category: "pronouns", Content: "my pronouns are they/them", Pronouns: "they/them",
+	}, "garmin, my pronouns are they/them", false)
+	if err != nil || pronouns.Pronouns != "they/them" {
+		t.Fatalf("valid automatic pronouns = %#v, %v", pronouns, err)
+	}
+
+	tests := []struct {
+		name    string
+		args    garminToolArgs
+		message string
+	}{
+		{"fabricated summary", garminToolArgs{Category: "interest", Content: "likes cats"}, "garmin, i love cats"},
+		{"unsupported category", garminToolArgs{Category: "other", Content: "i love cats"}, "garmin, i love cats"},
+		{"automatic bio", garminToolArgs{Category: "interest", Content: "i love cats", Bio: "cat fan"}, "garmin, i love cats"},
+		{"no category cue", garminToolArgs{Category: "interest", Content: "cats are nice"}, "garmin, cats are nice"},
+		{"pronouns without field", garminToolArgs{Category: "pronouns", Content: "my pronouns are private"}, "garmin, my pronouns are private"},
+		{"generic role", garminToolArgs{Category: "community_role", Content: "i am a cat"}, "garmin, i am a cat"},
+		{"precise location", garminToolArgs{Category: "preference", Content: "i live in Berlin"}, "garmin, i live in Berlin"},
+		{"email", garminToolArgs{Category: "interest", Content: "i love me@example.com"}, "garmin, i love me@example.com"},
+		{"phone", garminToolArgs{Category: "interest", Content: "i like +1 555 123 4567"}, "garmin, i like +1 555 123 4567"},
+		{"secret token", garminToolArgs{Category: "interest", Content: "i like abcdefghijklmnopqrstuvwxyz1234"}, "garmin, i like abcdefghijklmnopqrstuvwxyz1234"},
+		{"long number", garminToolArgs{Category: "interest", Content: "i like 123456789"}, "garmin, i like 123456789"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := prepareGarminUserMemory(test.args, test.message, false); err == nil {
+				t.Fatal("unsafe automatic memory was accepted")
+			}
+		})
+	}
+	if _, err := prepareGarminUserMemory(garminToolArgs{
+		Category: "other", Content: "my medical diagnosis is private",
+	}, "garmin, remember my medical diagnosis", true); err == nil {
+		t.Fatal("explicit sensitive memory was accepted")
+	}
+}
+
+func TestSuppressGarminAutomaticMemoryDisclosure(t *testing.T) {
+	got := suppressGarminAutomaticMemoryDisclosure("gotcha, i'll remember that. dark themes look great!")
+	if got != "dark themes look great!" {
+		t.Fatalf("suppressed disclosure = %q", got)
+	}
+	if got := suppressGarminAutomaticMemoryDisclosure("i've saved that"); got != "got it." {
+		t.Fatalf("disclosure-only response = %q", got)
+	}
+}
+
+func TestRunGarminAIAutomaticMemoryIsSavedAndNotDisclosed(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	const userID = "123456789012345678"
+	if err := database.SetGarminMemoryConsent("discord", userID, true); err != nil {
+		t.Fatal(err)
+	}
+	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	bot := &Bot{DB: database, garminMemory: memory}
+	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		calls++
+		if calls == 1 {
+			if !containsGarminTool(request.Tools, "remember_user_info") {
+				t.Fatal("automatic memory tool was not supplied")
+			}
+			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{ToolCalls: []cmd.GarminAIToolCall{{
+				ID: "memory", Type: "function", Function: cmd.GarminAIFunctionCall{
+					Name: "remember_user_info", Arguments: `{"category":"preference","content":"i prefer dark themes"}`,
+				},
+			}}}}, nil
+		}
+		if len(request.Messages) == 0 || strings.Contains(request.Messages[len(request.Messages)-1].Content, `"saved":true`) {
+			t.Fatal("automatic save status was exposed to the follow-up model call")
+		}
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "gotcha, i'll remember that. dark themes look great!"}}, nil
+	})
+	message := &discordgo.MessageCreate{Message: &discordgo.Message{
+		Author: &discordgo.User{ID: userID}, Content: "garmin, i prefer dark themes",
+	}}
+	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "i prefer dark themes"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || result.Answer != "dark themes look great!" || result.ToolCalls != 0 || result.MemoryUpdated || !result.AutomaticMemoryTried || !result.AutomaticMemorySaved {
+		t.Fatalf("automatic memory result = %#v after %d calls", result, calls)
+	}
+	saved, err := database.GetGarminUserMemory("discord", userID)
+	if err != nil || !strings.Contains(saved.Info, "preference: i prefer dark themes") {
+		t.Fatalf("saved automatic memory = %#v, %v", saved, err)
+	}
+}
+
+func TestRunGarminAIOmitsUndecidedLegacyProfile(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	const userID = "123456789012345678"
+	if err := database.SetGarminUserMemory("discord", userID, db.GarminUserMemory{Info: "legacy private fact"}); err != nil {
+		t.Fatal(err)
+	}
+	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bot := &Bot{DB: database, garminMemory: memory}
+	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		if strings.Contains(request.Context, "legacy private fact") || containsGarminTool(request.Tools, "remember_user_info") {
+			t.Fatal("undecided legacy memory was supplied to the model")
+		}
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "ok"}}, nil
+	})
+	message := &discordgo.MessageCreate{Message: &discordgo.Message{Author: &discordgo.User{ID: userID}, Content: "garmin, hi"}}
+	if _, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConcurrentGarminUserMemoryUpdatesDoNotLoseFacts(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	const userID = "123456789012345678"
+	if err := database.SetGarminMemoryConsent("discord", userID, true); err != nil {
+		t.Fatal(err)
+	}
+	bot := &Bot{DB: database}
+	message := &discordgo.MessageCreate{Message: &discordgo.Message{
+		Author: &discordgo.User{ID: userID}, Content: "garmin, remember my profile facts",
+	}}
+	const updates = 20
+	var wait sync.WaitGroup
+	errors := make(chan error, updates)
+	for index := range updates {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			_, _, err := bot.rememberGarminUserInfo(message, garminToolArgs{Category: "other", Content: fmt.Sprintf("fact-%d", index)})
+			errors <- err
+		}()
+	}
+	wait.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	saved, err := database.GetGarminUserMemory("discord", userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range updates {
+		if !strings.Contains(saved.Info, fmt.Sprintf("fact-%d", index)) {
+			t.Errorf("saved memory missing fact-%d: %q", index, saved.Info)
+		}
+	}
+}
+
+func containsGarminTool(tools []cmd.GarminAITool, name string) bool {
+	for _, tool := range tools {
+		if tool.Function.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func TestGarminPronounsFromRoles(t *testing.T) {
@@ -357,10 +581,11 @@ func TestGarminPronounsFromRoles(t *testing.T) {
 
 func TestGarminChannelDescriptionsUseResolvedIDs(t *testing.T) {
 	for channelID, expected := range map[string]string{
-		garminGeneralID: "#bots",
-		garminBotsID:    "preferred channel",
-		garminPollsID:   "polls",
-		garminMinkyID:   "Minky",
+		garminGeneralID:    "#bots",
+		garminBotsID:       "preferred channel",
+		garminPollsID:      "polls",
+		garminMinkyID:      "Minky",
+		garminAppSupportID: "support notes",
 	} {
 		if got := garminChannelDescription(channelID); !strings.Contains(got, expected) {
 			t.Errorf("garminChannelDescription(%q) = %q, want substring %q", channelID, got, expected)

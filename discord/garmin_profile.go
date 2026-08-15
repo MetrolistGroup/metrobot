@@ -9,10 +9,11 @@ import (
 )
 
 const (
-	garminNyxID     = "1242567443742986373"
-	garminLampID    = "650805815623680030"
-	garminGeneralID = "1398083750616891465"
-	garminBotsID    = "1423657766622593104"
+	garminNyxID        = "1242567443742986373"
+	garminLampID       = "650805815623680030"
+	garminGeneralID    = "1398083750616891465"
+	garminBotsID       = "1423657766622593104"
+	garminAppSupportID = "1400780694979870732"
 )
 
 var garminOwnerIDs = map[string]struct{}{
@@ -25,17 +26,17 @@ func isGarminOwner(userID string) bool {
 	return ok
 }
 
-func (b *Bot) garminDiscordContextForMessage(s *discordgo.Session, m *discordgo.MessageCreate, memory db.GarminUserMemory) string {
-	return garminDiscordContext(s, m, memory)
+func (b *Bot) garminDiscordContextForMessage(s *discordgo.Session, m *discordgo.MessageCreate, memory db.GarminUserMemory, memoryEnabled bool) string {
+	return garminDiscordContext(s, m, memory, memoryEnabled)
 }
 
 // garminDiscordContextForMessage keeps simple unit tests and callers that do not
 // have a live Discord session working. Production uses the Bot method above.
 func garminDiscordContextForMessage(m *discordgo.MessageCreate) string {
-	return garminDiscordContext(nil, m, db.GarminUserMemory{})
+	return garminDiscordContext(nil, m, db.GarminUserMemory{}, false)
 }
 
-func garminDiscordContext(s *discordgo.Session, m *discordgo.MessageCreate, memory db.GarminUserMemory) string {
+func garminDiscordContext(s *discordgo.Session, m *discordgo.MessageCreate, memory db.GarminUserMemory, memoryEnabled bool) string {
 	displayName := m.Author.GlobalName
 	if displayName == "" {
 		displayName = m.Author.Username
@@ -69,9 +70,10 @@ func garminDiscordContext(s *discordgo.Session, m *discordgo.MessageCreate, memo
 	}
 
 	context := map[string]any{
-		"current_user": author,
-		"channel_id":   m.ChannelID,
-		"guild_id":     m.GuildID,
+		"current_user":                   author,
+		"channel_id":                     m.ChannelID,
+		"guild_id":                       m.GuildID,
+		"personalization_memory_enabled": memoryEnabled,
 	}
 	if !memory.Empty() {
 		profile := map[string]any{}
@@ -160,6 +162,8 @@ func garminChannelDescription(channelID string) string {
 		return "general community chat; Garmin replies should be brief and continued bot chat belongs in #bots"
 	case garminBotsID:
 		return "the preferred channel for normal conversations and commands with bots"
+	case garminAppSupportID:
+		return "Metrolist app support; replies must use saved support notes only"
 	default:
 		return ""
 	}
@@ -221,9 +225,19 @@ func (b *Bot) getGarminDiscordProfile(s *discordgo.Session, requesterID, userID 
 	if err != nil {
 		return "", fmt.Errorf("fetching Discord member: %w", err)
 	}
-	memory, err := b.DB.GetGarminUserMemory("discord", userID)
-	if err != nil {
-		return "", fmt.Errorf("reading user profile memory: %w", err)
+	canViewSavedProfile := requesterID == userID || b.DB.IsAdmin("discord", requesterID, b.Config)
+	var memory db.GarminUserMemory
+	if canViewSavedProfile {
+		consent, consentErr := b.DB.GetGarminMemoryConsent("discord", userID)
+		if consentErr != nil {
+			return "", fmt.Errorf("reading user profile consent: %w", consentErr)
+		}
+		if consent.Enabled {
+			memory, err = b.DB.GetGarminUserMemory("discord", userID)
+		}
+		if err != nil {
+			return "", fmt.Errorf("reading user profile memory: %w", err)
+		}
 	}
 	rolesByID := garminGuildRolesByID(s, b.Config.DiscordGuildID)
 	if len(rolesByID) == 0 {
@@ -257,7 +271,7 @@ func (b *Bot) getGarminDiscordProfile(s *discordgo.Session, requesterID, userID 
 		result["bio"] = nil
 		result["bio_source"] = "Discord's bot API does not expose account About Me bios"
 	}
-	if requesterID == userID || isGarminOwner(requesterID) {
+	if canViewSavedProfile {
 		result["remembered_info"] = memory.Info
 	}
 	return mustJSON(result), nil
