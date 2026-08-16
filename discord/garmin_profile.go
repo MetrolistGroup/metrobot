@@ -68,13 +68,22 @@ func garminDiscordContext(s *discordgo.Session, m *discordgo.MessageCreate) stri
 			"type":    channel.Type,
 			"is_nsfw": channel.NSFW,
 		}
-		if description := garminChannelDescription(channel.ID); description != "" {
+		descriptionID := channel.ID
+		if channel.ParentID == garminGeneralID {
+			descriptionID = garminGeneralID
+		}
+		if description := garminChannelDescription(descriptionID); description != "" {
 			channelContext["community_purpose"] = description
 		}
 		if channel.ParentID != "" {
-			channelContext["category_id"] = channel.ParentID
-			if category := garminCurrentChannel(s, channel.ParentID); category != nil {
-				channelContext["category_name"] = category.Name
+			if parent := garminCurrentChannel(s, channel.ParentID); parent != nil && parent.Type == discordgo.ChannelTypeGuildCategory {
+				channelContext["category_id"] = parent.ID
+				channelContext["category_name"] = parent.Name
+			} else {
+				channelContext["parent_channel_id"] = channel.ParentID
+				if parent != nil {
+					channelContext["parent_channel_name"] = parent.Name
+				}
 			}
 		}
 		context["current_channel"] = channelContext

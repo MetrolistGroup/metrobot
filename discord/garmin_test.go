@@ -268,6 +268,25 @@ func TestEnforceGarminGeneralReplyIsShortAndRedirectsToBots(t *testing.T) {
 	}
 }
 
+func TestEnforceGarminThreadUnderGeneralRedirectsToBots(t *testing.T) {
+	state := discordgo.NewState()
+	if err := state.GuildAdd(&discordgo.Guild{ID: "guild"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ChannelAdd(&discordgo.Channel{ID: garminGeneralID, GuildID: "guild", Name: "general"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ChannelAdd(&discordgo.Channel{ID: "general-thread", GuildID: "guild", ParentID: garminGeneralID, Name: "thread", Type: discordgo.ChannelTypeGuildPublicThread}); err != nil {
+		t.Fatal(err)
+	}
+	session := &discordgo.Session{State: state}
+	got := enforceGarminChannelReply(garminRedirectChannelID(session, "general-thread"), "yeah, sure. what's on your mind?")
+	want := "yeah, sure. continue in <#" + garminBotsID + "> if you wanna chat more."
+	if got != want {
+		t.Fatalf("thread reply = %q, want %q", got, want)
+	}
+}
+
 func TestEnforceGarminGeneralReplyDoesNotRedirectRefusalsOrDuplicateBots(t *testing.T) {
 	for _, answer := range []string{
 		"i can't do that.",

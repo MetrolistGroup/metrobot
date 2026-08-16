@@ -113,7 +113,7 @@ func (b *Bot) handleGarminAIWithMode(s *discordgo.Session, m *discordgo.MessageC
 		b.sendGarminReply(s, m, "I couldn't produce a useful answer for that.")
 		return
 	}
-	result.Answer = enforceGarminChannelReply(m.ChannelID, result.Answer)
+	result.Answer = enforceGarminChannelReply(garminRedirectChannelID(s, m.ChannelID), result.Answer)
 
 	conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: result.Answer})
 	var reply *discordgo.Message
@@ -140,6 +140,16 @@ func enforceGarminChannelReply(channelID, answer string) string {
 		return answer
 	}
 	return strings.TrimSpace(answer) + " continue in <#" + garminBotsID + "> if you wanna chat more."
+}
+
+func garminRedirectChannelID(s *discordgo.Session, channelID string) string {
+	if channelID == garminGeneralID {
+		return channelID
+	}
+	if channel := garminCurrentChannel(s, channelID); channel != nil && channel.ParentID == garminGeneralID {
+		return garminGeneralID
+	}
+	return channelID
 }
 
 func firstGarminSentence(answer string) string {
