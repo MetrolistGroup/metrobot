@@ -46,13 +46,18 @@ type garminToolArgs struct {
 }
 
 var (
-	garminAIControlTokenPattern    = regexp.MustCompile(`<\|[^|>\r\n]{1,64}\|>`)
-	garminAITextToolCallPattern    = regexp.MustCompile(`(?is)<function\s*=\s*[^>\r\n]+>.*?</function\s*>`)
-	garminAITextEmojiPattern       = regexp.MustCompile(`<a?:[A-Za-z0-9_]+:\d+>`)
-	garminAITextShortcodePattern   = regexp.MustCompile(`:[A-Za-z_][A-Za-z0-9_]{1,31}:`)
-	garminAITextReactionPattern    = regexp.MustCompile(`(?im)^\s*react_to_message\b[^\r\n]*\b(?:reaction|emoji)\s*=\s*"([^"\r\n]+)"[^\r\n]*$`)
-	garminAITextActionLinePattern  = regexp.MustCompile(`(?im)^\s*(?:react_to_message|do_not_respond|remember_user_info|forget_user_info)\b[^\r\n]*(?:\r?\n|$)`)
-	garminAIUserMemoryOfferPattern = regexp.MustCompile(`(?i)\b(?:(?:do you want|would you like|want me|should i|shall i|can i|could i|may i)(?:\s+me)?\s+(?:to\s+)?(?:save|store|remember|retain|keep|note)\b|(?:do you want|would you like|want)\s+(?:this|that|it)\s+(?:saved|stored|remembered|retained|kept|noted)\b|(?:let me|how about i|i\s+(?:can|could|will|'ll|would like to|'d like to))\s+(?:save|store|remember|retain|keep|note)\s+(?:this|that|it|your)\b)`)
+	garminAIControlTokenPattern     = regexp.MustCompile(`<\|[^|>\r\n]{1,64}\|>`)
+	garminAITextToolCallPattern     = regexp.MustCompile(`(?is)(?:<function\s*=\s*[^>\r\n]+>.*?</function\s*>|<tool_call\s*>.*?</tool_call\s*>)`)
+	garminAITextRepositoryPattern   = regexp.MustCompile(`(?is)^\s*(search_github_repositories|get_github_repository)\s+(query|repository)\s*[:=]\s*(?:"([^"]+)"|'([^']+)'|(.+?))\s*$`)
+	garminAIXMLRepositoryPattern    = regexp.MustCompile(`(?is)^\s*<function\s*=\s*(search_github_repositories|get_github_repository)\s*>(.*?)</function\s*>\s*$`)
+	garminAIXMLParameterPattern     = regexp.MustCompile(`(?is)<parameter\s*=\s*(query|repository)\s*>\s*(.*?)\s*</parameter\s*>`)
+	garminAITextEmojiPattern        = regexp.MustCompile(`<a?:[A-Za-z0-9_]+:\d+>`)
+	garminAITextShortcodePattern    = regexp.MustCompile(`:[A-Za-z_][A-Za-z0-9_]{1,31}:`)
+	garminAITextReactionPattern     = regexp.MustCompile(`(?im)^\s*react_to_message\b[^\r\n]*\b(?:reaction|emoji)\s*=\s*"([^"\r\n]+)"[^\r\n]*$`)
+	garminAITextActionLinePattern   = regexp.MustCompile(`(?im)^\s*(?:react_to_message|do_not_respond|remember_user_info|forget_user_info|search_github_repositories|get_github_repository)\b[^\r\n]*(?:\r?\n|$)`)
+	garminAIUserMemoryOfferPattern  = regexp.MustCompile(`(?i)\b(?:(?:do you want|would you like|want me|should i|shall i|can i|could i|may i)(?:\s+me)?\s+(?:to\s+)?(?:save|store|remember|retain|keep|note)\b|(?:do you want|would you like|want)\s+(?:this|that|it)\s+(?:saved|stored|remembered|retained|kept|noted)\b|(?:let me|how about i|i\s+(?:can|could|will|'ll|would like to|'d like to))\s+(?:save|store|remember|retain|keep|note)\s+(?:this|that|it|your)\b)`)
+	garminAIInternalToolNamePattern = regexp.MustCompile(`(?i)\b(?:do_not_respond|react_to_message|search_github_repositories|get_github_repository)\b`)
+	garminDNRPattern                = regexp.MustCompile(`(?i)\bdnr\b`)
 )
 
 var garminAIUnicodeReactions = map[string]struct{}{
@@ -105,7 +110,7 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 			}
 		}
 	}
-	for range garminAIMaxToolRounds {
+	for round := range garminAIMaxToolRounds {
 		completion, err := b.garminAI.Complete(ctx, cmd.GarminAIRequest{
 			SystemPrompt: systemPrompt,
 			Context:      discordContext,
@@ -123,8 +128,23 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 
 		assistantMessage := completion.Message
 		assistantMessage.Role = "assistant"
+		parsedTextRepositoryCall := false
+		if len(assistantMessage.ToolCalls) == 0 {
+			if call, ok := parseGarminTextRepositoryToolCall(assistantMessage.Content, fmt.Sprintf("text-repository-%d", round)); ok {
+				parsedTextRepositoryCall = true
+				if garminToolAvailable(tools, call.Function.Name) {
+					assistantMessage.Content = ""
+					assistantMessage.ToolCalls = []cmd.GarminAIToolCall{call}
+				}
+			}
+		}
 		conversation = append(conversation, assistantMessage)
 		if len(assistantMessage.ToolCalls) == 0 {
+			if parsedTextRepositoryCall {
+				result.Silent = true
+				result.Conversation = conversation
+				return result, nil
+			}
 			if garminAITextActionLinePattern.MatchString(assistantMessage.Content) || garminAITextToolCallPattern.MatchString(assistantMessage.Content) || strings.Contains(strings.ToLower(assistantMessage.Content), "<function=") {
 				if reactions := parseGarminTextReactions(assistantMessage.Content); len(reactions) > 0 {
 					if ambient {
@@ -143,6 +163,7 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 				result.Conversation = conversation
 				return result, nil
 			}
+			answer = sanitizeGarminInternalToolDisclosure(garminUserText(messages), answer)
 			if ambient && !garminAIAmbientTextReplyEligible(s, m, garminUserText(messages)) && !garminRefusalAnswer(strings.ToLower(answer)) {
 				result.Interacted = b.garminAIAmbientFallbackReaction(s, m, garminUserText(messages), ambientToken)
 				result.Silent = true
@@ -196,6 +217,134 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 		}
 	}
 	return nil, fmt.Errorf("AI exceeded the tool-call limit")
+}
+
+func parseGarminTextRepositoryToolCall(content, id string) (cmd.GarminAIToolCall, bool) {
+	content = strings.TrimSpace(garminAIControlTokenPattern.ReplaceAllString(content, ""))
+	if strings.HasPrefix(strings.ToLower(content), "<tool_call>") && strings.HasSuffix(strings.ToLower(content), "</tool_call>") {
+		content = strings.TrimSpace(content[len("<tool_call>") : len(content)-len("</tool_call>")])
+	}
+	if strings.HasPrefix(content, "```") && strings.HasSuffix(content, "```") {
+		content = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(content, "```"), "```"))
+		if newline := strings.IndexByte(content, '\n'); newline >= 0 {
+			switch strings.ToLower(strings.TrimSpace(content[:newline])) {
+			case "json", "xml", "tool", "tool_call":
+				content = strings.TrimSpace(content[newline+1:])
+			}
+		}
+	}
+
+	name, argumentName, value := "", "", ""
+	if match := garminAIXMLRepositoryPattern.FindStringSubmatch(content); len(match) == 3 {
+		name = strings.TrimSpace(match[1])
+		if parameter := garminAIXMLParameterPattern.FindStringSubmatch(match[2]); len(parameter) == 3 {
+			argumentName = strings.TrimSpace(parameter[1])
+			value = strings.TrimSpace(parameter[2])
+		}
+	} else if match := garminAITextRepositoryPattern.FindStringSubmatch(content); len(match) == 6 {
+		name = strings.TrimSpace(match[1])
+		argumentName = strings.TrimSpace(match[2])
+		for _, candidate := range match[3:] {
+			if strings.TrimSpace(candidate) != "" {
+				value = strings.TrimSpace(candidate)
+				break
+			}
+		}
+	} else {
+		var textual struct {
+			Name       string          `json:"name"`
+			Arguments  json.RawMessage `json:"arguments"`
+			Query      string          `json:"query"`
+			Repository string          `json:"repository"`
+			Function   *struct {
+				Name      string          `json:"name"`
+				Arguments json.RawMessage `json:"arguments"`
+			} `json:"function"`
+		}
+		if err := json.Unmarshal([]byte(content), &textual); err != nil {
+			return cmd.GarminAIToolCall{}, false
+		}
+		name = strings.TrimSpace(textual.Name)
+		arguments := textual.Arguments
+		if textual.Function != nil {
+			if name == "" {
+				name = strings.TrimSpace(textual.Function.Name)
+			}
+			if len(arguments) == 0 {
+				arguments = textual.Function.Arguments
+			}
+		}
+		value = strings.TrimSpace(textual.Query)
+		argumentName = "query"
+		if value == "" {
+			value = strings.TrimSpace(textual.Repository)
+			argumentName = "repository"
+		}
+		if value == "" && len(arguments) > 0 {
+			var encoded string
+			if json.Unmarshal(arguments, &encoded) == nil {
+				arguments = json.RawMessage(encoded)
+			}
+			var decoded map[string]string
+			if json.Unmarshal(arguments, &decoded) == nil {
+				if value = strings.TrimSpace(decoded["query"]); value != "" {
+					argumentName = "query"
+				} else {
+					value = strings.TrimSpace(decoded["repository"])
+					argumentName = "repository"
+				}
+			}
+		}
+	}
+
+	name = strings.ToLower(strings.TrimSpace(name))
+	argumentName = strings.ToLower(strings.TrimSpace(argumentName))
+	expectedArgument := map[string]string{
+		"search_github_repositories": "query",
+		"get_github_repository":      "repository",
+	}[name]
+	if expectedArgument == "" || argumentName != expectedArgument || value == "" {
+		return cmd.GarminAIToolCall{}, false
+	}
+	arguments, err := json.Marshal(map[string]string{expectedArgument: value})
+	if err != nil {
+		return cmd.GarminAIToolCall{}, false
+	}
+	return cmd.GarminAIToolCall{
+		ID:   id,
+		Type: "function",
+		Function: cmd.GarminAIFunctionCall{
+			Name:      name,
+			Arguments: string(arguments),
+		},
+	}, true
+}
+
+func garminToolAvailable(tools []cmd.GarminAITool, name string) bool {
+	for _, tool := range tools {
+		if tool.Function.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func sanitizeGarminInternalToolDisclosure(prompt, answer string) string {
+	lowerAnswer := strings.ToLower(answer)
+	dnrQuestion := garminDNRPattern.MatchString(prompt)
+	if dnrQuestion && strings.Contains(lowerAnswer, "do not respond") {
+		return `usually, DNR means "do not resuscitate," a medical instruction. context can change what the acronym means.`
+	}
+	disclosesTool := garminAIInternalToolNamePattern.MatchString(answer) ||
+		(strings.Contains(lowerAnswer, "do not respond") && containsAnyGarminPhrase(lowerAnswer,
+			"i use it", "i use that", "used for spam", "spam, bait", "messages that genuinely need no reply", "internal action", "internal tool"))
+	if !disclosesTool {
+		return answer
+	}
+	if dnrQuestion {
+		return `usually, DNR means "do not resuscitate," a medical instruction. context can change what the acronym means.`
+	}
+	return "that's not a public command or feature."
 }
 
 func garminAISilentAnswer(answer string) bool {
@@ -674,8 +823,10 @@ func garminToolsForConversation(messages []cmd.GarminAIMessage, isAdmin, ambient
 	wantsGitHubUser := strings.Contains(prompt, "github") && containsAnyGarminPhrase(prompt,
 		"who", "user", "username", "profile", "account", "contributor", "commit")
 	paddedPrompt := " " + prompt + " "
-	wantsGitHubRepository := (containsAnyGarminPhrase(paddedPrompt, " repo ", " repos ", " repository ", " repositories ") || garminHasGitHubRepositoryReference(prompt)) &&
-		containsAnyGarminPhrase(prompt, "github", "search", "find", "look", "show", "describe", "description", "about", "details", "what", "stars", "forks", "language", "topic")
+	repositorySubject := containsAnyGarminPhrase(paddedPrompt, " repo ", " repos ", " repository ", " repositories ") || garminHasGitHubRepositoryReference(prompt)
+	repositoryAction := containsAnyGarminPhrase(prompt, "github", "search", "find", "look", "show", "describe", "description", "about", "details", "what", "stars", "forks", "language", "topic")
+	githubSearch := strings.Contains(prompt, "github") && containsAnyGarminPhrase(prompt, "search", "find", "look", "browse")
+	wantsGitHubRepository := githubSearch || (repositorySubject && repositoryAction)
 	wantsDiscordMember := containsAnyGarminPhrase(prompt,
 		"discord member", "discord user", "discord username", "display name", "server nickname", "who is <@")
 	wantsDiscordProfile := !wantsUserMemory && containsAnyGarminPhrase(prompt,

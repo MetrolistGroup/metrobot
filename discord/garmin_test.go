@@ -142,7 +142,7 @@ func TestGarminAITriggeredConversationUsesActiveHistory(t *testing.T) {
 	}
 }
 
-func TestGarminAIContextIsScopedToUserAndChannel(t *testing.T) {
+func TestGarminAIContextAllowsReplyParticipantsButScopesAmbientToUser(t *testing.T) {
 	bot := &Bot{
 		garminAI:             &fakeGarminAI{},
 		garminAIContexts:     make(map[string]garminAIContext),
@@ -151,16 +151,23 @@ func TestGarminAIContextIsScopedToUserAndChannel(t *testing.T) {
 	original := &discordgo.MessageCreate{Message: &discordgo.Message{
 		GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "owner"},
 	}}
-	history := []cmd.GarminAIMessage{{Role: "user", Content: "private thread"}, {Role: "assistant", Content: "reply"}}
+	history := []cmd.GarminAIMessage{{Role: "user", Content: "public thread"}, {Role: "assistant", Content: "reply"}}
 	bot.rememberGarminAIContext("bot-message", original, history)
 
+	otherUser := &discordgo.MessageCreate{Message: &discordgo.Message{
+		GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "other"},
+		MessageReference: &discordgo.MessageReference{MessageID: "bot-message"},
+	}}
+	if messages, ok := bot.garminAIContinuation(otherUser, "show me"); !ok || len(messages) != 3 || messages[2].Content != "show me" {
+		t.Fatalf("same-channel participant continuation = (%#v, %v)", messages, ok)
+	}
+
 	for _, attempt := range []*discordgo.MessageCreate{
-		{Message: &discordgo.Message{GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "other"}, MessageReference: &discordgo.MessageReference{MessageID: "bot-message"}}},
 		{Message: &discordgo.Message{GuildID: "guild", ChannelID: "other-channel", Author: &discordgo.User{ID: "owner"}, MessageReference: &discordgo.MessageReference{MessageID: "bot-message"}}},
 		{Message: &discordgo.Message{GuildID: "other-guild", ChannelID: "channel", Author: &discordgo.User{ID: "owner"}, MessageReference: &discordgo.MessageReference{MessageID: "bot-message"}}},
 	} {
 		if messages, ok := bot.garminAIContinuation(attempt, "show me"); ok || messages != nil {
-			t.Fatalf("cross-user/channel reply exposed context: %#v", messages)
+			t.Fatalf("cross-channel/guild reply exposed context: %#v", messages)
 		}
 	}
 

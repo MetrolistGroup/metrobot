@@ -180,6 +180,7 @@ func TestGarminToolsForConversationSelectsRelevantTools(t *testing.T) {
 		{"what is the latest Metrolist release?", false, []string{"do_not_respond", "get_metrolist_status", "search_metrolist_issues", "load_skill"}},
 		{"what is Nyx's GitHub username?", false, []string{"do_not_respond", "get_github_user"}},
 		{"search GitHub repos for a Kotlin music client", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository"}},
+		{"search GitHub for Android music clients", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository"}},
 		{"show details for the facebook/react repository", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository"}},
 		{"what is https://github.com/facebook/react?", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository"}},
 		{"list saved notes", false, []string{"do_not_respond", "list_notes", "get_note"}},
@@ -354,6 +355,47 @@ func TestParseGarminTextReactions(t *testing.T) {
 		"react_to_message emoji=\"speed\""
 	if got, want := parseGarminTextReactions(content), []string{"👍", "❤️", "speed"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("text reactions = %v, want %v", got, want)
+	}
+}
+
+func TestParseGarminTextRepositoryToolCall(t *testing.T) {
+	for name, test := range map[string]struct {
+		content  string
+		toolName string
+		argument string
+		value    string
+	}{
+		"plain": {
+			content: `search_github_repositories query="android music"`, toolName: "search_github_repositories", argument: "query", value: "android music",
+		},
+		"function markup": {
+			content:  "<function=get_github_repository><parameter=repository>MetrolistGroup/Metrolist</parameter></function>",
+			toolName: "get_github_repository", argument: "repository", value: "MetrolistGroup/Metrolist",
+		},
+		"tool-call json": {
+			content:  `<tool_call>{"name":"search_github_repositories","arguments":{"query":"kotlin player"}}</tool_call>`,
+			toolName: "search_github_repositories", argument: "query", value: "kotlin player",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			call, ok := parseGarminTextRepositoryToolCall(test.content, "fallback")
+			if !ok || call.Function.Name != test.toolName {
+				t.Fatalf("parsed call = %#v, %v", call, ok)
+			}
+			var arguments map[string]string
+			if err := json.Unmarshal([]byte(call.Function.Arguments), &arguments); err != nil || arguments[test.argument] != test.value {
+				t.Fatalf("arguments = %#v, %v", arguments, err)
+			}
+		})
+	}
+}
+
+func TestSanitizeGarminInternalToolDisclosure(t *testing.T) {
+	answer := "it means do not respond. i use it for spam, bait, or messages that genuinely need no reply"
+	got := sanitizeGarminInternalToolDisclosure("what does dnr mean", answer)
+	want := `usually, DNR means "do not resuscitate," a medical instruction. context can change what the acronym means.`
+	if got != want {
+		t.Fatalf("sanitized disclosure = %q, want %q", got, want)
 	}
 }
 

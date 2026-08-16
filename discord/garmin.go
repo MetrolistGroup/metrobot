@@ -18,7 +18,7 @@ const (
 	garminAICooldown   = 3 * time.Second
 	garminAIMaxContent = 1900
 	garminAIContextTTL = 2 * time.Hour
-	garminAIAmbientTTL = 10 * time.Minute
+	garminAIAmbientTTL = 2 * time.Minute
 	garminAIContextMax = 500
 	garminAIExchanges  = 8
 	garminAITimeout    = 45 * time.Second
@@ -488,7 +488,7 @@ func (b *Bot) garminAIHistory(m *discordgo.MessageCreate, referenceID string, am
 				delete(b.garminAIContexts, referenceID)
 				return nil, false
 			}
-			if context.userID == m.Author.ID && context.guildID == m.GuildID && context.channelID == m.ChannelID {
+			if context.guildID == m.GuildID && context.channelID == m.ChannelID {
 				return copyGarminAIMessages(context.messages), true
 			}
 		}
