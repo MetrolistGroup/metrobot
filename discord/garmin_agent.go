@@ -52,6 +52,8 @@ var (
 	garminAITextRepositoryPattern   = regexp.MustCompile(`(?is)^\s*(search_github_repositories|get_github_repository)\s+(query|repository)\s*[:=]\s*(?:"([^"]+)"|'([^']+)'|(.+?))\s*$`)
 	garminAIXMLRepositoryPattern    = regexp.MustCompile(`(?is)^\s*<function\s*=\s*(search_github_repositories|get_github_repository)\s*>(.*?)</function\s*>\s*$`)
 	garminAIXMLParameterPattern     = regexp.MustCompile(`(?is)<parameter\s*=\s*(query|repository)\s*>\s*(.*?)\s*</parameter\s*>`)
+	garminAIFencedJSONPattern       = regexp.MustCompile("(?is)```(?:json)?\\s*(\\{.*?\\})\\s*```")
+	garminAITextGitHubAliasPattern  = regexp.MustCompile(`(?i)"tool"\s*:\s*"github_search"`)
 	garminAITextEmojiPattern        = regexp.MustCompile(`<a?:[A-Za-z0-9_]+:\d+>`)
 	garminAITextShortcodePattern    = regexp.MustCompile(`:[A-Za-z_][A-Za-z0-9_]{1,31}:`)
 	garminAITextReactionPattern     = regexp.MustCompile(`(?im)^\s*react_to_message\b[^\r\n]*\b(?:reaction|emoji)\s*=\s*"([^"\r\n]+)"[^\r\n]*$`)
@@ -177,7 +179,7 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 				result.Conversation = conversation
 				return result, nil
 			}
-			if garminAITextActionLinePattern.MatchString(assistantMessage.Content) || garminAITextToolCallPattern.MatchString(assistantMessage.Content) || strings.Contains(strings.ToLower(assistantMessage.Content), "<function=") {
+			if garminAITextActionLinePattern.MatchString(assistantMessage.Content) || garminAITextToolCallPattern.MatchString(assistantMessage.Content) || garminAITextGitHubAliasPattern.MatchString(assistantMessage.Content) || strings.Contains(strings.ToLower(assistantMessage.Content), "<function=") {
 				if reactions := parseGarminTextReactions(assistantMessage.Content); len(reactions) > 0 {
 					if ambient {
 						result.Interacted, _ = b.addGarminAmbientReactions(s, m, reactions, ambientToken)
@@ -270,6 +272,9 @@ func hasGarminReasoning(message cmd.GarminAIMessage) bool {
 
 func parseGarminTextRepositoryToolCall(content, id string) (cmd.GarminAIToolCall, bool) {
 	content = strings.TrimSpace(garminAIControlTokenPattern.ReplaceAllString(content, ""))
+	if match := garminAIFencedJSONPattern.FindStringSubmatch(content); len(match) == 2 {
+		content = strings.TrimSpace(match[1])
+	}
 	if strings.HasPrefix(strings.ToLower(content), "<tool_call>") && strings.HasSuffix(strings.ToLower(content), "</tool_call>") {
 		content = strings.TrimSpace(content[len("<tool_call>") : len(content)-len("</tool_call>")])
 	}
@@ -302,6 +307,7 @@ func parseGarminTextRepositoryToolCall(content, id string) (cmd.GarminAIToolCall
 	} else {
 		var textual struct {
 			Name       string          `json:"name"`
+			Tool       string          `json:"tool"`
 			Arguments  json.RawMessage `json:"arguments"`
 			Query      string          `json:"query"`
 			Repository string          `json:"repository"`
@@ -314,6 +320,9 @@ func parseGarminTextRepositoryToolCall(content, id string) (cmd.GarminAIToolCall
 			return cmd.GarminAIToolCall{}, false
 		}
 		name = strings.TrimSpace(textual.Name)
+		if name == "" {
+			name = strings.TrimSpace(textual.Tool)
+		}
 		arguments := textual.Arguments
 		if textual.Function != nil {
 			if name == "" {
@@ -347,6 +356,9 @@ func parseGarminTextRepositoryToolCall(content, id string) (cmd.GarminAIToolCall
 	}
 
 	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "github_search" {
+		name = "search_github_repositories"
+	}
 	argumentName = strings.ToLower(strings.TrimSpace(argumentName))
 	expectedArgument := map[string]string{
 		"search_github_repositories": "query",

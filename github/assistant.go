@@ -190,6 +190,9 @@ func (c *AssistantClient) SearchRepositories(ctx context.Context, query string) 
 	if strings.Contains(lower, "is:private") || strings.Contains(lower, "visibility:private") {
 		return "", fmt.Errorf("private repository search is not allowed")
 	}
+	if repositorySearchRequestsForks(lower) && !strings.Contains(lower, "fork:") {
+		query += " fork:true"
+	}
 	if !strings.Contains(lower, "is:public") {
 		query += " is:public"
 	}
@@ -216,6 +219,15 @@ func (c *AssistantClient) SearchRepositories(ctx context.Context, query string) 
 		IncompleteResults bool                     `json:"incomplete_results"`
 		Items             []githubRepositoryResult `json:"items"`
 	}{search.TotalCount, search.IncompleteResults, items})
+}
+
+func repositorySearchRequestsForks(query string) bool {
+	for _, term := range strings.Fields(query) {
+		if strings.Trim(term, ".,!?()[]{}") == "forks" {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *AssistantClient) Repository(ctx context.Context, repository string) (string, error) {

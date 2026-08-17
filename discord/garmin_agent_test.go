@@ -157,6 +157,32 @@ func TestRunGarminAIStopsRepositoryToolLoop(t *testing.T) {
 	}
 }
 
+func TestRunGarminAIExecutesTextualGitHubSearchAlias(t *testing.T) {
+	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	bot := &Bot{garminMemory: memory}
+	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		calls++
+		if calls == 1 {
+			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "got it. searching github for metrolist forks now. ```json\n{\n  \"tool\": \"github_search\",\n  \"query\": \"MetrolistGroup Metrolist forks\"\n}\n```"}}, nil
+		}
+		if request.ToolChoice != "none" || request.Messages[len(request.Messages)-1].Role != "tool" {
+			t.Fatalf("tool-result request = %#v", request)
+		}
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "i couldn't reach github for that search."}}, nil
+	})
+	message := &discordgo.MessageCreate{Message: &discordgo.Message{
+		ID: "1", GuildID: "guild", ChannelID: "channel", Content: "i mean its forks or something, just do a github search", Author: &discordgo.User{ID: "user"},
+	}}
+	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: message.Content}})
+	if err != nil || calls != 2 || result.ToolCalls != 1 || result.Answer != "i couldn't reach github for that search." {
+		t.Fatalf("textual search = %#v, calls %d, error %v", result, calls, err)
+	}
+}
+
 func TestRunGarminAIRecoversReasoningOnlyResponse(t *testing.T) {
 	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
 	if err != nil {

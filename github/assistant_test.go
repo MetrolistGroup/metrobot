@@ -92,3 +92,22 @@ func TestAssistantClientSearchesAndGetsPublicRepositories(t *testing.T) {
 		t.Fatalf("requests = %d, want 2", requests)
 	}
 }
+
+func TestAssistantClientIncludesForksWhenRequested(t *testing.T) {
+	var query string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.Query().Get("q")
+		_, _ = w.Write([]byte(`{"total_count":0,"items":[]}`))
+	}))
+	defer server.Close()
+
+	client := NewAssistantClient("", "MetrolistGroup", "Metrolist")
+	client.apiBase = server.URL
+	client.httpClient = server.Client()
+	if _, err := client.SearchRepositories(context.Background(), "MetrolistGroup Metrolist forks"); err != nil {
+		t.Fatalf("SearchRepositories() error = %v", err)
+	}
+	if query != "MetrolistGroup Metrolist forks fork:true is:public" {
+		t.Fatalf("fork search query = %q", query)
+	}
+}
