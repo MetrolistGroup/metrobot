@@ -100,14 +100,16 @@ type GarminAI interface {
 }
 
 type GarminAIRequest struct {
-	SystemPrompt string
-	Context      string
-	Messages     []GarminAIMessage
-	Tools        []GarminAITool
-	ToolChoice   string
+	DisableReasoning bool
+	SystemPrompt     string
+	Context          string
+	Messages         []GarminAIMessage
+	Tools            []GarminAITool
+	ToolChoice       string
 }
 
 type GarminAIMessage struct {
+	Reasoning        string
 	Role             string             `json:"role"`
 	Content          string             `json:"content"`
 	Images           []string           `json:"-"`
@@ -322,18 +324,19 @@ type chatCompletionClient struct {
 }
 
 type chatCompletionRequest struct {
-	Model           string                   `json:"model,omitempty"`
-	Models          []string                 `json:"models,omitempty"`
-	SessionID       string                   `json:"session_id,omitempty"`
-	Messages        []chatMessage            `json:"messages"`
-	Thinking        *chatThinking            `json:"thinking,omitempty"`
-	Reasoning       *chatReasoning           `json:"reasoning,omitempty"`
-	ReasoningEffort string                   `json:"reasoning_effort,omitempty"`
-	Provider        *chatProviderPreferences `json:"provider,omitempty"`
-	MaxTokens       int                      `json:"max_tokens"`
-	Stream          bool                     `json:"stream"`
-	Tools           []GarminAITool           `json:"tools,omitempty"`
-	ToolChoice      string                   `json:"tool_choice,omitempty"`
+	DisableReasoning bool                     `json:"-"`
+	Model            string                   `json:"model,omitempty"`
+	Models           []string                 `json:"models,omitempty"`
+	SessionID        string                   `json:"session_id,omitempty"`
+	Messages         []chatMessage            `json:"messages"`
+	Thinking         *chatThinking            `json:"thinking,omitempty"`
+	Reasoning        *chatReasoning           `json:"reasoning,omitempty"`
+	ReasoningEffort  string                   `json:"reasoning_effort,omitempty"`
+	Provider         *chatProviderPreferences `json:"provider,omitempty"`
+	MaxTokens        int                      `json:"max_tokens"`
+	Stream           bool                     `json:"stream"`
+	Tools            []GarminAITool           `json:"tools,omitempty"`
+	ToolChoice       string                   `json:"tool_choice,omitempty"`
 }
 
 type chatMessage = GarminAIMessage
@@ -425,11 +428,12 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 		messageCapacity++
 	}
 	request := chatCompletionRequest{
-		Model:     c.model,
-		Messages:  make([]chatMessage, 1, messageCapacity),
-		MaxTokens: 160,
-		Stream:    false,
-		Tools:     input.Tools,
+		DisableReasoning: input.DisableReasoning,
+		Model:            c.model,
+		Messages:         make([]chatMessage, 1, messageCapacity),
+		MaxTokens:        160,
+		Stream:           false,
+		Tools:            input.Tools,
 	}
 	if len(input.Tools) > 0 {
 		request.ToolChoice = strings.TrimSpace(input.ToolChoice)
