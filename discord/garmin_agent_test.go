@@ -157,6 +157,35 @@ func TestRunGarminAIStopsRepositoryToolLoop(t *testing.T) {
 	}
 }
 
+func TestRunGarminAIRecoversReasoningOnlyResponse(t *testing.T) {
+	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	bot := &Bot{garminMemory: memory}
+	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		calls++
+		if calls == 1 {
+			if request.DisableReasoning {
+				t.Fatal("initial request disabled reasoning")
+			}
+			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Reasoning: "drafting a greeting"}}, nil
+		}
+		if !request.DisableReasoning || len(request.Tools) != 0 || !strings.Contains(request.Context, "concise final answer") {
+			t.Fatalf("final-answer request = %#v", request)
+		}
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "hey!"}}, nil
+	})
+	message := &discordgo.MessageCreate{Message: &discordgo.Message{
+		ID: "1", GuildID: "guild", ChannelID: "channel", Content: "garmin, hey!", Author: &discordgo.User{ID: "user"},
+	}}
+	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "hey!"}})
+	if err != nil || calls != 2 || result.Answer != "hey!" {
+		t.Fatalf("reasoning recovery = %#v, calls %d, error %v", result, calls, err)
+	}
+}
+
 func TestGarminSystemPromptAndDiscordContextContainIdentityAndGlobalMemory(t *testing.T) {
 	message := &discordgo.MessageCreate{Message: &discordgo.Message{
 		GuildID:   "guild",

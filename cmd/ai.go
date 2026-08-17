@@ -129,6 +129,7 @@ func (m GarminAIMessage) MarshalJSON() ([]byte, error) {
 		Content          any                `json:"content"`
 		ToolCalls        []GarminAIToolCall `json:"tool_calls,omitempty"`
 		ToolCallID       string             `json:"tool_call_id,omitempty"`
+		Reasoning        string             `json:"reasoning,omitempty"`
 		ReasoningContent string             `json:"reasoning_content,omitempty"`
 		ReasoningDetails json.RawMessage    `json:"reasoning_details,omitempty"`
 	}
@@ -162,6 +163,7 @@ func (m GarminAIMessage) MarshalJSON() ([]byte, error) {
 		Content:          content,
 		ToolCalls:        m.ToolCalls,
 		ToolCallID:       m.ToolCallID,
+		Reasoning:        m.Reasoning,
 		ReasoningContent: m.ReasoningContent,
 		ReasoningDetails: m.ReasoningDetails,
 	})
@@ -175,6 +177,7 @@ func (m *GarminAIMessage) UnmarshalJSON(data []byte) error {
 		Content          json.RawMessage    `json:"content"`
 		ToolCalls        []GarminAIToolCall `json:"tool_calls,omitempty"`
 		ToolCallID       string             `json:"tool_call_id,omitempty"`
+		Reasoning        string             `json:"reasoning,omitempty"`
 		ReasoningContent string             `json:"reasoning_content,omitempty"`
 		ReasoningDetails json.RawMessage    `json:"reasoning_details,omitempty"`
 	}
@@ -185,6 +188,7 @@ func (m *GarminAIMessage) UnmarshalJSON(data []byte) error {
 	m.Role = wire.Role
 	m.ToolCalls = wire.ToolCalls
 	m.ToolCallID = wire.ToolCallID
+	m.Reasoning = wire.Reasoning
 	m.ReasoningContent = wire.ReasoningContent
 	m.ReasoningDetails = append(m.ReasoningDetails[:0], wire.ReasoningDetails...)
 	m.Content = ""
@@ -452,6 +456,7 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 			Images:           append([]string(nil), message.Images...),
 			ToolCalls:        message.ToolCalls,
 			ToolCallID:       message.ToolCallID,
+			Reasoning:        message.Reasoning,
 			ReasoningContent: message.ReasoningContent,
 			ReasoningDetails: append(json.RawMessage(nil), message.ReasoningDetails...),
 		})
@@ -576,7 +581,7 @@ func (c *chatCompletionClient) askWithKey(ctx context.Context, payload []byte, k
 	}
 	message := result.Choices[0].Message
 	message.Content = strings.TrimSpace(message.Content)
-	if message.Content == "" && len(message.ToolCalls) == 0 {
+	if message.Content == "" && len(message.ToolCalls) == 0 && strings.TrimSpace(message.Reasoning) == "" && strings.TrimSpace(message.ReasoningContent) == "" && len(message.ReasoningDetails) == 0 {
 		return nil, true, fmt.Errorf("%s returned an empty response", c.provider)
 	}
 

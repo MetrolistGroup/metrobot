@@ -52,6 +52,23 @@ func TestOpenRouterClientUsesCapableRouteByDefault(t *testing.T) {
 	}
 }
 
+func TestOpenRouterClientPreservesReasoningOnlyResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"","reasoning":"drafting a greeting"},"finish_reason":"length"}]}`))
+	}))
+	defer server.Close()
+
+	client := newOpenRouterClient([]string{"key"}, "", server.URL, server.Client())
+	completion, err := client.Complete(context.Background(), GarminAIRequest{Messages: testGarminMessages("hey!")})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	if completion.Message.Content != "" || completion.Message.Reasoning != "drafting a greeting" {
+		t.Fatalf("reasoning-only completion = %#v", completion)
+	}
+}
+
 func TestOpenRouterClientMigratesLegacySolarDefault(t *testing.T) {
 	var request chatCompletionRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

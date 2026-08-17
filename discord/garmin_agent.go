@@ -99,6 +99,7 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 	}
 	repositoryToolRequired := explicitlyTriggered && (garminToolAvailable(tools, "search_github_repositories") || garminToolAvailable(tools, "get_github_repository"))
 	repositoryToolUsed := false
+	finalOnly := false
 	result := &garminAIResult{Skills: make(map[string]struct{})}
 	if channelName := garminReadableChannelForConversation(messages); channelName != "" {
 		channelOutput, channelErr := b.readGarminCommunityChannel(s, channelName, "", 15)
@@ -126,13 +127,22 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 			requestTools = onlyGarminTools(tools, "search_github_repositories", "get_github_repository")
 			toolChoice = "required"
 		}
+		if finalOnly {
+			requestTools = nil
+			toolChoice = ""
+		}
+		requestContext := discordContext
+		if finalOnly {
+			requestContext += "\n\nReturn only the concise final answer now. Do not include reasoning or tool syntax."
+		}
 		started := time.Now()
 		completion, err := b.garminAI.Complete(ctx, cmd.GarminAIRequest{
-			SystemPrompt: systemPrompt,
-			Context:      discordContext,
-			Messages:     conversation,
-			Tools:        requestTools,
-			ToolChoice:   toolChoice,
+			DisableReasoning: finalOnly,
+			SystemPrompt:     systemPrompt,
+			Context:          requestContext,
+			Messages:         conversation,
+			Tools:            requestTools,
+			ToolChoice:       toolChoice,
 		})
 		result.ThinkingDuration += time.Since(started)
 		if err != nil {
@@ -146,6 +156,10 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 
 		assistantMessage := completion.Message
 		assistantMessage.Role = "assistant"
+		if len(assistantMessage.ToolCalls) == 0 && strings.TrimSpace(assistantMessage.Content) == "" && hasGarminReasoning(assistantMessage) && !finalOnly {
+			finalOnly = true
+			continue
+		}
 		parsedTextRepositoryCall := false
 		if len(assistantMessage.ToolCalls) == 0 {
 			if call, ok := parseGarminTextRepositoryToolCall(assistantMessage.Content, fmt.Sprintf("text-repository-%d", round)); ok {
@@ -248,6 +262,10 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 		}
 	}
 	return nil, fmt.Errorf("AI exceeded the tool-call limit")
+}
+
+func hasGarminReasoning(message cmd.GarminAIMessage) bool {
+	return strings.TrimSpace(message.Reasoning) != "" || strings.TrimSpace(message.ReasoningContent) != "" || len(message.ReasoningDetails) > 0
 }
 
 func parseGarminTextRepositoryToolCall(content, id string) (cmd.GarminAIToolCall, bool) {
