@@ -141,9 +141,6 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	content = b.garminProcessor.ProcessTrigger(content)
 
 	if noteName := extractNoteName(content); noteName != "" {
-		if m.ChannelID == garminAppSupportID && !garminAppSupportNoteName(noteName) {
-			return
-		}
 		text, err := b.Notes.GetNote(noteName)
 		if err != nil {
 			b.Logger.Debug("note not found", zap.String("note", noteName), zap.Error(err))
@@ -307,7 +304,7 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		"• /addnote [name] [content] - Add a new note (admin only)\n" +
 		"• /editnote [name] [content] - Edit a note (admin only)\n" +
 		"• /delnote [name] - Delete a note (admin only)\n" +
-		"• app-support and app-support-* notes are available in #app-support\n\n" +
+		"• All saved notes are available in #app-support\n\n" +
 		"**Bot Info:**\n" +
 		"• /version [version] - Show release info\n" +
 		"• /latest - Show the latest release\n" +
@@ -340,23 +337,6 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 func (b *Bot) handleNotes(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	if i.ChannelID == garminAppSupportID {
-		names, err := b.DB.ListNotes()
-		if err != nil {
-			b.Logger.Error("app support notes error", zap.Error(err))
-			respondEphemeral(s, i, "Error listing app-support notes.")
-			return
-		}
-		var text strings.Builder
-		text.WriteString("**Available app-support notes:**\n")
-		for _, name := range names {
-			if garminAppSupportNoteName(name) {
-				fmt.Fprintf(&text, "• `%s`\n", name)
-			}
-		}
-		respondEphemeral(s, i, text.String())
-		return
-	}
 	text, err := b.Notes.ListNotes()
 	if err != nil {
 		b.Logger.Error("notes error", zap.Error(err))
@@ -368,10 +348,6 @@ func (b *Bot) handleNotes(s *discordgo.Session, i *discordgo.InteractionCreate) 
 
 func (b *Bot) handleNote(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, stay bool) {
 	name := opts["name"].StringValue()
-	if i.ChannelID == garminAppSupportID && !garminAppSupportNoteName(name) {
-		respondEphemeral(s, i, "Only app-support notes are available in this channel.")
-		return
-	}
 	text, err := b.Notes.GetNote(name)
 	if err != nil {
 		b.Logger.Error("note error", zap.Error(err))

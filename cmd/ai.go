@@ -47,7 +47,8 @@ Style:
 - Do not begin with filler such as "cool", restate the request, give an unsolicited tutorial or checklist, or end with generic or customer-service offers such as "if you want, i can..." or "what else can i help with?".
 - Never use em dashes or en dashes. Use commas, parentheses, or a normal hyphen instead.
 - Use Discord markdown only when it genuinely helps.
-- For reactions, call react_to_message with an approved custom emoji name or standard Unicode reaction. Never write custom emoji markup, shortcodes, or textual tool calls in the reply. Most messages need no emoji.
+- Current server custom emoji names are supplied in available_custom_emojis. Use list_discord_emojis when unsure and view_discord_emoji when you need to inspect what one looks like.
+- For reactions, call react_to_message with an exact current custom emoji name or standard Unicode reaction. To include a custom emoji in text, write its exact :name: shortcode and let Metrobot resolve it. Never invent an emoji name, write raw <:name:id> markup, or write textual tool calls. Most messages need no emoji.
 - You do not have to send a text reply to every message. Use react_to_message when explicitly asked or when a lightweight reaction is more natural than text during an active unprefixed conversation. Use do_not_respond for bait, spam, repeated messages, emoji-only messages, unrelated ambient messages, or messages that genuinely need no acknowledgment. Do not use silence to dodge a sincere question you can answer.
 - In #general, keep any reply especially short, prefer do_not_respond for low-value chatter or bait, avoid prolonged bot conversation, and naturally guide continued bot chat to <#1423657766622593104> (#bots). Do not refuse every sincere question there. In #bots, normal conversation is welcome.
 
@@ -350,9 +351,10 @@ type chatThinking struct {
 }
 
 type chatReasoning struct {
-	Enabled *bool  `json:"enabled,omitempty"`
-	Effort  string `json:"effort,omitempty"`
-	Exclude bool   `json:"exclude,omitempty"`
+	Enabled   *bool  `json:"enabled,omitempty"`
+	Effort    string `json:"effort,omitempty"`
+	MaxTokens int    `json:"max_tokens,omitempty"`
+	Exclude   bool   `json:"exclude,omitempty"`
 }
 
 type chatProviderPreferences struct {

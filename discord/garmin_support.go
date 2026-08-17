@@ -13,7 +13,7 @@ import (
 
 const (
 	garminAppSupportOnlyReply = "this channel is only for Metrolist app support."
-	garminAppSupportNoNote    = "i don't have that in the saved app-support notes, so i can't answer it here."
+	garminAppSupportNoNote    = "i don't have that in the saved notes, so i can't answer it here."
 )
 
 var garminAppSupportTerms = map[string]struct{}{
@@ -45,9 +45,6 @@ func (b *Bot) runGarminAppSupport(messages []cmd.GarminAIMessage) (*garminAIResu
 	bestContent := ""
 	bestTied := false
 	for _, name := range names {
-		if !garminAppSupportNoteName(name) {
-			continue
-		}
 		content, err := b.Notes.GetNote(name)
 		if err != nil {
 			return nil, fmt.Errorf("reading app support note %q: %w", name, err)
@@ -114,11 +111,6 @@ func (b *Bot) sendGarminAppSupportReply(s *discordgo.Session, m *discordgo.Messa
 		return nil
 	}
 	return reply
-}
-
-func garminAppSupportNoteName(name string) bool {
-	name = strings.ToLower(strings.TrimSpace(name))
-	return name == "app-support" || strings.HasPrefix(name, "app-support-")
 }
 
 func garminAppSupportIntent(content string) bool {

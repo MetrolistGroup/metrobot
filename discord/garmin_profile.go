@@ -60,6 +60,17 @@ func garminDiscordContext(b *Bot, s *discordgo.Session, m *discordgo.MessageCrea
 		"guild_id":         m.GuildID,
 		"current_utc_time": time.Now().UTC().Format("15:04"),
 	}
+	if emojis, err := garminGuildEmojis(s, m.GuildID); err == nil {
+		names := make([]string, 0, len(emojis))
+		for _, emoji := range emojis {
+			if emoji != nil && emoji.ID != "" && emoji.Available {
+				names = append(names, emoji.Name)
+			}
+		}
+		if len(names) > 0 {
+			context["available_custom_emojis"] = names
+		}
+	}
 	if channel := garminCurrentChannel(s, m.ChannelID); channel != nil {
 		channelContext := map[string]any{
 			"id":      channel.ID,

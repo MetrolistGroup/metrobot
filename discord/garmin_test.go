@@ -3,6 +3,7 @@ package discord
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -291,19 +292,60 @@ func TestGarminAIAmbientReplyPolicy(t *testing.T) {
 	}
 }
 
-func TestGarminAIEmojiCatalogContainsAllCurrentGuildEmojis(t *testing.T) {
-	if len(garminAIEmojis) != 46 {
-		t.Fatalf("emoji catalog has %d entries, want 46", len(garminAIEmojis))
+func TestRenderGarminGuildEmojisUsesOnlyLiveAvailableNames(t *testing.T) {
+	state := discordgo.NewState()
+	if err := state.GuildAdd(&discordgo.Guild{ID: "guild", Emojis: []*discordgo.Emoji{
+		{ID: "1", Name: "glup", Available: true},
+		{ID: "2", Name: "soggy~1", Available: true, Animated: true},
+		{ID: "3", Name: "gone", Available: false},
+	}}); err != nil {
+		t.Fatal(err)
 	}
-	for name, emoji := range garminAIEmojis {
-		if emoji.Name != name || emoji.ID == "" || !emoji.Available {
-			t.Errorf("invalid emoji %q: %#v", name, emoji)
-		}
+	session := &discordgo.Session{State: state}
+	got := renderGarminGuildEmojis(session, "guild", "i love :glup: and <:soggy~1:999>, not :gone: or :fake:")
+	want := "i love <:glup:1> and <a:soggy~1:2>, not or"
+	if got != want {
+		t.Fatalf("rendered emojis = %q, want %q", got, want)
 	}
-	for _, name := range []string{"soggy", "thumb", "painfade", "cozystars"} {
-		if _, ok := garminAIEmojis[name]; !ok {
-			t.Errorf("emoji catalog missing %q", name)
-		}
+}
+
+func TestRenderGarminGuildEmojisRefreshesStaleState(t *testing.T) {
+	session, err := discordgo.New("Bot test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.State.GuildAdd(&discordgo.Guild{ID: "guild", Emojis: []*discordgo.Emoji{{ID: "old", Name: "glup", Available: true}}}); err != nil {
+		t.Fatal(err)
+	}
+	session.Client = &http.Client{Transport: garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		body := `[{"id":"new","name":"glup","available":true}]`
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+	})}
+	if got := renderGarminGuildEmojis(session, "guild", ":glup:"); got != "<:glup:new>" {
+		t.Fatalf("refreshed emoji = %q", got)
+	}
+}
+
+func TestGarminEmojiToolsListAndViewLiveGuildEmojis(t *testing.T) {
+	state := discordgo.NewState()
+	if err := state.GuildAdd(&discordgo.Guild{ID: "guild", Emojis: []*discordgo.Emoji{
+		{ID: "1", Name: "glup", Available: true},
+		{ID: "2", Name: "soggy~1", Available: true, Animated: true},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	session := &discordgo.Session{State: state}
+	bot := &Bot{}
+	listed, err := bot.listGarminGuildEmojis(session, "guild")
+	if err != nil || !strings.Contains(listed, `"name":"soggy~1"`) {
+		t.Fatalf("listed emojis = %q, error %v", listed, err)
+	}
+	viewed, err := bot.viewGarminGuildEmoji(session, "guild", "soggy~1")
+	if err != nil || !strings.Contains(viewed, `"image_url":"https://cdn.discordapp.com/emojis/2.gif`) {
+		t.Fatalf("viewed emoji = %q, error %v", viewed, err)
+	}
+	if images := garminAIToolImageURLs("view_discord_emoji", viewed); len(images) != 1 {
+		t.Fatalf("viewed emoji images = %v", images)
 	}
 }
 

@@ -3,6 +3,8 @@ package discord
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -17,6 +19,12 @@ import (
 )
 
 type garminAITestFunc func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error)
+
+type garminRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f garminRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
 
 func (f garminAITestFunc) Complete(ctx context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 	return f(ctx, request)
@@ -78,9 +86,6 @@ func TestNormalizeGarminAIAnswerStripsInternalMarkupAndMemoryOffers(t *testing.T
 	tests := map[string]string{
 		"<|mask_start|>\n\nbased on what i know, your favorite artist is camellia.\n\ndo you want me to save that as a permanent preference?\n\n<|mask_end|>": "based on what i know, your favorite artist is camellia.",
 		"<function=remember_user_info>\n<parameter=category>\ninterest\n</parameter>\n<parameter=content>\ni like beans on toast\n</parameter>\n</function>":  "got it.",
-		"ok\n\n<:hm:1439319659106013294>":           "ok",
-		"ok :hm:":                                   "ok",
-		"ok :unknown_custom_emoji:":                 "ok",
 		"useful. i can store that in your profile.": "useful.",
 		"i can save that for future replies.":       "got it.",
 		"i could save that for later.":              "got it.",
@@ -277,6 +282,7 @@ func TestGarminToolsForConversationSelectsRelevantTools(t *testing.T) {
 		{"show details for the facebook/react repository", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository"}},
 		{"what is https://github.com/facebook/react?", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository"}},
 		{"list saved notes", false, []string{"do_not_respond", "list_notes", "get_note"}},
+		{"show me the playback note", false, []string{"do_not_respond", "list_notes", "get_note"}},
 		{"remember that releases happen on Fridays", true, []string{"do_not_respond", "remember"}},
 		{"remember that releases happen on Fridays", false, []string{"do_not_respond"}},
 		{"remember my pronouns are they/them", false, []string{"do_not_respond"}},
@@ -284,12 +290,39 @@ func TestGarminToolsForConversationSelectsRelevantTools(t *testing.T) {
 		{"what was posted in sneak-peeks?", false, []string{"do_not_respond", "read_community_channel"}},
 		{"show me the latest minky picture", false, []string{"do_not_respond", "read_community_channel"}},
 		{"react to this with thumb", false, []string{"react_to_message", "do_not_respond"}},
+		{"print i love :glup:", false, []string{"list_discord_emojis", "view_discord_emoji", "do_not_respond"}},
 	}
 	for _, test := range tests {
 		got := garminToolNames(garminToolsForConversation([]cmd.GarminAIMessage{{Role: "user", Content: test.prompt}}, test.admin, false))
 		if !reflect.DeepEqual(got, test.want) {
 			t.Errorf("tools for %q = %v, want %v", test.prompt, got, test.want)
 		}
+	}
+}
+
+func TestReadGarminChannelBacklogIncludesImagesAndHonorsCutoff(t *testing.T) {
+	session, err := discordgo.New("Bot test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client = &http.Client{Transport: garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Query().Get("limit") != "20" || request.URL.Query().Get("before") != "200" {
+			t.Fatalf("backlog query = %s", request.URL.RawQuery)
+		}
+		body := `[{"id":"199","channel_id":"channel","content":"new context","author":{"id":"user","username":"user"},"attachments":[{"id":"image","filename":"context.png","content_type":"image/png","url":"https://cdn.example/context.png"}]},{"id":"149","channel_id":"channel","content":"old secret","author":{"id":"old","username":"old"}}]`
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+	})}
+	bot := &Bot{garminContextCutoffs: map[string]string{"channel": "150"}}
+	output, err := bot.readGarminChannelMessages(session, "channel", "200", "", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output, "new context") || strings.Contains(output, "old secret") {
+		t.Fatalf("cutoff-aware backlog = %s", output)
+	}
+	images := garminAIToolImageURLs("read_community_channel", output)
+	if !reflect.DeepEqual(images, []string{"https://cdn.example/context.png"}) {
+		t.Fatalf("backlog images = %v", images)
 	}
 }
 

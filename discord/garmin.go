@@ -2,8 +2,10 @@ package discord
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -21,9 +23,9 @@ const (
 	garminAIContextTTL = 2 * time.Hour
 	garminAIAmbientTTL = 2 * time.Minute
 	garminAIContextMax = 500
-	garminAIExchanges  = 8
+	garminAIExchanges  = 20
 	garminAITimeout    = 45 * time.Second
-	garminAIMaxImages  = 4
+	garminAIMaxImages  = 20
 )
 
 type garminAIContext struct {
@@ -34,6 +36,11 @@ type garminAIContext struct {
 	expiresAt    time.Time
 	ambientUntil time.Time
 }
+
+var (
+	garminAICustomEmojiPattern     = regexp.MustCompile(`<a?:([A-Za-z0-9_~]+):(\d+)>`)
+	garminAICustomShortcodePattern = regexp.MustCompile(`:([A-Za-z_~][A-Za-z0-9_~]{1,63}):`)
+)
 
 func (b *Bot) handleGarminAI(s *discordgo.Session, m *discordgo.MessageCreate, messages []cmd.GarminAIMessage) {
 	b.cancelGarminAIAmbient(m)
@@ -126,11 +133,17 @@ func (b *Bot) handleGarminAIWithMode(s *discordgo.Session, m *discordgo.MessageC
 	}
 	result.Answer = enforceGarminChannelReply(garminRedirectChannelID(s, m.ChannelID), result.Answer)
 
+	renderedAnswer := renderGarminGuildEmojis(s, m.GuildID, result.Answer)
+	if strings.TrimSpace(renderedAnswer) == "" && strings.TrimSpace(result.Answer) != "" {
+		renderedAnswer = "i couldn't find that emoji."
+	}
+	result.Answer = renderedAnswer
 	conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: result.Answer})
+	formatted := formatAndTruncateGarminAIResult(result)
 	if ambient {
-		b.sendGarminAmbientReply(s, m, formatAndTruncateGarminAIResult(result), conversation, ambientToken)
+		b.sendGarminAmbientReply(s, m, formatted, conversation, ambientToken)
 	} else {
-		b.sendGarminReplyAndRememberIfVisible(s, m, formatAndTruncateGarminAIResult(result), conversation)
+		b.sendGarminReplyAndRememberIfVisible(s, m, formatted, conversation)
 	}
 }
 
@@ -785,70 +798,110 @@ func (b *Bot) storeGarminAIContextLocked(messageID string, m *discordgo.MessageC
 	b.garminAIUserContexts[userKey] = context
 }
 
+func addGarminImagesToLatestUser(messages []cmd.GarminAIMessage, imageURLs []string) {
+	if len(imageURLs) == 0 {
+		return
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			messages[i].Images = uniqueGarminAIImageURLs(append(append([]string(nil), messages[i].Images...), imageURLs...), garminAIMaxImages)
+			return
+		}
+	}
+}
+
+func garminAIEmojiByName(s *discordgo.Session, guildID, name string) (*discordgo.Emoji, bool) {
+	emojis, err := garminLiveGuildEmojis(s, guildID)
+	if err != nil {
+		return nil, false
+	}
+	return garminEmojiByName(emojis, name)
+}
+
+func garminLiveGuildEmojis(s *discordgo.Session, guildID string) ([]*discordgo.Emoji, error) {
+	if s != nil && guildID != "" && s.Ratelimiter != nil && s.Client != nil {
+		if emojis, err := s.GuildEmojis(guildID); err == nil {
+			return emojis, nil
+		}
+	}
+	return garminGuildEmojis(s, guildID)
+}
+
+func garminGuildEmojis(s *discordgo.Session, guildID string) ([]*discordgo.Emoji, error) {
+	if s == nil || guildID == "" {
+		return nil, fmt.Errorf("Discord guild emojis are unavailable")
+	}
+	if s.State != nil {
+		if guild, err := s.State.Guild(guildID); err == nil {
+			return guild.Emojis, nil
+		}
+	}
+	if s.Ratelimiter == nil || s.Client == nil {
+		return nil, fmt.Errorf("Discord guild emojis are unavailable")
+	}
+	return s.GuildEmojis(guildID)
+}
+
+func garminEmojiByName(emojis []*discordgo.Emoji, name string) (*discordgo.Emoji, bool) {
+	name = strings.Trim(strings.TrimSpace(name), ":")
+	for _, emoji := range emojis {
+		if emoji != nil && emoji.ID != "" && emoji.Available && strings.EqualFold(emoji.Name, name) {
+			return emoji, true
+		}
+	}
+	return nil, false
+}
+
+func garminEmojiImageURL(emoji *discordgo.Emoji) string {
+	extension := "png"
+	if emoji.Animated {
+		extension = "gif"
+	}
+	return fmt.Sprintf("https://cdn.discordapp.com/emojis/%s.%s?size=128&quality=lossless", emoji.ID, extension)
+}
+
+func renderGarminGuildEmojis(s *discordgo.Session, guildID, answer string) string {
+	if !garminAICustomEmojiPattern.MatchString(answer) && !garminAICustomShortcodePattern.MatchString(answer) {
+		return answer
+	}
+	emojis, err := garminLiveGuildEmojis(s, guildID)
+	if err != nil {
+		answer = garminAICustomEmojiPattern.ReplaceAllString(answer, "")
+		answer = garminAICustomShortcodePattern.ReplaceAllString(answer, "")
+		return strings.TrimSpace(answer)
+	}
+
+	placeholders := make([]string, 0)
+	replaceEmoji := func(name string) string {
+		emoji, ok := garminEmojiByName(emojis, name)
+		if !ok {
+			return ""
+		}
+		placeholder := fmt.Sprintf("\x00GARMIN_EMOJI_%d\x00", len(placeholders))
+		placeholders = append(placeholders, emoji.MessageFormat())
+		return placeholder
+	}
+	answer = garminAICustomEmojiPattern.ReplaceAllStringFunc(answer, func(markup string) string {
+		return replaceEmoji(garminAICustomEmojiPattern.FindStringSubmatch(markup)[1])
+	})
+	answer = garminAICustomShortcodePattern.ReplaceAllStringFunc(answer, func(shortcode string) string {
+		return replaceEmoji(garminAICustomShortcodePattern.FindStringSubmatch(shortcode)[1])
+	})
+	for i, emoji := range placeholders {
+		answer = strings.ReplaceAll(answer, fmt.Sprintf("\x00GARMIN_EMOJI_%d\x00", i), emoji)
+	}
+	for strings.Contains(answer, "  ") {
+		answer = strings.ReplaceAll(answer, "  ", " ")
+	}
+	return strings.TrimSpace(answer)
+}
+
 func copyGarminAIMessages(messages []cmd.GarminAIMessage) []cmd.GarminAIMessage {
 	copied := append([]cmd.GarminAIMessage(nil), messages...)
 	for index := range copied {
 		copied[index].Images = append([]string(nil), copied[index].Images...)
 	}
 	return copied
-}
-
-var garminAIEmojis = map[string]discordgo.Emoji{
-	"painfade":             {ID: "1438530502041665727", Name: "painfade", Animated: true, Available: true},
-	"nosir":                {ID: "1439242164784595055", Name: "nosir", Available: true},
-	"thumbcat":             {ID: "1439308285390880978", Name: "thumbcat", Available: true},
-	"hm":                   {ID: "1439319659106013294", Name: "hm", Available: true},
-	"thonk":                {ID: "1439346894286360607", Name: "thonk", Available: true},
-	"wires":                {ID: "1441063797656911952", Name: "wires", Available: true},
-	"waah":                 {ID: "1444970411707203745", Name: "waah", Available: true},
-	"monkthonk":            {ID: "1464004867759538429", Name: "monkthonk", Available: true},
-	"metrolist":            {ID: "1465017326100545792", Name: "metrolist", Available: true},
-	"bwaa":                 {ID: "1468220355947528202", Name: "bwaa", Available: true},
-	"skullq":               {ID: "1473960170282549320", Name: "skullq", Available: true},
-	"crine":                {ID: "1479034017629339748", Name: "crine", Available: true},
-	"brick":                {ID: "1479204945864556594", Name: "brick", Available: true},
-	"catstare":             {ID: "1479884829427368150", Name: "catstare", Available: true},
-	"speed":                {ID: "1479887846935363644", Name: "speed", Available: true},
-	"horror":               {ID: "1479887944230633512", Name: "horror", Available: true},
-	"interesting":          {ID: "1479889081017041056", Name: "interesting", Available: true},
-	"catfuckyou":           {ID: "1479893113391681687", Name: "catfuckyou", Available: true},
-	"catshake":             {ID: "1479893137806721087", Name: "catshake", Available: true},
-	"thumb":                {ID: "1481187881946058922", Name: "thumb", Available: true},
-	"soggy":                {ID: "1481187936765743134", Name: "soggy", Available: true},
-	"trolley":              {ID: "1481188057985187982", Name: "trolley", Available: true},
-	"steamhappy":           {ID: "1481188123101626549", Name: "steamhappy", Available: true},
-	"colonthree":           {ID: "1481188191104139294", Name: "colonthree", Available: true},
-	"trolleyz":             {ID: "1481188261274587217", Name: "trolleyz", Animated: true, Available: true},
-	"partygopher":          {ID: "1481188463561674882", Name: "partygopher", Animated: true, Available: true},
-	"nyaboom":              {ID: "1481188488107004098", Name: "nyaboom", Available: true},
-	"husker":               {ID: "1481188515894267924", Name: "husker", Available: true},
-	"husk":                 {ID: "1481188537935331520", Name: "husk", Available: true},
-	"hu":                   {ID: "1481188560638836908", Name: "hu", Available: true},
-	"blobcatcozy":          {ID: "1481188609251082322", Name: "blobcatcozy", Available: true},
-	"blobcatmorningcoffee": {ID: "1481188685377699945", Name: "blobcatmorningcoffee", Available: true},
-	"snackstare":           {ID: "1481335353523830794", Name: "snackstare", Available: true},
-	"bleh":                 {ID: "1482478193985192059", Name: "bleh", Available: true},
-	"wavey":                {ID: "1488926226918670489", Name: "wavey", Animated: true, Available: true},
-	"dry":                  {ID: "1489623129503436941", Name: "dry", Available: true},
-	"happy":                {ID: "1489623255571501248", Name: "happy", Animated: true, Available: true},
-	"cathug":               {ID: "1489623318620274789", Name: "cathug", Available: true},
-	"metrolist_tomorrow":   {ID: "1489623377403449354", Name: "metrolist_tomorrow", Available: true},
-	"trolleyzoom":          {ID: "1489623472840773753", Name: "trolleyzoom", Animated: true, Available: true},
-	"kekw":                 {ID: "1492860470816669697", Name: "kekw", Available: true},
-	"folk":                 {ID: "1502640041774678057", Name: "folk", Available: true},
-	"emoji_43":             {ID: "1503113745864458341", Name: "emoji_43", Available: true},
-	"emoji_44":             {ID: "1505946247075467366", Name: "emoji_44", Available: true},
-	"glup":                 {ID: "1526939205476028526", Name: "glup", Available: true},
-	"cozystars":            {ID: "1528858301813494001", Name: "cozystars", Available: true},
-}
-
-func garminAIEmojiByName(_ *discordgo.Session, _ string, name string) *discordgo.Emoji {
-	name = strings.Trim(strings.ToLower(strings.TrimSpace(name)), ":")
-	emoji, ok := garminAIEmojis[name]
-	if !ok {
-		return nil
-	}
-	return &emoji
 }
 
 func truncateGarminAIResponse(content string) string {

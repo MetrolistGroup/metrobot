@@ -32,8 +32,8 @@ func TestOpenRouterClientUsesCapableRouteByDefault(t *testing.T) {
 	if request.Model != openRouterDefaultModel || len(request.Models) != 0 {
 		t.Errorf("model route = (%q, %v), want %q", request.Model, request.Models, openRouterDefaultModel)
 	}
-	if request.Reasoning == nil || request.Reasoning.Enabled != nil || request.Reasoning.Effort != "minimal" || request.Reasoning.Exclude {
-		t.Errorf("reasoning = %#v, want internal minimal reasoning", request.Reasoning)
+	if request.Reasoning == nil || request.Reasoning.Enabled != nil || request.Reasoning.MaxTokens != 32 || request.Reasoning.Exclude {
+		t.Errorf("reasoning = %#v, want internal 32-token reasoning", request.Reasoning)
 	}
 	if request.SessionID != openRouterSessionID {
 		t.Errorf("session ID = %q, want %q", request.SessionID, openRouterSessionID)
@@ -124,7 +124,7 @@ func TestOpenRouterClientMigratesPreviousGPT5NanoDefault(t *testing.T) {
 	if _, err := client.Ask(context.Background(), testGarminMessages("hi")); err != nil {
 		t.Fatalf("Ask() error = %v", err)
 	}
-	if request.Model != openRouterDefaultModel || request.Reasoning == nil || request.Reasoning.Effort != "minimal" || request.Reasoning.Exclude {
+	if request.Model != openRouterDefaultModel || request.Reasoning == nil || request.Reasoning.MaxTokens != 32 || request.Reasoning.Exclude {
 		t.Fatalf("previous default migration = model %q, reasoning %#v", request.Model, request.Reasoning)
 	}
 }

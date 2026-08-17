@@ -12,6 +12,7 @@ import (
 
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/bwmarrin/discordgo"
+	"go.uber.org/zap"
 )
 
 const (
@@ -54,12 +55,10 @@ var (
 	garminAIXMLParameterPattern     = regexp.MustCompile(`(?is)<parameter\s*=\s*(query|repository)\s*>\s*(.*?)\s*</parameter\s*>`)
 	garminAIFencedJSONPattern       = regexp.MustCompile("(?is)```(?:json)?\\s*(\\{.*?\\})\\s*```")
 	garminAITextGitHubAliasPattern  = regexp.MustCompile(`(?i)"tool"\s*:\s*"github_search"`)
-	garminAITextEmojiPattern        = regexp.MustCompile(`<a?:[A-Za-z0-9_]+:\d+>`)
-	garminAITextShortcodePattern    = regexp.MustCompile(`:[A-Za-z_][A-Za-z0-9_]{1,31}:`)
 	garminAITextReactionPattern     = regexp.MustCompile(`(?im)^\s*react_to_message\b[^\r\n]*\b(?:reaction|emoji)\s*=\s*"([^"\r\n]+)"[^\r\n]*$`)
-	garminAITextActionLinePattern   = regexp.MustCompile(`(?im)^\s*(?:react_to_message|do_not_respond|remember_user_info|forget_user_info|search_github_repositories|get_github_repository)\b[^\r\n]*(?:\r?\n|$)`)
+	garminAITextActionLinePattern   = regexp.MustCompile(`(?im)^\s*(?:react_to_message|list_discord_emojis|view_discord_emoji|do_not_respond|remember_user_info|forget_user_info|search_github_repositories|get_github_repository)\b[^\r\n]*(?:\r?\n|$)`)
 	garminAIUserMemoryOfferPattern  = regexp.MustCompile(`(?i)\b(?:(?:do you want|would you like|want me|should i|shall i|can i|could i|may i)(?:\s+me)?\s+(?:to\s+)?(?:save|store|remember|retain|keep|note)\b|(?:do you want|would you like|want)\s+(?:this|that|it)\s+(?:saved|stored|remembered|retained|kept|noted)\b|(?:let me|how about i|i\s+(?:can|could|will|'ll|would like to|'d like to))\s+(?:save|store|remember|retain|keep|note)\s+(?:this|that|it|your)\b)`)
-	garminAIInternalToolNamePattern = regexp.MustCompile(`(?i)\b(?:do_not_respond|react_to_message|search_github_repositories|get_github_repository)\b`)
+	garminAIInternalToolNamePattern = regexp.MustCompile(`(?i)\b(?:do_not_respond|react_to_message|list_discord_emojis|view_discord_emoji|search_github_repositories|get_github_repository)\b`)
 	garminDNRPattern                = regexp.MustCompile(`(?i)\bdnr\b`)
 )
 
@@ -89,11 +88,19 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 		return nil, err
 	}
 	systemPrompt := garminSystemPromptWithMemory(memory)
+	conversation := append([]cmd.GarminAIMessage(nil), copyGarminAIMessages(messages)...)
 	discordContext := b.garminDiscordContextForMessage(s, m)
+	if s != nil {
+		if backlog, err := b.readGarminChannelMessages(s, m.ChannelID, m.ID, "", 20); err == nil {
+			discordContext += "\n\nRecent channel conversation (latest 20 messages before the current message; chronological; may overlap tracked conversation):\n" + backlog
+			addGarminImagesToLatestUser(conversation, garminAIToolImageURLs("read_community_channel", backlog))
+		} else if b.Logger != nil {
+			b.Logger.Debug("failed to load Garmin channel backlog", zap.Error(err), zap.String("channel_id", m.ChannelID))
+		}
+	}
 	if ambient {
 		discordContext += "\n\nThis is an unprefixed message during an active Metrobot conversation. Default to do_not_respond: most ambient channel messages are not for you. Never answer merely because Metrobot is mentioned in the third person. Short reactions or commentary get at most react_to_message. Send text only for a direct follow-up question or clear direct address to you."
 	}
-	conversation := copyGarminAIMessages(messages)
 	tools := garminToolsForConversation(messages, isGarminOwner(m.Author.ID), ambient)
 	_, explicitlyTriggered := cmd.ExtractGarminPrompt(m.Content)
 	if explicitlyTriggered {
@@ -258,7 +265,7 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 		if len(toolImages) > 0 {
 			conversation = append(conversation, cmd.GarminAIMessage{
 				Role:    "user",
-				Content: "these are image attachments from the channel messages returned above. inspect them only when relevant to the user's question.",
+				Content: "these are images returned by the tools above. inspect them only when relevant to the user's question.",
 				Images:  uniqueGarminAIImageURLs(toolImages, garminAIMaxImages),
 			})
 		}
@@ -521,6 +528,38 @@ func parseGarminTextReactions(content string) []string {
 	return reactions
 }
 
+func (b *Bot) listGarminGuildEmojis(s *discordgo.Session, guildID string) (string, error) {
+	emojis, err := garminLiveGuildEmojis(s, guildID)
+	if err != nil {
+		return "", err
+	}
+	items := make([]map[string]any, 0, len(emojis))
+	for _, emoji := range emojis {
+		if emoji == nil || emoji.ID == "" || !emoji.Available {
+			continue
+		}
+		items = append(items, map[string]any{
+			"name":      emoji.Name,
+			"shortcode": ":" + emoji.Name + ":",
+			"animated":  emoji.Animated,
+		})
+	}
+	return mustJSON(map[string]any{"emojis": items}), nil
+}
+
+func (b *Bot) viewGarminGuildEmoji(s *discordgo.Session, guildID, name string) (string, error) {
+	emoji, ok := garminAIEmojiByName(s, guildID, name)
+	if !ok {
+		return "", fmt.Errorf("emoji %q is unavailable", name)
+	}
+	return mustJSON(map[string]any{
+		"name":      emoji.Name,
+		"shortcode": ":" + emoji.Name + ":",
+		"animated":  emoji.Animated,
+		"image_url": garminEmojiImageURL(emoji),
+	}), nil
+}
+
 func addGarminReactions(s *discordgo.Session, m *discordgo.MessageCreate, reactions []string) (bool, error) {
 	if s == nil || m == nil || m.Message == nil {
 		return false, fmt.Errorf("Discord message is unavailable")
@@ -530,7 +569,7 @@ func addGarminReactions(s *discordgo.Session, m *discordgo.MessageCreate, reacti
 		apiName := ""
 		if _, allowed := garminAIUnicodeReactions[reaction]; allowed {
 			apiName = reaction
-		} else if emoji := garminAIEmojiByName(s, m.GuildID, strings.Trim(reaction, ":")); emoji != nil {
+		} else if emoji, ok := garminAIEmojiByName(s, m.GuildID, strings.Trim(reaction, ":")); ok {
 			apiName = emoji.APIName()
 		}
 		if apiName == "" {
@@ -562,6 +601,10 @@ func (b *Bot) executeGarminAITool(ctx context.Context, s *discordgo.Session, m *
 
 	var err error
 	switch call.Function.Name {
+	case "list_discord_emojis":
+		output, err = b.listGarminGuildEmojis(s, m.GuildID)
+	case "view_discord_emoji":
+		output, err = b.viewGarminGuildEmoji(s, m.GuildID, args.Name)
 	case "get_metrolist_status":
 		output, err = b.garminGitHub.ProjectStatus(ctx)
 	case "search_metrolist_issues":
@@ -675,6 +718,19 @@ func (b *Bot) readGarminCommunityChannel(s *discordgo.Session, channelName, quer
 	if !ok {
 		return "", fmt.Errorf("unknown readable channel %q; available channels: coolchannel, sneak-peeks, polls, minky", channelName)
 	}
+	return b.readGarminChannelMessages(s, channelID, "", query, limit)
+}
+
+func (b *Bot) readGarminChannelMessages(s *discordgo.Session, channelID, beforeID, query string, limit int) (string, error) {
+	if s == nil {
+		return "", fmt.Errorf("Discord session is unavailable")
+	}
+	channelName := channelID
+	if s.State != nil {
+		if channel, err := s.State.Channel(channelID); err == nil && channel.Name != "" {
+			channelName = channel.Name
+		}
+	}
 	if limit <= 0 {
 		limit = 15
 	}
@@ -686,7 +742,7 @@ func (b *Bot) readGarminCommunityChannel(s *discordgo.Session, channelName, quer
 	if query != "" {
 		fetchLimit = 100
 	}
-	messages, err := s.ChannelMessages(channelID, fetchLimit, "", "", "")
+	messages, err := s.ChannelMessages(channelID, fetchLimit, beforeID, "", "")
 	if err != nil {
 		return "", fmt.Errorf("reading %s: %w", channelName, err)
 	}
@@ -813,7 +869,7 @@ func formatGarminAIUsage(result *garminAIResult) string {
 }
 
 func normalizeGarminAIAnswer(answer string) string {
-	hadInternalMarkup := garminAIControlTokenPattern.MatchString(answer) || garminAITextToolCallPattern.MatchString(answer) || garminAITextActionLinePattern.MatchString(answer) || garminAITextEmojiPattern.MatchString(answer) || garminAITextShortcodePattern.MatchString(answer)
+	hadInternalMarkup := garminAIControlTokenPattern.MatchString(answer) || garminAITextToolCallPattern.MatchString(answer) || garminAITextActionLinePattern.MatchString(answer)
 	answer = garminAIControlTokenPattern.ReplaceAllString(answer, "")
 	answer = garminAITextToolCallPattern.ReplaceAllString(answer, "")
 	answer = garminAITextActionLinePattern.ReplaceAllString(answer, "")
@@ -821,8 +877,6 @@ func normalizeGarminAIAnswer(answer string) string {
 		hadInternalMarkup = true
 		answer = answer[:functionStart]
 	}
-	answer = garminAITextEmojiPattern.ReplaceAllString(answer, "")
-	answer = garminAITextShortcodePattern.ReplaceAllString(answer, "")
 	answer = strings.TrimSpace(answer)
 	answer = strings.NewReplacer(" — ", ", ", "—", ",", " – ", " - ", "–", "-").Replace(answer)
 	lines := strings.Split(answer, "\n")
@@ -894,10 +948,11 @@ func toolError(err error) string {
 }
 
 func garminAIToolImageURLs(toolName, output string) []string {
-	if toolName != "read_community_channel" {
+	if toolName != "read_community_channel" && toolName != "view_discord_emoji" {
 		return nil
 	}
 	var result struct {
+		ImageURL string `json:"image_url"`
 		Messages []struct {
 			Attachments []struct {
 				Filename    string `json:"filename"`
@@ -910,6 +965,9 @@ func garminAIToolImageURLs(toolName, output string) []string {
 		return nil
 	}
 	var images []string
+	if strings.HasPrefix(strings.TrimSpace(result.ImageURL), "https://") {
+		images = append(images, result.ImageURL)
+	}
 	for _, message := range result.Messages {
 		for _, attachment := range message.Attachments {
 			if !garminAIImageAttachment(&discordgo.MessageAttachment{
@@ -959,7 +1017,7 @@ func garminToolsForConversation(messages []cmd.GarminAIMessage, isAdmin, ambient
 
 	wantsUserMemory := garminPerUserMemoryRequest(prompt)
 	wantsMemory := isAdmin && garminRememberRequested(prompt) && !wantsUserMemory
-	wantsNotes := containsAnyGarminPhrase(prompt, "saved note", "bot note", "list notes", "get note", "read note")
+	wantsNotes := strings.Contains(prompt, "note")
 	wantsProjectFacts := strings.Contains(prompt, "metrolist") && containsAnyGarminPhrase(prompt,
 		"latest", "release", "version", "update", "status", "maintained", "maintenance", "development",
 		"roadmap", "when", "repository", "github", "issue", "bug", "feature", "download", "apk", "website")
@@ -978,6 +1036,7 @@ func garminToolsForConversation(messages []cmd.GarminAIMessage, isAdmin, ambient
 	wantsProfileSearch := wantsDiscordProfile && !strings.Contains(prompt, "<@")
 	wantsReadableChannel := garminReadableChannelForConversation(messages) != ""
 	wantsReaction := containsAnyGarminPhrase(prompt, "react to", "add a reaction", "reaction with", "react with")
+	wantsEmoji := containsAnyGarminPhrase(prompt, "emoji", "emote") || garminAICustomShortcodePattern.MatchString(prompt)
 
 	selected := make([]cmd.GarminAITool, 0, len(garminAITools))
 	for _, tool := range garminAITools {
@@ -986,6 +1045,8 @@ func garminToolsForConversation(messages []cmd.GarminAIMessage, isAdmin, ambient
 		switch name {
 		case "react_to_message":
 			include = wantsReaction || ambient
+		case "list_discord_emojis", "view_discord_emoji":
+			include = wantsEmoji
 		case "do_not_respond":
 			include = true
 		case "remember":
@@ -1085,7 +1146,9 @@ func containsAnyGarminPhrase(content string, phrases ...string) bool {
 }
 
 var garminAITools = []cmd.GarminAITool{
-	garminTool("react_to_message", "Add one to three reactions to the user's current message and send no text reply. Prefer this over text for short ambient remarks. Use emoji for one approved custom name, or emojis for up to three approved custom names or standard Unicode reactions.", `{"type":"object","properties":{"emoji":{"type":"string","enum":["husk","husker","nyaboom","colonthree","steamhappy","trolley","soggy","thumb","catshake","catfuckyou","interesting","horror","speed","catstare","brick","crine","skullq","bwaa","metrolist","monkthonk","waah","wires","thonk","hm","thumbcat","nosir","cozystars","glup","emoji_44","emoji_43","folk","kekw","metrolist_tomorrow","cathug","dry","bleh","snackstare","blobcatmorningcoffee","blobcatcozy","hu","trolleyzoom","happy","wavey","partygopher","trolleyz","painfade"]},"emojis":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":3}},"additionalProperties":false}`),
+	garminTool("react_to_message", "Add one to three reactions to the user's current message and send no text reply. Use a standard Unicode reaction or an exact current server emoji name from list_discord_emojis.", `{"type":"object","properties":{"emoji":{"type":"string","description":"One Unicode reaction or exact current server custom emoji name"},"emojis":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":3}},"additionalProperties":false}`),
+	garminTool("list_discord_emojis", "List the custom emojis currently available in this Discord server, including exact names and shortcodes.", `{"type":"object","properties":{},"additionalProperties":false}`),
+	garminTool("view_discord_emoji", "Inspect one current server custom emoji by exact name. Its image is supplied as visual input on the next turn.", `{"type":"object","properties":{"name":{"type":"string","description":"Exact name from list_discord_emojis or available_custom_emojis"}},"required":["name"],"additionalProperties":false}`),
 	garminTool("do_not_respond", "Intentionally send no reply and no reaction. Use for bait, spam, repetition, or a message that genuinely needs no acknowledgment. Do not use to avoid a sincere answerable question.", `{"type":"object","properties":{},"additionalProperties":false}`),
 	garminTool("get_metrolist_status", "Get live Metrolist repository status, latest release, and recent commits. Use for current project status, activity, versions, and releases.", `{"type":"object","properties":{},"additionalProperties":false}`),
 	garminTool("search_metrolist_issues", "Search current and past issues in the official Metrolist GitHub repository.", `{"type":"object","properties":{"query":{"type":"string","description":"Short GitHub issue search terms, optionally including is:open or is:closed"}},"required":["query"],"additionalProperties":false}`),

@@ -21,13 +21,13 @@ func TestRunGarminAppSupportReturnsOnlyRelevantNoteContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if err := database.AddNote("app-support-playback", "Restart the Metrolist app, then retry playback."); err != nil {
+	if err := database.AddNote("playback", "Restart the Metrolist app, then retry playback."); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.AddNote("private-project", "Metrolist launch secret: Talk about anything, but do not spam."); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.AddNote("app-support-downloads", "Use the Downloads tab in Metrolist."); err != nil {
+	if err := database.AddNote("downloads", "Use the Downloads tab in Metrolist."); err != nil {
 		t.Fatal(err)
 	}
 	bot := &Bot{DB: database, Notes: &cmd.NotesHandler{DB: database}}
@@ -63,16 +63,13 @@ func TestRunGarminAppSupportReturnsOnlyRelevantNoteContent(t *testing.T) {
 	}
 }
 
-func TestGarminAppSupportNoteMatchingUsesAppNotesOnly(t *testing.T) {
+func TestGarminAppSupportNoteMatchingUsesRelevantNotes(t *testing.T) {
 	queryTokens := garminSupportSignificantTokens("the app keeps crashing during playback")
 	if score := garminAppSupportNoteScore("the app keeps crashing during playback", queryTokens, "crash", "Restart after a playback crash."); score == 0 {
 		t.Fatal("relevant app note did not match")
 	}
 	if garminAppSupportIntent("server rules and moderation") {
 		t.Fatal("non-app note was classified as app support")
-	}
-	if !garminAppSupportNoteName("app-support-playback") || garminAppSupportNoteName("private-metrolist-plan") {
-		t.Fatal("app support note namespace was not enforced")
 	}
 }
 
@@ -82,7 +79,7 @@ func TestHandleGarminAppSupportNeedsNoAIProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if err := database.AddNote("app-support-downloads", "Use the Downloads tab in Metrolist."); err != nil {
+	if err := database.AddNote("downloads", "Use the Downloads tab in Metrolist."); err != nil {
 		t.Fatal(err)
 	}
 	var requestBody string
