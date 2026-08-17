@@ -23,13 +23,14 @@ const (
 var garminSkillFiles embed.FS
 
 type garminAIResult struct {
-	Answer        string
-	Conversation  []cmd.GarminAIMessage
-	ToolCalls     int
-	Skills        map[string]struct{}
-	MemoryUpdated bool
-	Interacted    bool
-	Silent        bool
+	Answer           string
+	Conversation     []cmd.GarminAIMessage
+	ToolCalls        int
+	Skills           map[string]struct{}
+	MemoryUpdated    bool
+	ThinkingDuration time.Duration
+	Interacted       bool
+	Silent           bool
 }
 
 type garminToolArgs struct {
@@ -92,6 +93,12 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 	}
 	conversation := copyGarminAIMessages(messages)
 	tools := garminToolsForConversation(messages, isGarminOwner(m.Author.ID), ambient)
+	_, explicitlyTriggered := cmd.ExtractGarminPrompt(m.Content)
+	if explicitlyTriggered {
+		tools = withoutGarminTools(tools, "do_not_respond")
+	}
+	repositoryToolRequired := explicitlyTriggered && (garminToolAvailable(tools, "search_github_repositories") || garminToolAvailable(tools, "get_github_repository"))
+	repositoryToolUsed := false
 	result := &garminAIResult{Skills: make(map[string]struct{})}
 	if channelName := garminReadableChannelForConversation(messages); channelName != "" {
 		channelOutput, channelErr := b.readGarminCommunityChannel(s, channelName, "", 15)
@@ -111,12 +118,23 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 		}
 	}
 	for round := range garminAIMaxToolRounds {
+		requestTools := tools
+		toolChoice := ""
+		if repositoryToolUsed {
+			toolChoice = "none"
+		} else if repositoryToolRequired && round == 0 {
+			requestTools = onlyGarminTools(tools, "search_github_repositories", "get_github_repository")
+			toolChoice = "required"
+		}
+		started := time.Now()
 		completion, err := b.garminAI.Complete(ctx, cmd.GarminAIRequest{
 			SystemPrompt: systemPrompt,
 			Context:      discordContext,
 			Messages:     conversation,
-			Tools:        tools,
+			Tools:        requestTools,
+			ToolChoice:   toolChoice,
 		})
+		result.ThinkingDuration += time.Since(started)
 		if err != nil {
 			return nil, err
 		}
@@ -132,7 +150,7 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 		if len(assistantMessage.ToolCalls) == 0 {
 			if call, ok := parseGarminTextRepositoryToolCall(assistantMessage.Content, fmt.Sprintf("text-repository-%d", round)); ok {
 				parsedTextRepositoryCall = true
-				if garminToolAvailable(tools, call.Function.Name) {
+				if !repositoryToolUsed && garminToolAvailable(requestTools, call.Function.Name) {
 					assistantMessage.Content = ""
 					assistantMessage.ToolCalls = []cmd.GarminAIToolCall{call}
 				}
@@ -150,7 +168,7 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 					if ambient {
 						result.Interacted, _ = b.addGarminAmbientReactions(s, m, reactions, ambientToken)
 					} else {
-						result.Interacted, _ = addGarminReactions(s, m, reactions)
+						result.Interacted, _ = b.addGarminReactionsIfVisible(s, m, reactions)
 					}
 				}
 				result.Silent = true
@@ -181,7 +199,12 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 		var toolImages []string
 		for _, toolCall := range assistantMessage.ToolCalls {
 			result.ToolCalls++
-			handled, actionErr := b.handleGarminAIMessageAction(s, m, toolCall, ambientToken)
+			visible, handled, actionErr := b.handleGarminAIMessageActionIfVisible(s, m, toolCall, ambientToken)
+			if !visible {
+				result.Silent = true
+				result.Conversation = conversation
+				return result, nil
+			}
 			if actionErr != nil {
 				conversation = append(conversation, cmd.GarminAIMessage{
 					Role:       "tool",
@@ -196,7 +219,15 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 				result.Conversation = conversation
 				return result, nil
 			}
-			output, skill, memoryUpdated := b.executeGarminAITool(ctx, s, m, toolCall)
+			visible, output, skill, memoryUpdated := b.executeGarminAIToolIfVisible(ctx, s, m, toolCall)
+			if !visible {
+				result.Silent = true
+				result.Conversation = conversation
+				return result, nil
+			}
+			if toolCall.Function.Name == "search_github_repositories" || toolCall.Function.Name == "get_github_repository" {
+				repositoryToolUsed = true
+			}
 			if skill != "" {
 				result.Skills[skill] = struct{}{}
 			}
@@ -329,6 +360,34 @@ func garminToolAvailable(tools []cmd.GarminAITool, name string) bool {
 	return false
 }
 
+func withoutGarminTools(tools []cmd.GarminAITool, names ...string) []cmd.GarminAITool {
+	blocked := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		blocked[name] = struct{}{}
+	}
+	filtered := make([]cmd.GarminAITool, 0, len(tools))
+	for _, tool := range tools {
+		if _, remove := blocked[tool.Function.Name]; !remove {
+			filtered = append(filtered, tool)
+		}
+	}
+	return filtered
+}
+
+func onlyGarminTools(tools []cmd.GarminAITool, names ...string) []cmd.GarminAITool {
+	allowed := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		allowed[name] = struct{}{}
+	}
+	filtered := make([]cmd.GarminAITool, 0, len(tools))
+	for _, tool := range tools {
+		if _, keep := allowed[tool.Function.Name]; keep {
+			filtered = append(filtered, tool)
+		}
+	}
+	return filtered
+}
+
 func sanitizeGarminInternalToolDisclosure(prompt, answer string) string {
 	lowerAnswer := strings.ToLower(answer)
 	dnrQuestion := garminDNRPattern.MatchString(prompt)
@@ -378,6 +437,49 @@ func (b *Bot) handleGarminAIMessageAction(s *discordgo.Session, m *discordgo.Mes
 	}
 }
 
+func (b *Bot) handleGarminAIMessageActionIfVisible(s *discordgo.Session, m *discordgo.MessageCreate, call cmd.GarminAIToolCall, ambientToken uint64) (bool, bool, error) {
+	if ambientToken != 0 {
+		handled, err := b.handleGarminAIMessageAction(s, m, call, ambientToken)
+		return b.garminAIAmbientRequestActive(m, ambientToken), handled, err
+	}
+	b.garminAIMu.Lock()
+	defer b.garminAIMu.Unlock()
+	if !b.garminMessageVisibleLocked(m.ChannelID, m.ID) {
+		return false, false, nil
+	}
+	handled, err := b.handleGarminAIMessageAction(s, m, call, 0)
+	return true, handled, err
+}
+
+func (b *Bot) addGarminReactionsIfVisible(s *discordgo.Session, m *discordgo.MessageCreate, reactions []string) (bool, error) {
+	b.garminAIMu.Lock()
+	defer b.garminAIMu.Unlock()
+	if !b.garminMessageVisibleLocked(m.ChannelID, m.ID) {
+		return false, nil
+	}
+	return addGarminReactions(s, m, reactions)
+}
+
+func (b *Bot) executeGarminAIToolIfVisible(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, call cmd.GarminAIToolCall) (bool, string, string, bool) {
+	if call.Function.Name == "remember" {
+		b.garminAIMu.Lock()
+		defer b.garminAIMu.Unlock()
+		if !b.garminMessageVisibleLocked(m.ChannelID, m.ID) {
+			return false, "", "", false
+		}
+		output, skill, memoryUpdated := b.executeGarminAITool(ctx, s, m, call)
+		return true, output, skill, memoryUpdated
+	}
+	if !b.garminMessageVisible(m.ChannelID, m.ID) {
+		return false, "", "", false
+	}
+	output, skill, memoryUpdated := b.executeGarminAITool(ctx, s, m, call)
+	if !b.garminMessageVisible(m.ChannelID, m.ID) {
+		return false, "", "", false
+	}
+	return true, output, skill, memoryUpdated
+}
+
 func parseGarminTextReactions(content string) []string {
 	matches := garminAITextReactionPattern.FindAllStringSubmatch(content, 3)
 	reactions := make([]string, 0, len(matches))
@@ -422,6 +524,10 @@ func (b *Bot) executeGarminAITool(ctx context.Context, s *discordgo.Session, m *
 	var args garminToolArgs
 	if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
 		return toolError(fmt.Errorf("invalid arguments: %w", err)), "", false
+	}
+	if b.garminGitHub == nil && containsAnyGarminPhrase(call.Function.Name,
+		"get_metrolist_status", "search_metrolist_issues", "get_github_user", "search_github_repositories", "get_github_repository") {
+		return toolError(fmt.Errorf("GitHub tools are unavailable")), "", false
 	}
 
 	var err error
@@ -557,7 +663,7 @@ func (b *Bot) readGarminCommunityChannel(s *discordgo.Session, channelName, quer
 	queryLower := strings.ToLower(query)
 	results := make([]map[string]any, 0, min(limit, len(messages)))
 	for _, message := range messages {
-		if message == nil || (queryLower != "" && !strings.Contains(strings.ToLower(message.Content), queryLower)) {
+		if message == nil || !b.garminMessageVisible(channelID, message.ID) || (queryLower != "" && !strings.Contains(strings.ToLower(message.Content), queryLower)) {
 			continue
 		}
 		result := map[string]any{
@@ -657,6 +763,13 @@ func loadGarminSkill(name string) (string, error) {
 
 func formatGarminAIUsage(result *garminAIResult) string {
 	var prefix strings.Builder
+	if result.ThinkingDuration > 0 {
+		if result.ThinkingDuration < 2*time.Second {
+			prefix.WriteString("-# thought briefly\n")
+		} else {
+			fmt.Fprintf(&prefix, "-# thought for %s\n", result.ThinkingDuration.Round(time.Second))
+		}
+	}
 	if len(result.Skills) > 0 {
 		fmt.Fprintf(&prefix, "-# used %d skills\n", len(result.Skills))
 	}

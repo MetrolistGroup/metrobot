@@ -118,6 +118,11 @@ func (d *DB) migrate() error {
 			star_count      INTEGER NOT NULL DEFAULT 0,
 			timestamp       INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS garmin_context_cutoffs (
+			channel_id TEXT PRIMARY KEY,
+			message_id TEXT NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
 		`DROP TABLE IF EXISTS garmin_memory_consent`,
 		`DROP TABLE IF EXISTS garmin_user_memory`,
 	}

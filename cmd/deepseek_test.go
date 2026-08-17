@@ -91,7 +91,7 @@ func TestDeepSeekClientFailsOverAfterNonJSONServerError(t *testing.T) {
 	}
 }
 
-func TestDeepSeekClientSendsBoundedNonThinkingRequest(t *testing.T) {
+func TestDeepSeekClientSendsBoundedLowReasoningRequest(t *testing.T) {
 	var request chatCompletionRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -115,8 +115,8 @@ func TestDeepSeekClientSendsBoundedNonThinkingRequest(t *testing.T) {
 	if request.Model != deepSeekModel {
 		t.Errorf("model = %q, want %q", request.Model, deepSeekModel)
 	}
-	if request.Thinking.Type != "disabled" {
-		t.Errorf("thinking type = %q, want disabled", request.Thinking.Type)
+	if request.Thinking.Type != "enabled" || request.ReasoningEffort != "low" {
+		t.Errorf("thinking = %#v, effort = %q, want enabled low", request.Thinking, request.ReasoningEffort)
 	}
 	if request.MaxTokens != 160 {
 		t.Errorf("max tokens = %d, want 160", request.MaxTokens)
@@ -172,7 +172,14 @@ func TestChatCompletionClientRoundTripsToolCalls(t *testing.T) {
 			t.Errorf("tools = %#v, choice = %q", request.Tools, request.ToolChoice)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"tool_calls":[{"id":"call-1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}}]}`))
+		if requests == 1 {
+			_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"reasoning_content":"need the lookup","tool_calls":[{"id":"call-1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}}]}`))
+			return
+		}
+		if len(request.Messages) < 2 || request.Messages[len(request.Messages)-2].ReasoningContent != "need the lookup" {
+			t.Errorf("tool turn lost reasoning content: %#v", request.Messages)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"done"}}]}`))
 	}))
 	defer server.Close()
 
@@ -190,8 +197,15 @@ func TestChatCompletionClientRoundTripsToolCalls(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Complete() error = %v", err)
 	}
-	if requests != 1 || len(completion.Message.ToolCalls) != 1 || completion.Message.ToolCalls[0].Function.Name != "lookup" {
+	if requests != 1 || completion.Message.ReasoningContent != "need the lookup" || len(completion.Message.ToolCalls) != 1 || completion.Message.ToolCalls[0].Function.Name != "lookup" {
 		t.Fatalf("Complete() = %#v after %d requests", completion, requests)
+	}
+	messages := append(testGarminMessages("hi"), completion.Message, GarminAIMessage{Role: "tool", ToolCallID: "call-1", Content: `{"result":"ok"}`})
+	final, err := client.Complete(context.Background(), GarminAIRequest{Messages: messages, Tools: []GarminAITool{{
+		Type: "function", Function: GarminAIFunctionDefinition{Name: "lookup", Parameters: json.RawMessage(`{"type":"object"}`)},
+	}}})
+	if err != nil || final.Message.Content != "done" || requests != 2 {
+		t.Fatalf("second Complete() = %#v after %d requests, error %v", final, requests, err)
 	}
 }
 

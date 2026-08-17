@@ -57,6 +57,8 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 	switch data.Name {
 	case "help":
 		b.handleHelp(s, i)
+	case "ctx-reset":
+		b.handleGarminContextResetInteraction(s, i, callerID)
 	case "notes":
 		b.handleNotes(s, i)
 	case "note":
@@ -114,6 +116,10 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	}
 
 	content := strings.TrimSpace(m.Content)
+	if strings.EqualFold(content, "ok garmin ctx-reset") {
+		b.handleGarminContextResetMessage(s, m)
+		return
+	}
 	if prompt, triggered := cmd.ExtractGarminPrompt(content); triggered {
 		b.cancelGarminAIAmbient(m)
 		if b.autoWarnGarminAbuse(s, m, prompt) {
@@ -226,6 +232,31 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	b.executePrefixCommand(s, m.ChannelID, m.Author.ID, action, commandArgs, targetID)
 }
 
+func (b *Bot) handleGarminContextResetMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
+	if b.DB == nil || !b.DB.IsAdmin("discord", m.Author.ID, b.Config) {
+		return
+	}
+	if err := b.resetGarminContext(m.ChannelID, m.ID); err != nil {
+		b.Logger.Error("Garmin context reset failed", zap.String("channel", m.ChannelID), zap.Error(err))
+		sendReply(s, m.ChannelID, m.ID, "Couldn't reset Garmin context.", false, b.Logger)
+		return
+	}
+	sendReply(s, m.ChannelID, m.ID, "Garmin context reset for this channel.", false, b.Logger)
+}
+
+func (b *Bot) handleGarminContextResetInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, callerID string) {
+	if b.DB == nil || !b.DB.IsAdmin("discord", callerID, b.Config) {
+		respondEphemeral(s, i, "Only admins can reset Garmin context.")
+		return
+	}
+	if err := b.resetGarminContext(i.ChannelID, i.ID); err != nil {
+		b.Logger.Error("Garmin context reset failed", zap.String("channel", i.ChannelID), zap.Error(err))
+		respondEphemeral(s, i, "Couldn't reset Garmin context.")
+		return
+	}
+	respondEphemeral(s, i, "Garmin context reset for this channel.")
+}
+
 func (b *Bot) autoWarnGarminAbuse(s *discordgo.Session, m *discordgo.MessageCreate, prompt string) bool {
 	if !garminDirectSlur(prompt) || b.DB.IsAdmin("discord", m.Author.ID, b.Config) {
 		return false
@@ -298,7 +329,8 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		"• /addadmin [user] - Add a bot admin\n" +
 		"• /removeadmin [user] - Remove a bot admin\n\n" +
 		"**Metrobot AI (admin only):**\n" +
-		"• /memory view|append|replace|clear - Manage persistent AI memory\n\n" +
+		"• /memory view|append|replace|clear - Manage persistent AI memory\n" +
+		"• /ctx-reset or `ok garmin ctx-reset` - Forget earlier AI context in this channel\n\n" +
 		"**Prefix Commands:**\n" +
 		"Moderation actions can also be triggered via message prefix: !action [user] [args]\n" +
 		"Example: !ban @user spam\n\n" +

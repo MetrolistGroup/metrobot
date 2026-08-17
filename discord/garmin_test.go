@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
+	"github.com/MetrolistGroup/metrobot/db"
 	"github.com/bwmarrin/discordgo"
 	"go.uber.org/zap"
 )
@@ -219,6 +221,47 @@ func TestGarminAIContextAllowsReplyParticipantsButScopesAmbientToUser(t *testing
 	bot.endGarminAIAmbient(ambient, ambientToken)
 	if bot.tryBeginGarminAIAmbient(ambient) != 0 {
 		t.Fatal("ambient cooldown did not drop immediate retry")
+	}
+}
+
+func TestGarminContextResetHidesPriorMessagesAndClearsChains(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	bot := &Bot{
+		DB: database, Logger: zap.NewNop(),
+		garminAIContexts: make(map[string]garminAIContext), garminAIUserContexts: make(map[string]garminAIContext),
+		garminContextCutoffs: make(map[string]string), garminAIAmbientBusy: make(map[string]uint64),
+	}
+	original := &discordgo.MessageCreate{Message: &discordgo.Message{ID: "100", GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "user"}}}
+	bot.rememberGarminAIContext("150", original, []cmd.GarminAIMessage{{Role: "user", Content: "old context"}})
+	requestContext, cancelRequest := context.WithCancel(context.Background())
+	defer cancelRequest()
+	if !bot.registerGarminAIRequest(original, cancelRequest) {
+		t.Fatal("failed to register pre-reset request")
+	}
+	if err := bot.resetGarminContext("channel", "200"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-requestContext.Done():
+	default:
+		t.Fatal("context reset did not cancel in-flight request")
+	}
+	if len(bot.garminAIContexts) != 0 || len(bot.garminAIUserContexts) != 0 {
+		t.Fatal("context reset retained an in-memory chain")
+	}
+	if bot.garminMessageVisible("channel", "199") || !bot.garminMessageVisible("channel", "201") {
+		t.Fatal("context cutoff did not hide only prior messages")
+	}
+	message := &discordgo.MessageCreate{Message: &discordgo.Message{
+		ID: "201", GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "user", Username: "user"},
+		ReferencedMessage: &discordgo.Message{ID: "199", Content: "old secret", Author: &discordgo.User{ID: "other", Username: "other"}},
+	}}
+	if context := bot.garminDiscordContextForMessage(nil, message); strings.Contains(context, "old secret") {
+		t.Fatalf("old replied message survived cutoff: %s", context)
 	}
 }
 

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/config"
@@ -35,16 +37,20 @@ func TestFormatGarminAIUsage(t *testing.T) {
 
 func TestFormatAndTruncateGarminAIResultPreservesUsage(t *testing.T) {
 	result := &garminAIResult{
-		Answer:    strings.Repeat("é", garminAIMaxContent),
-		ToolCalls: 1,
-		Skills:    map[string]struct{}{},
+		Answer:           strings.Repeat("é", garminAIMaxContent),
+		ToolCalls:        1,
+		Skills:           map[string]struct{}{},
+		ThinkingDuration: 1500 * time.Millisecond,
 	}
 	got := formatAndTruncateGarminAIResult(result)
 	if len(got) > garminAIMaxContent {
 		t.Fatalf("response length = %d", len(got))
 	}
-	if !strings.HasPrefix(got, "-# used 1 tools\n") || !strings.HasSuffix(got, "...") {
+	if !strings.HasPrefix(got, "-# thought briefly\n-# used 1 tools\n") || !strings.HasSuffix(got, "...") {
 		t.Fatalf("formatted response = %q", got)
+	}
+	if got := formatGarminAIUsage(&garminAIResult{ThinkingDuration: 2500 * time.Millisecond}); got != "-# thought for 3s\n" {
+		t.Fatalf("rounded thought duration = %q", got)
 	}
 }
 
@@ -116,6 +122,38 @@ func TestRunGarminAIAmbientModeCanReplyReactOrStaySilent(t *testing.T) {
 	}
 	if !result.Silent {
 		t.Fatalf("ambient do_not_respond result = %#v", result)
+	}
+}
+
+func TestRunGarminAIStopsRepositoryToolLoop(t *testing.T) {
+	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	bot := &Bot{garminMemory: memory}
+	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		calls++
+		names := garminToolNames(request.Tools)
+		if calls == 1 {
+			if request.ToolChoice != "required" || slices.Contains(names, "do_not_respond") || !slices.Contains(names, "search_github_repositories") {
+				t.Fatalf("first repository turn tools = %v, choice = %q", names, request.ToolChoice)
+			}
+			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{
+				ID: "repo", Type: "function", Function: cmd.GarminAIFunctionCall{Name: "search_github_repositories", Arguments: `{"query":"android music"}`},
+			}}}}, nil
+		}
+		if !slices.Contains(names, "search_github_repositories") || !slices.Contains(names, "get_github_repository") || request.ToolChoice != "none" {
+			t.Fatalf("synthesis turn tools = %v, choice = %q", names, request.ToolChoice)
+		}
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "the search failed cleanly."}}, nil
+	})
+	message := &discordgo.MessageCreate{Message: &discordgo.Message{
+		ID: "1", GuildID: "guild", ChannelID: "channel", Content: "garmin, search github for android music repos", Author: &discordgo.User{ID: "user"},
+	}}
+	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "search github for android music repos"}})
+	if err != nil || calls != 2 || result.Answer != "the search failed cleanly." || result.ToolCalls != 1 {
+		t.Fatalf("repository run = %#v, calls %d, error %v", result, calls, err)
 	}
 }
 

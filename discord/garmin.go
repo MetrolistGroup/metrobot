@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -40,6 +41,9 @@ func (b *Bot) handleGarminAI(s *discordgo.Session, m *discordgo.MessageCreate, m
 }
 
 func (b *Bot) handleGarminAIWithMode(s *discordgo.Session, m *discordgo.MessageCreate, messages []cmd.GarminAIMessage, ambient bool, ambientToken uint64) {
+	if !b.garminMessageVisible(m.ChannelID, m.ID) {
+		return
+	}
 	if ambient && !b.garminAIAmbientRequestActive(m, ambientToken) {
 		return
 	}
@@ -83,8 +87,15 @@ func (b *Bot) handleGarminAIWithMode(s *discordgo.Session, m *discordgo.MessageC
 	b.keepGarminTyping(s, m.ChannelID, typingDone)
 	ctx, cancel := context.WithTimeout(context.Background(), garminAITimeout)
 	defer cancel()
+	if !b.registerGarminAIRequest(m, cancel) {
+		return
+	}
+	defer b.unregisterGarminAIRequest(m)
 
 	result, err := b.runGarminAIWithMode(ctx, s, m, messages, ambient, ambientToken)
+	if !b.garminMessageVisible(m.ChannelID, m.ID) {
+		return
+	}
 	if err != nil {
 		b.Logger.Error("Metrobot AI request failed", zap.String("user", m.Author.ID), zap.Error(err))
 		if ambient {
@@ -116,14 +127,10 @@ func (b *Bot) handleGarminAIWithMode(s *discordgo.Session, m *discordgo.MessageC
 	result.Answer = enforceGarminChannelReply(garminRedirectChannelID(s, m.ChannelID), result.Answer)
 
 	conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: result.Answer})
-	var reply *discordgo.Message
 	if ambient {
-		reply = b.sendGarminAmbientReply(s, m, formatAndTruncateGarminAIResult(result), conversation, ambientToken)
+		b.sendGarminAmbientReply(s, m, formatAndTruncateGarminAIResult(result), conversation, ambientToken)
 	} else {
-		reply = b.sendGarminReply(s, m, formatAndTruncateGarminAIResult(result))
-	}
-	if reply != nil && !ambient {
-		b.rememberGarminAIContext(reply.ID, m, conversation)
+		b.sendGarminReplyAndRememberIfVisible(s, m, formatAndTruncateGarminAIResult(result), conversation)
 	}
 }
 
@@ -509,6 +516,126 @@ func garminAIUserContextKey(m *discordgo.MessageCreate) string {
 		return ""
 	}
 	return m.GuildID + "\x00" + m.ChannelID + "\x00" + m.Author.ID
+}
+
+func (b *Bot) resetGarminContext(channelID, messageID string) error {
+	if b.DB == nil {
+		return nil
+	}
+	b.garminAIMu.Lock()
+	defer b.garminAIMu.Unlock()
+	if err := b.DB.SetGarminContextCutoff(channelID, messageID); err != nil {
+		return err
+	}
+	if b.garminContextCutoffs == nil {
+		b.garminContextCutoffs = make(map[string]string)
+	}
+	b.garminContextCutoffs[channelID] = messageID
+	for key, context := range b.garminAIContexts {
+		if context.channelID == channelID {
+			delete(b.garminAIContexts, key)
+		}
+	}
+	for key, context := range b.garminAIUserContexts {
+		if context.channelID == channelID {
+			delete(b.garminAIUserContexts, key)
+		}
+	}
+	keyPart := "\x00" + channelID + "\x00"
+	for key := range b.garminAIAmbientBusy {
+		if strings.Contains(key, keyPart) {
+			delete(b.garminAIAmbientBusy, key)
+		}
+	}
+	for _, cancel := range b.garminAIRequests[channelID] {
+		cancel()
+	}
+	delete(b.garminAIRequests, channelID)
+	return nil
+}
+
+func (b *Bot) garminMessageVisible(channelID, messageID string) bool {
+	b.garminAIMu.Lock()
+	defer b.garminAIMu.Unlock()
+	return b.garminMessageVisibleLocked(channelID, messageID)
+}
+
+func (b *Bot) garminMessageVisibleLocked(channelID, messageID string) bool {
+	cutoff, loaded := b.garminContextCutoffs[channelID]
+	if !loaded {
+		if b.DB == nil {
+			return true
+		}
+		var err error
+		cutoff, err = b.DB.GetGarminContextCutoff(channelID)
+		if err != nil {
+			if b.Logger != nil {
+				b.Logger.Error("failed to load Garmin context cutoff", zap.String("channel", channelID), zap.Error(err))
+			}
+			return false
+		}
+		if b.garminContextCutoffs == nil {
+			b.garminContextCutoffs = make(map[string]string)
+		}
+		b.garminContextCutoffs[channelID] = cutoff
+	}
+	if cutoff == "" {
+		return true
+	}
+	messageSnowflake, messageErr := strconv.ParseUint(messageID, 10, 64)
+	cutoffSnowflake, cutoffErr := strconv.ParseUint(cutoff, 10, 64)
+	return messageErr == nil && cutoffErr == nil && messageSnowflake > cutoffSnowflake
+}
+
+func (b *Bot) sendGarminReplyAndRememberIfVisible(s *discordgo.Session, m *discordgo.MessageCreate, content string, conversation []cmd.GarminAIMessage) *discordgo.Message {
+	b.garminAIMu.Lock()
+	defer b.garminAIMu.Unlock()
+	if !b.garminMessageVisibleLocked(m.ChannelID, m.ID) {
+		return nil
+	}
+	reply := b.sendGarminReply(s, m, content)
+	if reply != nil {
+		b.storeGarminAIContextLocked(reply.ID, m, conversation, time.Now())
+	}
+	return reply
+}
+
+func (b *Bot) sendGarminReplyIfVisible(s *discordgo.Session, m *discordgo.MessageCreate, content string) *discordgo.Message {
+	b.garminAIMu.Lock()
+	defer b.garminAIMu.Unlock()
+	if !b.garminMessageVisibleLocked(m.ChannelID, m.ID) {
+		return nil
+	}
+	return b.sendGarminReply(s, m, content)
+}
+
+func (b *Bot) registerGarminAIRequest(m *discordgo.MessageCreate, cancel context.CancelFunc) bool {
+	b.garminAIMu.Lock()
+	defer b.garminAIMu.Unlock()
+	if !b.garminMessageVisibleLocked(m.ChannelID, m.ID) {
+		return false
+	}
+	if b.garminAIRequests == nil {
+		b.garminAIRequests = make(map[string]map[string]context.CancelFunc)
+	}
+	if b.garminAIRequests[m.ChannelID] == nil {
+		b.garminAIRequests[m.ChannelID] = make(map[string]context.CancelFunc)
+	}
+	if previous := b.garminAIRequests[m.ChannelID][m.ID]; previous != nil {
+		previous()
+	}
+	b.garminAIRequests[m.ChannelID][m.ID] = cancel
+	return true
+}
+
+func (b *Bot) unregisterGarminAIRequest(m *discordgo.MessageCreate) {
+	b.garminAIMu.Lock()
+	defer b.garminAIMu.Unlock()
+	requests := b.garminAIRequests[m.ChannelID]
+	delete(requests, m.ID)
+	if len(requests) == 0 {
+		delete(b.garminAIRequests, m.ChannelID)
+	}
 }
 
 func garminAIUserMessage(m *discordgo.MessageCreate, prompt string) cmd.GarminAIMessage {

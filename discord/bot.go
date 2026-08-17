@@ -1,6 +1,7 @@
 package discord
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -35,6 +36,8 @@ type Bot struct {
 	garminAILastUsed     map[string]time.Time
 	garminAIContexts     map[string]garminAIContext
 	garminAIUserContexts map[string]garminAIContext
+	garminContextCutoffs map[string]string
+	garminAIRequests     map[string]map[string]context.CancelFunc
 	garminAIAmbientBusy  map[string]uint64
 	garminAIAmbientSeq   uint64
 	garminAISlots        chan struct{}
@@ -70,6 +73,8 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		garminAILastUsed:     make(map[string]time.Time),
 		garminAIContexts:     make(map[string]garminAIContext),
 		garminAIUserContexts: make(map[string]garminAIContext),
+		garminContextCutoffs: make(map[string]string),
+		garminAIRequests:     make(map[string]map[string]context.CancelFunc),
 		garminAIAmbientBusy:  make(map[string]uint64),
 	}
 	var aiProviders []cmd.GarminAI
@@ -143,6 +148,10 @@ func (b *Bot) registerCommands() error {
 		{
 			Name:        "help",
 			Description: "Show available commands",
+		},
+		{
+			Name:        "ctx-reset",
+			Description: "Forget Garmin context before this point in this channel (admin only)",
 		},
 		{
 			Name:        "notes",

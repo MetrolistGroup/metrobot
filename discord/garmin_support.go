@@ -3,6 +3,7 @@ package discord
 import (
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
@@ -70,14 +71,24 @@ func (b *Bot) handleGarminAppSupport(s *discordgo.Session, m *discordgo.MessageC
 	result, err := b.runGarminAppSupport(messages)
 	if err != nil {
 		b.Logger.Error("Metrobot app support request failed", zap.String("user", m.Author.ID), zap.Error(err))
-		b.sendGarminReply(s, m, garminAppSupportNoNote)
+		b.sendGarminReplyIfVisible(s, m, garminAppSupportNoNote)
 		return
 	}
-	reply := b.sendGarminAppSupportReply(s, m, result.Answer)
-	if reply != nil {
-		conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: result.Answer})
-		b.rememberGarminAIContext(reply.ID, m, conversation)
+	conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: result.Answer})
+	b.sendGarminAppSupportReplyAndRememberIfVisible(s, m, result.Answer, conversation)
+}
+
+func (b *Bot) sendGarminAppSupportReplyAndRememberIfVisible(s *discordgo.Session, m *discordgo.MessageCreate, content string, conversation []cmd.GarminAIMessage) *discordgo.Message {
+	b.garminAIMu.Lock()
+	defer b.garminAIMu.Unlock()
+	if !b.garminMessageVisibleLocked(m.ChannelID, m.ID) {
+		return nil
 	}
+	reply := b.sendGarminAppSupportReply(s, m, content)
+	if reply != nil {
+		b.storeGarminAIContextLocked(reply.ID, m, conversation, time.Now())
+	}
+	return reply
 }
 
 func (b *Bot) sendGarminAppSupportReply(s *discordgo.Session, m *discordgo.MessageCreate, content string) *discordgo.Message {

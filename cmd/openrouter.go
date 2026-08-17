@@ -41,8 +41,7 @@ func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http
 		},
 		func(request *chatCompletionRequest) {
 			if useDefaultRoute {
-				reasoningDisabled := false
-				request.Reasoning = &chatReasoning{Enabled: &reasoningDisabled}
+				request.Reasoning = &chatReasoning{Effort: "minimal", Exclude: true}
 				request.SessionID = openRouterSessionID
 				if len(request.Messages) > 0 {
 					request.Messages[0].Cache = true

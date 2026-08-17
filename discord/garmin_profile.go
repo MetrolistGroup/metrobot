@@ -27,16 +27,16 @@ func isGarminOwner(userID string) bool {
 }
 
 func (b *Bot) garminDiscordContextForMessage(s *discordgo.Session, m *discordgo.MessageCreate) string {
-	return garminDiscordContext(s, m)
+	return garminDiscordContext(b, s, m)
 }
 
 // garminDiscordContextForMessage keeps simple unit tests and callers that do not
 // have a live Discord session working. Production uses the Bot method above.
 func garminDiscordContextForMessage(m *discordgo.MessageCreate) string {
-	return garminDiscordContext(nil, m)
+	return garminDiscordContext(nil, nil, m)
 }
 
-func garminDiscordContext(s *discordgo.Session, m *discordgo.MessageCreate) string {
+func garminDiscordContext(b *Bot, s *discordgo.Session, m *discordgo.MessageCreate) string {
 	member := m.Member
 	if member == nil {
 		member = garminCurrentGuildMember(s, m.GuildID, m.Author.ID)
@@ -95,7 +95,7 @@ func garminDiscordContext(s *discordgo.Session, m *discordgo.MessageCreate) stri
 		}
 		context["mentioned_users"] = mentions
 	}
-	if m.ReferencedMessage != nil && m.ReferencedMessage.Author != nil {
+	if m.ReferencedMessage != nil && m.ReferencedMessage.Author != nil && (b == nil || b.garminMessageVisible(m.ChannelID, m.ReferencedMessage.ID)) {
 		repliedMember := m.ReferencedMessage.Member
 		if repliedMember == nil {
 			repliedMember = garminCurrentGuildMember(s, m.GuildID, m.ReferencedMessage.Author.ID)

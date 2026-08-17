@@ -26,7 +26,8 @@ func newDeepSeekClient(keys []string, endpoint string, httpClient *http.Client) 
 		"DeepSeek",
 		nil,
 		func(request *chatCompletionRequest) {
-			request.Thinking = &chatThinking{Type: "disabled"}
+			request.Thinking = &chatThinking{Type: "enabled"}
+			request.ReasoningEffort = "low"
 		},
 		httpClient,
 	)}

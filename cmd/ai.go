@@ -104,15 +104,18 @@ type GarminAIRequest struct {
 	Context      string
 	Messages     []GarminAIMessage
 	Tools        []GarminAITool
+	ToolChoice   string
 }
 
 type GarminAIMessage struct {
-	Role       string             `json:"role"`
-	Content    string             `json:"content"`
-	Images     []string           `json:"-"`
-	ToolCalls  []GarminAIToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string             `json:"tool_call_id,omitempty"`
-	Cache      bool               `json:"-"`
+	Role             string             `json:"role"`
+	Content          string             `json:"content"`
+	Images           []string           `json:"-"`
+	ToolCalls        []GarminAIToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string             `json:"tool_call_id,omitempty"`
+	ReasoningContent string             `json:"reasoning_content,omitempty"`
+	ReasoningDetails json.RawMessage    `json:"reasoning_details,omitempty"`
+	Cache            bool               `json:"-"`
 }
 
 // MarshalJSON sends null content for assistant tool calls, as required by
@@ -120,10 +123,12 @@ type GarminAIMessage struct {
 // provider prompt-cache breakpoints, keeping ordinary messages as strings.
 func (m GarminAIMessage) MarshalJSON() ([]byte, error) {
 	type wireMessage struct {
-		Role       string             `json:"role"`
-		Content    any                `json:"content"`
-		ToolCalls  []GarminAIToolCall `json:"tool_calls,omitempty"`
-		ToolCallID string             `json:"tool_call_id,omitempty"`
+		Role             string             `json:"role"`
+		Content          any                `json:"content"`
+		ToolCalls        []GarminAIToolCall `json:"tool_calls,omitempty"`
+		ToolCallID       string             `json:"tool_call_id,omitempty"`
+		ReasoningContent string             `json:"reasoning_content,omitempty"`
+		ReasoningDetails json.RawMessage    `json:"reasoning_details,omitempty"`
 	}
 
 	var content any
@@ -151,10 +156,12 @@ func (m GarminAIMessage) MarshalJSON() ([]byte, error) {
 		content = m.Content
 	}
 	return json.Marshal(wireMessage{
-		Role:       m.Role,
-		Content:    content,
-		ToolCalls:  m.ToolCalls,
-		ToolCallID: m.ToolCallID,
+		Role:             m.Role,
+		Content:          content,
+		ToolCalls:        m.ToolCalls,
+		ToolCallID:       m.ToolCallID,
+		ReasoningContent: m.ReasoningContent,
+		ReasoningDetails: m.ReasoningDetails,
 	})
 }
 
@@ -162,10 +169,12 @@ func (m GarminAIMessage) MarshalJSON() ([]byte, error) {
 // arrays so test servers and provider responses can use the same message type.
 func (m *GarminAIMessage) UnmarshalJSON(data []byte) error {
 	type wireMessage struct {
-		Role       string             `json:"role"`
-		Content    json.RawMessage    `json:"content"`
-		ToolCalls  []GarminAIToolCall `json:"tool_calls,omitempty"`
-		ToolCallID string             `json:"tool_call_id,omitempty"`
+		Role             string             `json:"role"`
+		Content          json.RawMessage    `json:"content"`
+		ToolCalls        []GarminAIToolCall `json:"tool_calls,omitempty"`
+		ToolCallID       string             `json:"tool_call_id,omitempty"`
+		ReasoningContent string             `json:"reasoning_content,omitempty"`
+		ReasoningDetails json.RawMessage    `json:"reasoning_details,omitempty"`
 	}
 	var wire wireMessage
 	if err := json.Unmarshal(data, &wire); err != nil {
@@ -174,6 +183,8 @@ func (m *GarminAIMessage) UnmarshalJSON(data []byte) error {
 	m.Role = wire.Role
 	m.ToolCalls = wire.ToolCalls
 	m.ToolCallID = wire.ToolCallID
+	m.ReasoningContent = wire.ReasoningContent
+	m.ReasoningDetails = append(m.ReasoningDetails[:0], wire.ReasoningDetails...)
 	m.Content = ""
 	m.Images = nil
 	m.Cache = false
@@ -311,17 +322,18 @@ type chatCompletionClient struct {
 }
 
 type chatCompletionRequest struct {
-	Model      string                   `json:"model,omitempty"`
-	Models     []string                 `json:"models,omitempty"`
-	SessionID  string                   `json:"session_id,omitempty"`
-	Messages   []chatMessage            `json:"messages"`
-	Thinking   *chatThinking            `json:"thinking,omitempty"`
-	Reasoning  *chatReasoning           `json:"reasoning,omitempty"`
-	Provider   *chatProviderPreferences `json:"provider,omitempty"`
-	MaxTokens  int                      `json:"max_tokens"`
-	Stream     bool                     `json:"stream"`
-	Tools      []GarminAITool           `json:"tools,omitempty"`
-	ToolChoice string                   `json:"tool_choice,omitempty"`
+	Model           string                   `json:"model,omitempty"`
+	Models          []string                 `json:"models,omitempty"`
+	SessionID       string                   `json:"session_id,omitempty"`
+	Messages        []chatMessage            `json:"messages"`
+	Thinking        *chatThinking            `json:"thinking,omitempty"`
+	Reasoning       *chatReasoning           `json:"reasoning,omitempty"`
+	ReasoningEffort string                   `json:"reasoning_effort,omitempty"`
+	Provider        *chatProviderPreferences `json:"provider,omitempty"`
+	MaxTokens       int                      `json:"max_tokens"`
+	Stream          bool                     `json:"stream"`
+	Tools           []GarminAITool           `json:"tools,omitempty"`
+	ToolChoice      string                   `json:"tool_choice,omitempty"`
 }
 
 type chatMessage = GarminAIMessage
@@ -333,6 +345,7 @@ type chatThinking struct {
 type chatReasoning struct {
 	Enabled *bool  `json:"enabled,omitempty"`
 	Effort  string `json:"effort,omitempty"`
+	Exclude bool   `json:"exclude,omitempty"`
 }
 
 type chatProviderPreferences struct {
@@ -419,7 +432,10 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 		Tools:     input.Tools,
 	}
 	if len(input.Tools) > 0 {
-		request.ToolChoice = "auto"
+		request.ToolChoice = strings.TrimSpace(input.ToolChoice)
+		if request.ToolChoice == "" {
+			request.ToolChoice = "auto"
+		}
 	}
 	request.Messages[0] = chatMessage{Role: "system", Content: systemPrompt}
 	if contextMessage := strings.TrimSpace(input.Context); contextMessage != "" {
@@ -427,11 +443,13 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 	}
 	for _, message := range input.Messages {
 		request.Messages = append(request.Messages, chatMessage{
-			Role:       message.Role,
-			Content:    strings.TrimSpace(message.Content),
-			Images:     append([]string(nil), message.Images...),
-			ToolCalls:  message.ToolCalls,
-			ToolCallID: message.ToolCallID,
+			Role:             message.Role,
+			Content:          strings.TrimSpace(message.Content),
+			Images:           append([]string(nil), message.Images...),
+			ToolCalls:        message.ToolCalls,
+			ToolCallID:       message.ToolCallID,
+			ReasoningContent: message.ReasoningContent,
+			ReasoningDetails: append(json.RawMessage(nil), message.ReasoningDetails...),
 		})
 	}
 	if c.configureRequest != nil {
