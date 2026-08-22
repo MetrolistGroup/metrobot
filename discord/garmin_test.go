@@ -379,6 +379,31 @@ func TestEnforceGarminThreadUnderGeneralRedirectsToBots(t *testing.T) {
 	}
 }
 
+func TestGarminChatThreadUnderGeneralAllowsNormalReplies(t *testing.T) {
+	state := discordgo.NewState()
+	if err := state.GuildAdd(&discordgo.Guild{ID: "guild"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ChannelAdd(&discordgo.Channel{ID: garminGeneralID, GuildID: "guild", Name: "general"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.ChannelAdd(&discordgo.Channel{ID: garminChatThreadID, GuildID: "guild", ParentID: garminGeneralID, Name: "thread", Type: discordgo.ChannelTypeGuildPublicThread}); err != nil {
+		t.Fatal(err)
+	}
+	session := &discordgo.Session{State: state}
+	answer := "yeah, sure. what's on your mind?"
+	if got := enforceGarminChannelReply(garminRedirectChannelID(session, garminChatThreadID), answer); got != answer {
+		t.Fatalf("allowed thread reply = %q, want %q", got, answer)
+	}
+	message := &discordgo.MessageCreate{Message: &discordgo.Message{
+		GuildID: "guild", ChannelID: garminChatThreadID, Author: &discordgo.User{ID: "user", Username: "speaker"}, Member: &discordgo.Member{},
+	}}
+	context := (&Bot{}).garminDiscordContextForMessage(session, message)
+	if !strings.Contains(context, "normal conversations with Metrobot are welcome") || strings.Contains(context, "#bots") {
+		t.Fatalf("allowed thread received general-only context: %s", context)
+	}
+}
+
 func TestEnforceGarminGeneralReplyDoesNotRedirectRefusalsOrDuplicateBots(t *testing.T) {
 	for _, answer := range []string{
 		"i can't do that.",

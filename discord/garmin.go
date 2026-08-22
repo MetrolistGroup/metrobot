@@ -166,6 +166,9 @@ func garminRedirectChannelID(s *discordgo.Session, channelID string) string {
 	if channelID == garminGeneralID {
 		return channelID
 	}
+	if channelID == garminChatThreadID {
+		return channelID
+	}
 	if channel := garminCurrentChannel(s, channelID); channel != nil && channel.ParentID == garminGeneralID {
 		return garminGeneralID
 	}

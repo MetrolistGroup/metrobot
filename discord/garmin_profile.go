@@ -14,6 +14,7 @@ const (
 	garminGeneralID    = "1398083750616891465"
 	garminBotsID       = "1423657766622593104"
 	garminAppSupportID = "1400780694979870732"
+	garminChatThreadID = "1523126462306320415"
 )
 
 var garminOwnerIDs = map[string]struct{}{
@@ -80,7 +81,7 @@ func garminDiscordContext(b *Bot, s *discordgo.Session, m *discordgo.MessageCrea
 			"is_nsfw": channel.NSFW,
 		}
 		descriptionID := channel.ID
-		if channel.ParentID == garminGeneralID {
+		if channel.ParentID == garminGeneralID && channel.ID != garminChatThreadID {
 			descriptionID = garminGeneralID
 		}
 		if description := garminChannelDescription(descriptionID); description != "" {
@@ -182,6 +183,8 @@ func garminChannelDescription(channelID string) string {
 		return "general community chat; Garmin replies should be brief and continued bot chat belongs in #bots"
 	case garminBotsID:
 		return "the preferred channel for normal conversations and commands with bots"
+	case garminChatThreadID:
+		return "a thread where normal conversations with Metrobot are welcome despite being under general"
 	case garminAppSupportID:
 		return "Metrolist app support; replies must use saved support notes only"
 	default:
