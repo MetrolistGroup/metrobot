@@ -120,7 +120,11 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		b.handleGarminContextResetMessage(s, m)
 		return
 	}
-	if prompt, triggered := cmd.ExtractGarminPrompt(content); triggered {
+	if strings.EqualFold(content, "ok garmin kill") {
+		b.handleGarminKill(s, m)
+		return
+	}
+	if prompt, triggered := extractGarminPrompt(s, content); triggered {
 		b.cancelGarminAIAmbient(m)
 		if b.autoWarnGarminAbuse(s, m, prompt) {
 			return
@@ -227,6 +231,34 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 
 	// Execute the command directly
 	b.executePrefixCommand(s, m.ChannelID, m.Author.ID, action, commandArgs, targetID)
+}
+
+func (b *Bot) handleGarminKill(s *discordgo.Session, m *discordgo.MessageCreate) {
+	if m.ReferencedMessage == nil || m.ReferencedMessage.Author == nil || !b.garminKillStaff(s, m) {
+		return
+	}
+	targetID := m.ReferencedMessage.Author.ID
+	until := time.Now().Add(30 * time.Second)
+	if err := s.GuildMemberTimeout(m.GuildID, targetID, &until); err != nil {
+		b.Logger.Error("Garmin kill timeout failed", zap.String("target", targetID), zap.Error(err))
+		return
+	}
+	if err := s.ChannelMessageDelete(m.ChannelID, m.ReferencedMessage.ID); err != nil {
+		b.Logger.Error("Garmin kill message deletion failed", zap.String("message", m.ReferencedMessage.ID), zap.Error(err))
+		return
+	}
+	if b.DB != nil {
+		_ = b.DB.LogModAction("discord", m.Author.ID, targetID, "kill", "30-second timeout")
+	}
+	sendReply(s, m.ChannelID, m.ID, "Target eliminated.", false, b.Logger)
+}
+
+func (b *Bot) garminKillStaff(s *discordgo.Session, m *discordgo.MessageCreate) bool {
+	if b.DB != nil && b.Config != nil && b.DB.IsAdmin("discord", m.Author.ID, b.Config) {
+		return true
+	}
+	permissions, err := s.UserChannelPermissions(m.Author.ID, m.ChannelID)
+	return err == nil && permissions&(discordgo.PermissionAdministrator|discordgo.PermissionModerateMembers) != 0
 }
 
 func (b *Bot) handleGarminContextResetMessage(s *discordgo.Session, m *discordgo.MessageCreate) {

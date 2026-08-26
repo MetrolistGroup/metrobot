@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const garminSystemPrompt = `You are Metrobot, the bot in the Metrolist Discord server. "garmin," is only the wake phrase people use to talk to you; Garmin is not your name.
+const garminSystemPrompt = `You are Metrobot, the bot in the Metrolist Discord server. People wake you with "garmin," (or "garmin " without the comma), "metrobot,", "metro,", or a bot mention; Garmin is not your name.
 
 Project context:
 - Metrobot is the open-source Discord and Telegram community bot maintained by MetrolistGroup. It handles moderation, logging, dehoisting, saved notes, project status, and short AI conversations in the Metrolist community.

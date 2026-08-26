@@ -19,6 +19,19 @@ import (
 	"go.uber.org/zap"
 )
 
+func TestExtractGarminPromptFromBotMention(t *testing.T) {
+	session, err := discordgo.New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.State.User = &discordgo.User{ID: "123"}
+	for _, content := range []string{"<@123> hello", "<@!123>, hello", "hey <@123>"} {
+		if prompt, triggered := extractGarminPrompt(session, content); !triggered || !strings.Contains(prompt, "hello") && !strings.Contains(prompt, "hey") {
+			t.Errorf("extractGarminPrompt(%q) = (%q, %v)", content, prompt, triggered)
+		}
+	}
+}
+
 func TestTruncateGarminAIResponse(t *testing.T) {
 	input := strings.Repeat("a", garminAIMaxContent+1)
 	got := truncateGarminAIResponse(input)

@@ -335,6 +335,22 @@ func (b *Bot) addGarminAmbientReactions(s *discordgo.Session, m *discordgo.Messa
 	return addGarminReactions(s, m, reactions)
 }
 
+func extractGarminPrompt(s *discordgo.Session, content string) (string, bool) {
+	if prompt, triggered := cmd.ExtractGarminPrompt(content); triggered {
+		return prompt, true
+	}
+	if s == nil || s.State == nil || s.State.User == nil {
+		return "", false
+	}
+	for _, mention := range []string{"<@" + s.State.User.ID + ">", "<@!" + s.State.User.ID + ">"} {
+		if index := strings.Index(content, mention); index >= 0 {
+			prompt := strings.TrimSpace(content[:index] + content[index+len(mention):])
+			return strings.TrimSpace(strings.TrimLeft(prompt, ",:;-")), true
+		}
+	}
+	return "", false
+}
+
 func garminAIAmbientTargetsOtherUser(s *discordgo.Session, m *discordgo.MessageCreate) bool {
 	if m == nil || m.Message == nil {
 		return false

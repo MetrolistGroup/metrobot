@@ -2,15 +2,17 @@ package cmd
 
 import "strings"
 
-const garminAITrigger = "garmin,"
+var garminAITriggers = []string{"garmin,", "garmin ", "metrobot,", "metro,"}
 
-// ExtractGarminPrompt returns the prompt from a case-insensitive "garmin, ..." trigger.
+// ExtractGarminPrompt returns the prompt from a supported case-insensitive text trigger.
 func ExtractGarminPrompt(content string) (string, bool) {
 	content = strings.TrimSpace(content)
-	if len(content) < len(garminAITrigger) || !strings.EqualFold(content[:len(garminAITrigger)], garminAITrigger) {
-		return "", false
+	for _, trigger := range garminAITriggers {
+		if len(content) >= len(trigger) && strings.EqualFold(content[:len(trigger)], trigger) {
+			return strings.TrimSpace(content[len(trigger):]), true
+		}
 	}
-	return strings.TrimSpace(content[len(garminAITrigger):]), true
+	return "", false
 }
 
 // GarminProcessor handles "Ok Garmin" voice assistant trigger processing

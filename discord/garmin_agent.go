@@ -102,7 +102,7 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 		discordContext += "\n\nThis is an unprefixed message during an active Metrobot conversation. Default to do_not_respond: most ambient channel messages are not for you. Never answer merely because Metrobot is mentioned in the third person. Short reactions or commentary get at most react_to_message. Send text only for a direct follow-up question or clear direct address to you."
 	}
 	tools := garminToolsForConversation(messages, isGarminOwner(m.Author.ID), ambient)
-	_, explicitlyTriggered := cmd.ExtractGarminPrompt(m.Content)
+	_, explicitlyTriggered := extractGarminPrompt(s, m.Content)
 	if explicitlyTriggered {
 		tools = withoutGarminTools(tools, "do_not_respond")
 	}
