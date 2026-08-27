@@ -17,6 +17,8 @@ import (
 
 var chatModPattern = regexp.MustCompile(`(?i)^!(ban|dban|tban|sban|mute|warn)\s*(.*)$`)
 
+const garminLimitedKillUserID = "509572562683035676"
+
 var garminDirectSlurPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\bn[^a-z0-9]*[i1!][^a-z0-9]*[gq][^a-z0-9]*[gq][^a-z0-9]*(?:[e3][^a-z0-9]*r|[a4@])s?\b`),
 	regexp.MustCompile(`\bf[^a-z0-9]*[a4@][^a-z0-9]*g(?:[^a-z0-9]*g)?(?:[^a-z0-9]*[o0][^a-z0-9]*t)?s?\b`),
@@ -234,11 +236,19 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 }
 
 func (b *Bot) handleGarminKill(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if m.ReferencedMessage == nil || m.ReferencedMessage.Author == nil || !b.garminKillStaff(s, m) {
+	if m.ReferencedMessage == nil || m.ReferencedMessage.Author == nil {
+		return
+	}
+	timeout := 30 * time.Second
+	timeoutReason := "30-second timeout"
+	if m.Author.ID == garminLimitedKillUserID {
+		timeout = 5 * time.Second
+		timeoutReason = "5-second timeout"
+	} else if !b.garminKillStaff(s, m) {
 		return
 	}
 	targetID := m.ReferencedMessage.Author.ID
-	until := time.Now().Add(30 * time.Second)
+	until := time.Now().Add(timeout)
 	if err := s.GuildMemberTimeout(m.GuildID, targetID, &until); err != nil {
 		b.Logger.Error("Garmin kill timeout failed", zap.String("target", targetID), zap.Error(err))
 		return
@@ -248,7 +258,7 @@ func (b *Bot) handleGarminKill(s *discordgo.Session, m *discordgo.MessageCreate)
 		return
 	}
 	if b.DB != nil {
-		_ = b.DB.LogModAction("discord", m.Author.ID, targetID, "kill", "30-second timeout")
+		_ = b.DB.LogModAction("discord", m.Author.ID, targetID, "kill", timeoutReason)
 	}
 	sendReply(s, m.ChannelID, m.ID, "Target eliminated.", false, b.Logger)
 }

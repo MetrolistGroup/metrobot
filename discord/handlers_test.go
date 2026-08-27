@@ -13,8 +13,9 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestGarminKillRequiresStaffReplyAndEliminatesTarget(t *testing.T) {
+func TestGarminKillRequiresAuthorizedReplyAndUsesUserTimeout(t *testing.T) {
 	var requests []string
+	var timeouts []time.Duration
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.Path)
 		switch {
@@ -27,9 +28,7 @@ func TestGarminKillRequiresStaffReplyAndEliminatesTarget(t *testing.T) {
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
-			if remaining := time.Until(payload.Until); remaining < 25*time.Second || remaining > 35*time.Second {
-				t.Errorf("timeout duration = %s, want about 30s", remaining)
-			}
+			timeouts = append(timeouts, time.Until(payload.Until))
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{}`))
 		case r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, "/channels/channel/messages/target-message"):
@@ -93,9 +92,21 @@ func TestGarminKillRequiresStaffReplyAndEliminatesTarget(t *testing.T) {
 	if len(requests) != 3 {
 		t.Fatalf("staff reply made %d requests, want timeout, deletion, and response: %v", len(requests), requests)
 	}
+	if remaining := timeouts[0]; remaining < 25*time.Second || remaining > 35*time.Second {
+		t.Errorf("staff timeout duration = %s, want about 30s", remaining)
+	}
+
+	bot.onMessageCreate(session, message(garminLimitedKillUserID, true))
+	if len(requests) != 6 {
+		t.Fatalf("limited user reply made %d total requests, want 6: %v", len(requests), requests)
+	}
+	if remaining := timeouts[1]; remaining < 4*time.Second || remaining > 6*time.Second {
+		t.Errorf("limited user timeout duration = %s, want about 5s", remaining)
+	}
+
 	bot.onMessageCreate(session, message("user", true))
 	bot.onMessageCreate(session, message("staff", false))
-	if len(requests) != 3 {
-		t.Fatalf("unauthorized or non-reply command made requests: %v", requests[3:])
+	if len(requests) != 6 {
+		t.Fatalf("unauthorized or non-reply command made requests: %v", requests[6:])
 	}
 }
