@@ -158,7 +158,7 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 
 	matches := chatModPattern.FindStringSubmatch(content)
 	if matches == nil {
-		if garminAIAmbientTargetsOtherUser(s, m) || b.stopGarminAIAmbient(m, content) {
+		if garminAIAmbientTargetsOtherUser(s, m) || b.stopGarminAIAmbient(m, content) || !garminAIAmbientEnabled(s, m.ChannelID) {
 			return
 		}
 		if messages, active := b.garminAIAmbientContinuation(m, content); active {

@@ -86,7 +86,7 @@ func TestGarminAIContinuationIncludesBoundedContext(t *testing.T) {
 		{Role: "assistant", Content: "two answer"},
 		{Role: "user", Content: "three"},
 		{Role: "assistant", Content: "three answer"},
-		{Role: "user", Content: "follow up"},
+		{Role: "user", Name: "discord_user", Content: "follow up"},
 	}
 	if !reflect.DeepEqual(messages, want) {
 		t.Fatalf("messages = %#v, want %#v", messages, want)
@@ -152,7 +152,7 @@ func TestGarminAITriggeredConversationUsesActiveHistory(t *testing.T) {
 	}}
 	bot.rememberGarminAIContext("old-reply", message, history)
 	got := bot.garminAITriggeredConversation(message, "you forgot")
-	want := append(history, cmd.GarminAIMessage{Role: "user", Content: "you forgot"})
+	want := append(history, cmd.GarminAIMessage{Role: "user", Name: "discord_john", Content: "you forgot"})
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("triggered conversation = %#v, want %#v", got, want)
 	}
@@ -276,6 +276,30 @@ func TestGarminContextResetHidesPriorMessagesAndClearsChains(t *testing.T) {
 	}}
 	if context := bot.garminDiscordContextForMessage(nil, message); strings.Contains(context, "old secret") {
 		t.Fatalf("old replied message survived cutoff: %s", context)
+	}
+}
+
+func TestGarminAIAmbientDisabledInGeneral(t *testing.T) {
+	state := discordgo.NewState()
+	if err := state.GuildAdd(&discordgo.Guild{ID: "guild"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, channel := range []*discordgo.Channel{
+		{ID: garminGeneralID, GuildID: "guild"},
+		{ID: "general-thread", GuildID: "guild", ParentID: garminGeneralID, Type: discordgo.ChannelTypeGuildPublicThread},
+		{ID: garminChatThreadID, GuildID: "guild", ParentID: garminGeneralID, Type: discordgo.ChannelTypeGuildPublicThread},
+		{ID: garminBotsID, GuildID: "guild", Type: discordgo.ChannelTypeGuildText},
+	} {
+		if err := state.ChannelAdd(channel); err != nil {
+			t.Fatal(err)
+		}
+	}
+	session := &discordgo.Session{State: state}
+	if garminAIAmbientEnabled(session, garminGeneralID) || garminAIAmbientEnabled(session, "general-thread") {
+		t.Fatal("ambient mode was enabled in general")
+	}
+	if !garminAIAmbientEnabled(session, garminChatThreadID) || !garminAIAmbientEnabled(session, garminBotsID) {
+		t.Fatal("ambient mode was disabled outside general")
 	}
 }
 
@@ -464,6 +488,7 @@ func TestGarminDirectSlurDetection(t *testing.T) {
 
 func TestGarminAIUserMessageIncludesImageAttachments(t *testing.T) {
 	message := &discordgo.MessageCreate{Message: &discordgo.Message{
+		Author: &discordgo.User{ID: "123456789012345678"},
 		Attachments: []*discordgo.MessageAttachment{
 			{Filename: "photo.png", ContentType: "image/png", URL: "https://cdn.discordapp.com/attachments/photo.png"},
 			{Filename: "notes.txt", ContentType: "text/plain", URL: "https://cdn.discordapp.com/attachments/notes.txt"},
@@ -473,6 +498,7 @@ func TestGarminAIUserMessageIncludesImageAttachments(t *testing.T) {
 	got := garminAIUserMessage(message, "  what is this?  ")
 	want := cmd.GarminAIMessage{
 		Role:    "user",
+		Name:    "discord_123456789012345678",
 		Content: "what is this?",
 		Images: []string{
 			"https://cdn.discordapp.com/attachments/photo.png",

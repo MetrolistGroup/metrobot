@@ -104,7 +104,7 @@ func TestDeepSeekClientSendsBoundedLowReasoningRequest(t *testing.T) {
 
 	client := newDeepSeekClient([]string{"key"}, server.URL, server.Client())
 	messages := []GarminAIMessage{
-		{Role: "user", Content: "first question"},
+		{Role: "user", Name: "discord_123456789012345678", Content: "first question"},
 		{Role: "assistant", Content: "first answer"},
 		{Role: "user", Content: "  explain this  "},
 	}
@@ -123,7 +123,7 @@ func TestDeepSeekClientSendsBoundedLowReasoningRequest(t *testing.T) {
 	}
 	wantMessages := []chatMessage{
 		{Role: "system", Content: garminSystemPrompt + "\n\nRuntime model identity:\n- The exact API model powering this response is `" + deepSeekModel + "`.\n- If asked what model you are, state this exact model ID. You are still Metrobot, the Discord bot; do not claim to be a different model or provider."},
-		{Role: "user", Content: "first question"},
+		{Role: "user", Name: "discord_123456789012345678", Content: "first question"},
 		{Role: "assistant", Content: "first answer"},
 		{Role: "user", Content: "explain this"},
 	}
@@ -212,6 +212,7 @@ func TestChatCompletionClientRoundTripsToolCalls(t *testing.T) {
 func TestGarminAIMessageMarshalsVisionContent(t *testing.T) {
 	message := GarminAIMessage{
 		Role:    "user",
+		Name:    "discord_123456789012345678",
 		Content: "what is this?",
 		Images:  []string{"https://cdn.discordapp.com/image.png"},
 	}
@@ -224,8 +225,8 @@ func TestGarminAIMessageMarshalsVisionContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	parts, ok := payload["content"].([]any)
-	if !ok || len(parts) != 2 {
-		t.Fatalf("vision content = %#v", payload["content"])
+	if !ok || len(parts) != 2 || payload["name"] != "discord_123456789012345678" {
+		t.Fatalf("named vision message = %#v", payload)
 	}
 	imagePart, ok := parts[1].(map[string]any)
 	imageURL, okURL := imagePart["image_url"].(map[string]any)

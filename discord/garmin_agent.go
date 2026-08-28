@@ -89,11 +89,10 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 	}
 	systemPrompt := garminSystemPromptWithMemory(memory)
 	conversation := append([]cmd.GarminAIMessage(nil), copyGarminAIMessages(messages)...)
-	discordContext := b.garminDiscordContextForMessage(s, m)
+	discordContext := b.garminDiscordContextForConversation(s, m, messages)
 	if s != nil {
 		if backlog, err := b.readGarminChannelMessages(s, m.ChannelID, m.ID, "", 20); err == nil {
-			discordContext += "\n\nRecent channel conversation (latest 20 messages before the current message; chronological; may overlap tracked conversation):\n" + backlog
-			addGarminImagesToLatestUser(conversation, garminAIToolImageURLs("read_community_channel", backlog))
+			discordContext += "\n\nRecent channel conversation (latest 20 messages before the current message; chronological; may overlap tracked conversation; participants are keyed by author_id):\n" + backlog
 		} else if b.Logger != nil {
 			b.Logger.Debug("failed to load Garmin channel backlog", zap.Error(err), zap.String("channel_id", m.ChannelID))
 		}
@@ -623,8 +622,6 @@ func (b *Bot) executeGarminAITool(ctx context.Context, s *discordgo.Session, m *
 		}
 	case "get_note":
 		output, err = b.Notes.GetNote(args.Name)
-	case "get_discord_member":
-		output, err = b.getGarminDiscordMember(s, args.UserID)
 	case "get_discord_profile":
 		output, err = b.getGarminDiscordProfile(s, args.UserID)
 	case "search_discord_members":
@@ -661,34 +658,23 @@ func garminSystemPromptWithMemory(memory string) string {
 	return cmd.GarminSystemPrompt() + "\n\nPersistent memory (admin-managed Markdown):\n" + memory
 }
 
-func (b *Bot) getGarminDiscordMember(s *discordgo.Session, userID string) (string, error) {
-	userID = normalizeDiscordUserID(userID)
-	if userID == "" {
-		return "", fmt.Errorf("Discord user ID is required")
-	}
-	member, err := s.GuildMember(b.Config.DiscordGuildID, userID)
-	if err != nil {
-		return "", fmt.Errorf("fetching Discord member: %w", err)
-	}
-	return mustJSON(discordMemberToolResult(member)), nil
-}
-
 func (b *Bot) searchGarminDiscordMembers(s *discordgo.Session, query string) (string, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return "", fmt.Errorf("member search query is required")
 	}
 	if userID := normalizeDiscordUserID(query); userID != "" {
-		return b.getGarminDiscordMember(s, userID)
+		return b.getGarminDiscordProfile(s, userID)
 	}
 
 	members, err := s.GuildMembersSearch(b.Config.DiscordGuildID, query, 10)
 	if err != nil {
 		return "", fmt.Errorf("searching Discord members: %w", err)
 	}
+	rolesByID := garminGuildRolesByID(s, b.Config.DiscordGuildID)
 	results := make([]map[string]any, 0, len(members))
 	for _, member := range members {
-		results = append(results, discordMemberToolResult(member))
+		results = append(results, garminDiscordMemberContext(member.User, member, rolesByID))
 	}
 	return mustJSON(map[string]any{"matches": results}), nil
 }
@@ -726,9 +712,18 @@ func (b *Bot) readGarminChannelMessages(s *discordgo.Session, channelID, beforeI
 		return "", fmt.Errorf("Discord session is unavailable")
 	}
 	channelName := channelID
+	guildID := ""
+	if b.Config != nil {
+		guildID = b.Config.DiscordGuildID
+	}
 	if s.State != nil {
-		if channel, err := s.State.Channel(channelID); err == nil && channel.Name != "" {
-			channelName = channel.Name
+		if channel, err := s.State.Channel(channelID); err == nil {
+			if channel.Name != "" {
+				channelName = channel.Name
+			}
+			if guildID == "" {
+				guildID = channel.GuildID
+			}
 		}
 	}
 	if limit <= 0 {
@@ -747,6 +742,8 @@ func (b *Bot) readGarminChannelMessages(s *discordgo.Session, channelID, beforeI
 		return "", fmt.Errorf("reading %s: %w", channelName, err)
 	}
 	queryLower := strings.ToLower(query)
+	rolesByID := garminGuildRolesByID(s, guildID)
+	participants := map[string]map[string]any{}
 	results := make([]map[string]any, 0, min(limit, len(messages)))
 	for _, message := range messages {
 		if message == nil || !b.garminMessageVisible(channelID, message.ID) || (queryLower != "" && !strings.Contains(strings.ToLower(message.Content), queryLower)) {
@@ -758,7 +755,12 @@ func (b *Bot) readGarminChannelMessages(s *discordgo.Session, channelID, beforeI
 			"timestamp": message.Timestamp.Format(time.RFC3339),
 		}
 		if message.Author != nil {
-			result["author"] = garminDiscordIdentity(message.Author, message.Member)
+			member := message.Member
+			if member == nil {
+				member = garminCurrentGuildMember(s, guildID, message.Author.ID)
+			}
+			result["author_id"] = message.Author.ID
+			participants[message.Author.ID] = garminDiscordMemberContext(message.Author, member, rolesByID)
 		}
 		if len(message.Attachments) > 0 {
 			attachments := make([]map[string]string, 0, len(message.Attachments))
@@ -781,17 +783,25 @@ func (b *Bot) readGarminChannelMessages(s *discordgo.Session, channelID, beforeI
 	for left, right := 0, len(results)-1; left < right; left, right = left+1, right-1 {
 		results[left], results[right] = results[right], results[left]
 	}
-	response := map[string]any{
-		"channel":    channelName,
-		"channel_id": channelID,
-		"query":      query,
-		"messages":   results,
+	encode := func() string {
+		usedParticipants := map[string]map[string]any{}
+		for _, message := range results {
+			if authorID, _ := message["author_id"].(string); authorID != "" {
+				usedParticipants[authorID] = participants[authorID]
+			}
+		}
+		return mustJSON(map[string]any{
+			"channel":      channelName,
+			"channel_id":   channelID,
+			"query":        query,
+			"participants": usedParticipants,
+			"messages":     results,
+		})
 	}
-	encoded := mustJSON(response)
+	encoded := encode()
 	for len(encoded) > garminAIToolResultSize && len(results) > 1 {
 		results = results[1:]
-		response["messages"] = results
-		encoded = mustJSON(response)
+		encoded = encode()
 	}
 	return encoded, nil
 }
@@ -1028,12 +1038,6 @@ func garminToolsForConversation(messages []cmd.GarminAIMessage, isAdmin, ambient
 	repositoryAction := containsAnyGarminPhrase(prompt, "github", "search", "find", "look", "show", "describe", "description", "about", "details", "what", "stars", "forks", "language", "topic")
 	githubSearch := strings.Contains(prompt, "github") && containsAnyGarminPhrase(prompt, "search", "find", "look", "browse")
 	wantsGitHubRepository := githubSearch || (repositorySubject && repositoryAction)
-	wantsDiscordMember := containsAnyGarminPhrase(prompt,
-		"discord member", "discord user", "discord username", "display name", "server nickname", "who is <@")
-	wantsDiscordProfile := !wantsUserMemory && containsAnyGarminPhrase(prompt,
-		"user profile", "discord profile", "their roles", "user roles", "what roles", "which roles",
-		"their bio", "user bio", "discord bio", "'s bio", "their pronouns", "user pronouns", "pronouns")
-	wantsProfileSearch := wantsDiscordProfile && !strings.Contains(prompt, "<@")
 	wantsReadableChannel := garminReadableChannelForConversation(messages) != ""
 	wantsReaction := containsAnyGarminPhrase(prompt, "react to", "add a reaction", "reaction with", "react with")
 	wantsEmoji := containsAnyGarminPhrase(prompt, "emoji", "emote") || garminAICustomShortcodePattern.MatchString(prompt)
@@ -1059,12 +1063,8 @@ func garminToolsForConversation(messages []cmd.GarminAIMessage, isAdmin, ambient
 			include = wantsGitHubUser
 		case "search_github_repositories", "get_github_repository":
 			include = wantsGitHubRepository
-		case "get_discord_member":
-			include = wantsDiscordMember
-		case "search_discord_members":
-			include = wantsDiscordMember || wantsProfileSearch
-		case "get_discord_profile":
-			include = wantsDiscordProfile
+		case "get_discord_profile", "search_discord_members":
+			include = true
 		case "read_community_channel":
 			include = wantsReadableChannel
 		}
@@ -1157,9 +1157,8 @@ var garminAITools = []cmd.GarminAITool{
 	garminTool("get_github_repository", "Get public details and description for an exact GitHub repository. Use owner/name from the user or repository search results.", `{"type":"object","properties":{"repository":{"type":"string","description":"Exact owner/name or github.com repository URL"}},"required":["repository"],"additionalProperties":false}`),
 	garminTool("list_notes", "List every saved Metrobot note name. Use before get_note when the relevant note name is unknown.", `{"type":"object","properties":{},"additionalProperties":false}`),
 	garminTool("get_note", "Read a saved Metrobot note by exact name.", `{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":false}`),
-	garminTool("get_discord_member", "Get exact account username, server nickname, and server-authoritative display name for a Discord member ID or mention.", `{"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"],"additionalProperties":false}`),
-	garminTool("get_discord_profile", "Get a Discord member's public names, server roles, and role-based pronouns. Discord account About Me bios are not exposed to bots.", `{"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"],"additionalProperties":false}`),
-	garminTool("search_discord_members", "Search server members by the beginning of a username or nickname. Results may be ambiguous, so do not claim a match when several are returned.", `{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}`),
+	garminTool("get_discord_profile", "Get a Discord member's authoritative server name, roles, and role-based pronouns by ID or mention. Discord account About Me bios are not exposed to bots.", `{"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"],"additionalProperties":false}`),
+	garminTool("search_discord_members", "Search the server member list by the beginning of a username or nickname. Results include names, roles, and role-based pronouns but may be ambiguous.", `{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}`),
 	garminTool("read_community_channel", "Read recent messages from approved channels: staff shitposts in coolchannel, KMP previews in sneak-peeks, design and feature questions in polls, or Elissa's Minky cat pictures in minky. Optionally search within the latest 100 messages.", `{"type":"object","properties":{"channel":{"type":"string","enum":["coolchannel","sneak-peeks","polls","minky"]},"query":{"type":"string","description":"Optional case-insensitive text to find within the latest 100 messages"},"limit":{"type":"integer","minimum":1,"maximum":25,"description":"Maximum messages to return; defaults to 15"}},"required":["channel"],"additionalProperties":false}`),
 	garminTool("load_skill", "Load focused reference instructions. Available skills: metrolist for project facts and official resources, support for troubleshooting.", `{"type":"object","properties":{"name":{"type":"string","enum":["metrolist","support"]}},"required":["name"],"additionalProperties":false}`),
 	garminTool("remember", "Append durable global Markdown memory. Only Nyx or Lamp can use this after explicitly asking to save durable, non-sensitive bot or project information.", `{"type":"object","properties":{"content":{"type":"string"}},"required":["content"],"additionalProperties":false}`),

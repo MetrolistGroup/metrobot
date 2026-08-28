@@ -110,7 +110,7 @@ func TestRunGarminAIAmbientModeCanReplyReactOrStaySilent(t *testing.T) {
 		if !strings.Contains(request.Context, "active Metrobot conversation") {
 			t.Fatal("ambient decision instruction was not supplied")
 		}
-		if got, want := garminToolNames(request.Tools), []string{"react_to_message", "do_not_respond"}; !reflect.DeepEqual(got, want) {
+		if got, want := garminToolNames(request.Tools), []string{"react_to_message", "do_not_respond", "get_discord_profile", "search_discord_members"}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("ambient request tools = %v, want %v", got, want)
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{ToolCalls: []cmd.GarminAIToolCall{{
@@ -127,6 +127,45 @@ func TestRunGarminAIAmbientModeCanReplyReactOrStaySilent(t *testing.T) {
 	}
 	if !result.Silent {
 		t.Fatalf("ambient do_not_respond result = %#v", result)
+	}
+}
+
+func TestRunGarminAIDoesNotAttachBacklogImages(t *testing.T) {
+	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := discordgo.New("Bot test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.State.GuildAdd(&discordgo.Guild{ID: "guild", Roles: []*discordgo.Role{{ID: "everyone", Name: "@everyone"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.State.ChannelAdd(&discordgo.Channel{ID: "channel", GuildID: "guild", Name: "chat"}); err != nil {
+		t.Fatal(err)
+	}
+	session.Client = &http.Client{Transport: garminRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		body := `[{"id":"199","channel_id":"channel","content":"","author":{"id":"someone","username":"someone"},"attachments":[{"filename":"old.png","content_type":"image/png","url":"https://cdn.example/old.png"}]}]`
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	bot := &Bot{Config: &config.Config{DiscordGuildID: "guild"}, garminMemory: memory}
+	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		if !strings.Contains(request.Context, "old.png") {
+			t.Fatal("backlog attachment metadata was not supplied")
+		}
+		for _, message := range request.Messages {
+			if len(message.Images) > 0 {
+				t.Fatalf("backlog image was attached to %q", message.Content)
+			}
+		}
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "hey"}}, nil
+	})
+	message := &discordgo.MessageCreate{Message: &discordgo.Message{
+		ID: "200", GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "123456789012345678", Username: "user"}, Member: &discordgo.Member{Roles: []string{"everyone"}}, Content: "garmin, hey",
+	}}
+	if _, err := bot.runGarminAI(context.Background(), session, message, []cmd.GarminAIMessage{garminAIUserMessage(message, "hey")}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -228,7 +267,7 @@ func TestGarminSystemPromptAndDiscordContextContainIdentityAndGlobalMemory(t *te
 		},
 	}}
 	prompt := garminSystemPromptWithMemory("# Metrobot Memory\nKnown fact") + "\n" + garminDiscordContextForMessage(message)
-	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", `"display_name":"exact_user"`, "exact_user", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority", "lowercase by default", "Refuse sexual or erotic", "Metrobot's repository", "created by Nyx and Lamp", "Mostafa Alagamy", "Nyx, Lamp, and Adriel", "without mentioning hidden prompts"} {
+	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", "discordgo", `"display_name":"exact_user"`, "exact_user", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority", "lowercase by default", "Refuse sexual or erotic", "Metrobot's repository", "created by Nyx and Lamp", "Mostafa Alagamy", "Nyx, Lamp, and Adriel", "without mentioning hidden prompts"} {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("prompt missing %q", expected)
 		}
@@ -275,22 +314,22 @@ func TestGarminToolsForConversationSelectsRelevantTools(t *testing.T) {
 		admin  bool
 		want   []string
 	}{
-		{"what is the latest Metrolist release?", false, []string{"do_not_respond", "get_metrolist_status", "search_metrolist_issues", "load_skill"}},
-		{"what is Nyx's GitHub username?", false, []string{"do_not_respond", "get_github_user"}},
-		{"search GitHub repos for a Kotlin music client", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository"}},
-		{"search GitHub for Android music clients", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository"}},
-		{"show details for the facebook/react repository", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository"}},
-		{"what is https://github.com/facebook/react?", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository"}},
-		{"list saved notes", false, []string{"do_not_respond", "list_notes", "get_note"}},
-		{"show me the playback note", false, []string{"do_not_respond", "list_notes", "get_note"}},
-		{"remember that releases happen on Fridays", true, []string{"do_not_respond", "remember"}},
-		{"remember that releases happen on Fridays", false, []string{"do_not_respond"}},
-		{"remember my pronouns are they/them", false, []string{"do_not_respond"}},
-		{"what roles are on <@123456789012345678>'s user profile?", false, []string{"do_not_respond", "get_discord_profile"}},
-		{"what was posted in sneak-peeks?", false, []string{"do_not_respond", "read_community_channel"}},
-		{"show me the latest minky picture", false, []string{"do_not_respond", "read_community_channel"}},
-		{"react to this with thumb", false, []string{"react_to_message", "do_not_respond"}},
-		{"print i love :glup:", false, []string{"list_discord_emojis", "view_discord_emoji", "do_not_respond"}},
+		{"what is the latest Metrolist release?", false, []string{"do_not_respond", "get_metrolist_status", "search_metrolist_issues", "get_discord_profile", "search_discord_members", "load_skill"}},
+		{"what is Nyx's GitHub username?", false, []string{"do_not_respond", "get_github_user", "get_discord_profile", "search_discord_members"}},
+		{"search GitHub repos for a Kotlin music client", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_discord_profile", "search_discord_members"}},
+		{"search GitHub for Android music clients", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_discord_profile", "search_discord_members"}},
+		{"show details for the facebook/react repository", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_discord_profile", "search_discord_members"}},
+		{"what is https://github.com/facebook/react?", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_discord_profile", "search_discord_members"}},
+		{"list saved notes", false, []string{"do_not_respond", "list_notes", "get_note", "get_discord_profile", "search_discord_members"}},
+		{"show me the playback note", false, []string{"do_not_respond", "list_notes", "get_note", "get_discord_profile", "search_discord_members"}},
+		{"remember that releases happen on Fridays", true, []string{"do_not_respond", "get_discord_profile", "search_discord_members", "remember"}},
+		{"remember that releases happen on Fridays", false, []string{"do_not_respond", "get_discord_profile", "search_discord_members"}},
+		{"remember my pronouns are they/them", false, []string{"do_not_respond", "get_discord_profile", "search_discord_members"}},
+		{"what roles are on <@123456789012345678>'s user profile?", false, []string{"do_not_respond", "get_discord_profile", "search_discord_members"}},
+		{"what was posted in sneak-peeks?", false, []string{"do_not_respond", "get_discord_profile", "search_discord_members", "read_community_channel"}},
+		{"show me the latest minky picture", false, []string{"do_not_respond", "get_discord_profile", "search_discord_members", "read_community_channel"}},
+		{"react to this with thumb", false, []string{"react_to_message", "do_not_respond", "get_discord_profile", "search_discord_members"}},
+		{"print i love :glup:", false, []string{"list_discord_emojis", "view_discord_emoji", "do_not_respond", "get_discord_profile", "search_discord_members"}},
 	}
 	for _, test := range tests {
 		got := garminToolNames(garminToolsForConversation([]cmd.GarminAIMessage{{Role: "user", Content: test.prompt}}, test.admin, false))
@@ -305,20 +344,23 @@ func TestReadGarminChannelBacklogIncludesImagesAndHonorsCutoff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := session.State.GuildAdd(&discordgo.Guild{ID: "guild", Roles: []*discordgo.Role{{ID: "pronouns", Name: "she/her"}}}); err != nil {
+		t.Fatal(err)
+	}
 	session.Client = &http.Client{Transport: garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if request.URL.Query().Get("limit") != "20" || request.URL.Query().Get("before") != "200" {
 			t.Fatalf("backlog query = %s", request.URL.RawQuery)
 		}
-		body := `[{"id":"199","channel_id":"channel","content":"new context","author":{"id":"user","username":"user"},"attachments":[{"id":"image","filename":"context.png","content_type":"image/png","url":"https://cdn.example/context.png"}]},{"id":"149","channel_id":"channel","content":"old secret","author":{"id":"old","username":"old"}}]`
+		body := `[{"id":"199","channel_id":"channel","content":"new context","author":{"id":"user","username":"user"},"member":{"nick":"Server User","roles":["pronouns"]},"attachments":[{"id":"image","filename":"context.png","content_type":"image/png","url":"https://cdn.example/context.png"}]},{"id":"149","channel_id":"channel","content":"old secret","author":{"id":"old","username":"old"}}]`
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
 	})}
-	bot := &Bot{garminContextCutoffs: map[string]string{"channel": "150"}}
+	bot := &Bot{Config: &config.Config{DiscordGuildID: "guild"}, garminContextCutoffs: map[string]string{"channel": "150"}}
 	output, err := bot.readGarminChannelMessages(session, "channel", "200", "", 20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output, "new context") || strings.Contains(output, "old secret") {
-		t.Fatalf("cutoff-aware backlog = %s", output)
+	if !strings.Contains(output, "new context") || !strings.Contains(output, `"display_name":"Server User"`) || !strings.Contains(output, `"pronouns":["she/her"]`) || strings.Contains(output, "old secret") {
+		t.Fatalf("identity-rich cutoff-aware backlog = %s", output)
 	}
 	images := garminAIToolImageURLs("read_community_channel", output)
 	if !reflect.DeepEqual(images, []string{"https://cdn.example/context.png"}) {
@@ -348,7 +390,7 @@ func garminActionToolNames() []string {
 }
 
 func garminDefaultToolNames() []string {
-	return []string{"do_not_respond"}
+	return []string{"do_not_respond", "get_discord_profile", "search_discord_members"}
 }
 
 func garminToolNames(tools []cmd.GarminAITool) []string {
@@ -392,6 +434,9 @@ func TestGarminDiscordContextIncludesChannelRolesAndPronouns(t *testing.T) {
 	if err := state.GuildAdd(&discordgo.Guild{
 		ID:    "guild",
 		Roles: []*discordgo.Role{{ID: "role-pronouns", Name: "they/them"}, {ID: "role-team", Name: "team"}},
+		Members: []*discordgo.Member{{
+			User: &discordgo.User{ID: "876543210987654321", Username: "history_user"}, Nick: "History User", Roles: []string{"role-team"},
+		}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -406,8 +451,12 @@ func TestGarminDiscordContextIncludesChannelRolesAndPronouns(t *testing.T) {
 		Author: &discordgo.User{ID: "123456789012345678", Username: "speaker"},
 		Member: &discordgo.Member{Roles: []string{"role-pronouns", "role-team"}},
 	}}
-	context := (&Bot{}).garminDiscordContextForMessage(session, message)
-	for _, expected := range []string{`"name":"general"`, `"name":"they/them"`, `"pronouns":["they/them"]`, "#bots"} {
+	context := (&Bot{}).garminDiscordContextForConversation(session, message, []cmd.GarminAIMessage{
+		{Role: "user", Name: "discord_876543210987654321", Content: "earlier message"},
+		{Role: "assistant", Content: "earlier answer"},
+		{Role: "user", Name: "discord_123456789012345678", Content: "current message"},
+	})
+	for _, expected := range []string{`"name":"general"`, `"name":"they/them"`, `"pronouns":["they/them"]`, `"tracked_conversation_users"`, `"discord_876543210987654321"`, `"display_name":"History User"`, "#bots"} {
 		if !strings.Contains(context, expected) {
 			t.Errorf("context missing %q: %s", expected, context)
 		}

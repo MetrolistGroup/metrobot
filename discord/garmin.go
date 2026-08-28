@@ -162,6 +162,10 @@ func enforceGarminChannelReply(channelID, answer string) string {
 	return strings.TrimSpace(answer) + " continue in <#" + garminBotsID + "> if you wanna chat more."
 }
 
+func garminAIAmbientEnabled(s *discordgo.Session, channelID string) bool {
+	return garminRedirectChannelID(s, channelID) != garminGeneralID
+}
+
 func garminRedirectChannelID(s *discordgo.Session, channelID string) string {
 	if channelID == garminGeneralID {
 		return channelID
@@ -671,8 +675,13 @@ func (b *Bot) unregisterGarminAIRequest(m *discordgo.MessageCreate) {
 }
 
 func garminAIUserMessage(m *discordgo.MessageCreate, prompt string) cmd.GarminAIMessage {
+	name := ""
+	if m != nil && m.Message != nil && m.Author != nil {
+		name = garminAIMessageName(m.Author.ID)
+	}
 	message := cmd.GarminAIMessage{
 		Role:    "user",
+		Name:    name,
 		Content: strings.TrimSpace(prompt),
 		Images:  garminAIImageURLs(m),
 	}
@@ -680,6 +689,13 @@ func garminAIUserMessage(m *discordgo.MessageCreate, prompt string) cmd.GarminAI
 		message.Content = "what is in this image?"
 	}
 	return message
+}
+
+func garminAIMessageName(userID string) string {
+	if userID == "" {
+		return ""
+	}
+	return "discord_" + userID
 }
 
 func garminAIMessageHasInput(message cmd.GarminAIMessage) bool {
@@ -815,18 +831,6 @@ func (b *Bot) storeGarminAIContextLocked(messageID string, m *discordgo.MessageC
 		b.garminAIContexts[messageID] = context
 	}
 	b.garminAIUserContexts[userKey] = context
-}
-
-func addGarminImagesToLatestUser(messages []cmd.GarminAIMessage, imageURLs []string) {
-	if len(imageURLs) == 0 {
-		return
-	}
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "user" {
-			messages[i].Images = uniqueGarminAIImageURLs(append(append([]string(nil), messages[i].Images...), imageURLs...), garminAIMaxImages)
-			return
-		}
-	}
 }
 
 func garminAIEmojiByName(s *discordgo.Session, guildID, name string) (*discordgo.Emoji, bool) {
