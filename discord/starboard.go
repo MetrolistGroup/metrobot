@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MetrolistGroup/metrobot/db"
 	"github.com/bwmarrin/discordgo"
 	"go.uber.org/zap"
 )
@@ -15,7 +16,22 @@ const (
 	prohibitedStarOfDavidTextReaction   = "✡"
 	prohibitedFlagReactionReason        = "using prohibited :flag_il: reaction"
 	prohibitedStarOfDavidReactionReason = "using prohibited :star_of_david: reaction"
+	defaultStarboardEmoji               = "⭐"
+	sobboardEmoji                       = "😭"
+	defaultBoardThreshold               = 3
 )
+
+var ignoredBoardCategories = map[string]struct{}{
+	"1441100425595195442": {},
+	"1417289207944183939": {},
+	"1471523726947254272": {},
+	"1462269835756175462": {},
+}
+
+type reactionBoard struct {
+	name  string
+	emoji string
+}
 
 type prohibitedReactionScanResult struct {
 	MessagesChecked  int
@@ -43,59 +59,54 @@ func isSessionUser(s *discordgo.Session, userID string) bool {
 	return s.State != nil && s.State.User != nil && userID == s.State.User.ID
 }
 
-// handleReactionAdd handles reaction add events for starboard
+func (b *Bot) reactionBoards() []reactionBoard {
+	starEmoji := b.Config.StarboardEmoji
+	if starEmoji == "" {
+		starEmoji = defaultStarboardEmoji
+	}
+	return []reactionBoard{
+		{name: "starboard", emoji: starEmoji},
+		{name: "sobboard", emoji: sobboardEmoji},
+	}
+}
+
+func (b *Bot) reactionBoard(emoji string) (reactionBoard, bool) {
+	for _, board := range b.reactionBoards() {
+		if board.emoji == emoji {
+			return board, true
+		}
+	}
+	return reactionBoard{}, false
+}
+
+func (b *Bot) boardThreshold() int {
+	if b.Config.StarboardThreshold > 0 {
+		return b.Config.StarboardThreshold
+	}
+	return defaultBoardThreshold
+}
+
+// handleReactionAdd handles reaction add events for starboard and sobboard.
 func (b *Bot) handleReactionAdd(s *discordgo.Session, r *discordgo.MessageReactionAdd) {
 	if b.handleProhibitedReaction(s, r) {
 		return
 	}
-
-	// Check if starboard is configured
-	if b.Config.StarboardChannelID == "" {
-		b.Logger.Debug("starboard reaction ignored - no channel configured",
-			zap.String("emoji", r.Emoji.Name))
+	if b.Config.StarboardChannelID == "" || r.GuildID != b.Config.DiscordGuildID {
 		return
 	}
 
-	// Only process reactions in the configured guild
-	if r.GuildID != b.Config.DiscordGuildID {
-		b.Logger.Debug("starboard reaction ignored - wrong guild",
-			zap.String("guildID", r.GuildID),
-			zap.String("expectedGuild", b.Config.DiscordGuildID))
+	board, ok := b.reactionBoard(r.Emoji.Name)
+	if !ok {
 		return
 	}
-
-	// Get the emoji to check (default to ⭐ if not configured)
-	starEmoji := b.Config.StarboardEmoji
-	if starEmoji == "" {
-		starEmoji = "⭐"
-	}
-
-	b.Logger.Debug("starboard processing reaction",
-		zap.String("emoji", r.Emoji.Name),
-		zap.String("expectedEmoji", starEmoji),
-		zap.String("messageID", r.MessageID),
-		zap.String("userID", r.UserID),
-		zap.String("channelID", r.ChannelID))
-
-	// Check if the reaction is the star emoji
-	if r.Emoji.Name != starEmoji {
-		b.Logger.Debug("starboard reaction ignored - wrong emoji",
-			zap.String("got", r.Emoji.Name),
-			zap.String("want", starEmoji))
+	if r.ChannelID == b.Config.StarboardChannelID {
+		b.handleBoardMessageReaction(s, r.MessageID, board)
 		return
 	}
-
-	// Check if this is a reaction on a starboard message
-	isStarboardChannel := r.ChannelID == b.Config.StarboardChannelID
-
-	if isStarboardChannel {
-		// Handle star reactions on starboard messages
-		b.handleStarboardReaction(s, r)
+	if b.ignoreBoardChannel(s, r.ChannelID) {
 		return
 	}
-
-	// Handle reactions on regular messages (original starboard logic)
-	b.handleOriginalMessageReaction(s, r)
+	b.handleOriginalMessageReaction(s, r.ChannelID, r.MessageID, r.GuildID, board)
 }
 
 func (b *Bot) handleProhibitedReaction(s *discordgo.Session, r *discordgo.MessageReactionAdd) bool {
@@ -205,691 +216,369 @@ func (b *Bot) scanProhibitedReactions(s *discordgo.Session, channelID string) (p
 	return result, nil
 }
 
-// handleStarboardReaction handles star reactions on starboard messages
-func (b *Bot) handleStarboardReaction(s *discordgo.Session, r *discordgo.MessageReactionAdd) {
-	// Find the original message ID from the starboard entry
-	entry, err := b.DB.GetStarboardEntryByStarboardMsgID(r.MessageID)
+func (b *Bot) ignoreBoardChannel(s *discordgo.Session, channelID string) bool {
+	ignored, err := boardChannelIgnored(s, channelID)
 	if err != nil {
-		b.Logger.Error("starboard failed to get entry by starboard message ID",
-			zap.Error(err),
-			zap.String("starboardMsgID", r.MessageID))
-		return
+		b.Logger.Warn("board reaction ignored - failed to resolve channel category",
+			zap.Error(err), zap.String("channelID", channelID))
+		return true
 	}
-
-	if entry == nil {
-		b.Logger.Debug("starboard reaction on starboard message - no entry found",
-			zap.String("starboardMsgID", r.MessageID))
-		return
-	}
-
-	// Get the original message to count stars
-	msg, err := s.ChannelMessage(entry.ChannelID, entry.OriginalMsgID)
-	if err != nil {
-		b.Logger.Error("starboard failed to get original message",
-			zap.Error(err),
-			zap.String("channelID", entry.ChannelID),
-			zap.String("messageID", entry.OriginalMsgID))
-		return
-	}
-
-	starEmoji := b.Config.StarboardEmoji
-	if starEmoji == "" {
-		starEmoji = "⭐"
-	}
-	starCount := b.countTotalStarboardReactions(s, msg, entry.StarboardMsgID, starEmoji)
-
-	b.Logger.Info("starboard reaction on starboard message processed",
-		zap.String("starboardMsgID", r.MessageID),
-		zap.String("originalMsgID", entry.OriginalMsgID),
-		zap.Int("starCount", starCount))
-
-	// Update the entry
-	if err := b.DB.UpdateStarboardEntry(entry.OriginalMsgID, starCount, entry.StarboardMsgID); err != nil {
-		b.Logger.Error("starboard failed to update entry",
-			zap.Error(err),
-			zap.String("messageID", entry.OriginalMsgID))
-		return
-	}
-
-	// Update the starboard message
-	if entry.StarboardMsgID != nil {
-		b.updateStarboardMessage(s, *entry.StarboardMsgID, msg, starCount)
-	}
+	return ignored
 }
 
-// handleOriginalMessageReaction handles star reactions on original messages
-func (b *Bot) handleOriginalMessageReaction(s *discordgo.Session, r *discordgo.MessageReactionAdd) {
-	// Get the emoji to check (default to ⭐ if not configured)
-	starEmoji := b.Config.StarboardEmoji
-	if starEmoji == "" {
-		starEmoji = "⭐"
-	}
-
-	// Get the message
-	msg, err := s.ChannelMessage(r.ChannelID, r.MessageID)
+func boardChannelIgnored(s *discordgo.Session, channelID string) (bool, error) {
+	channel, err := getDiscordChannel(s, channelID)
 	if err != nil {
-		b.Logger.Error("starboard failed to get message",
-			zap.Error(err),
-			zap.String("channelID", r.ChannelID),
-			zap.String("messageID", r.MessageID))
-		return
+		return false, err
 	}
-
-	b.Logger.Debug("starboard got message",
-		zap.String("author", msg.Author.Username),
-		zap.String("authorID", msg.Author.ID),
-		zap.Bool("isBot", msg.Author.Bot),
-		zap.Int("reactionCount", len(msg.Reactions)))
-
-	// Log all reactions for debugging
-	for _, reaction := range msg.Reactions {
-		b.Logger.Debug("starboard message reaction",
-			zap.String("emojiName", reaction.Emoji.Name),
-			zap.Int("count", reaction.Count),
-			zap.String("emojiID", reaction.Emoji.ID))
+	categoryID := channel.ParentID
+	if channel.IsThread() {
+		parent, err := getDiscordChannel(s, channel.ParentID)
+		if err != nil {
+			return false, err
+		}
+		categoryID = parent.ParentID
 	}
+	_, ignored := ignoredBoardCategories[categoryID]
+	return ignored, nil
+}
 
-	// Don't starboard bot messages (optional - remove if you want to allow bot messages)
-	if msg.Author.Bot {
-		b.Logger.Debug("starboard ignored - bot message",
-			zap.String("authorID", msg.Author.ID))
-		return
+func getDiscordChannel(s *discordgo.Session, channelID string) (*discordgo.Channel, error) {
+	if s.State != nil {
+		if channel, err := s.State.Channel(channelID); err == nil {
+			return channel, nil
+		}
 	}
+	return s.Channel(channelID)
+}
 
-	// Check if message is already in starboard
-	entry, err := b.DB.GetStarboardEntry(r.MessageID)
+func (b *Bot) handleBoardMessageReaction(s *discordgo.Session, boardMessageID string, board reactionBoard) {
+	entry, err := b.DB.GetBoardEntryByStarboardMsgID(board.name, boardMessageID)
 	if err != nil {
-		b.Logger.Error("starboard failed to get entry from DB",
-			zap.Error(err),
-			zap.String("messageID", r.MessageID))
+		b.Logger.Error("failed to find board entry", zap.Error(err), zap.String("board", board.name))
+		return
+	}
+	if entry == nil || b.ignoreBoardChannel(s, entry.ChannelID) {
 		return
 	}
 
-	// Count total star reactions. Existing entries also include stars on the starboard message.
-	var starboardMsgID *string
+	msg, err := s.ChannelMessage(entry.ChannelID, entry.OriginalMsgID)
+	if err != nil {
+		b.Logger.Error("failed to get original board message", zap.Error(err), zap.String("board", board.name))
+		return
+	}
+	count := b.countTotalBoardReactions(s, msg, entry.StarboardMsgID, board)
+	b.syncBoardEntry(s, board, entry, msg, count)
+}
+
+func (b *Bot) handleOriginalMessageReaction(s *discordgo.Session, channelID, messageID, guildID string, board reactionBoard) {
+	msg, err := s.ChannelMessage(channelID, messageID)
+	if err != nil {
+		b.Logger.Error("failed to get message for board", zap.Error(err), zap.String("board", board.name))
+		return
+	}
+	if msg.Author == nil {
+		return
+	}
+
+	entry, err := b.DB.GetBoardEntry(board.name, messageID)
+	if err != nil {
+		b.Logger.Error("failed to get board entry", zap.Error(err), zap.String("board", board.name))
+		return
+	}
+	var boardMessageID *string
 	if entry != nil {
-		starboardMsgID = entry.StarboardMsgID
+		boardMessageID = entry.StarboardMsgID
 	}
-	starCount := b.countTotalStarboardReactions(s, msg, starboardMsgID, starEmoji)
+	count := b.countTotalBoardReactions(s, msg, boardMessageID, board)
 
-	b.Logger.Info("starboard reaction processed",
-		zap.String("messageID", r.MessageID),
-		zap.Int("starCount", starCount),
-		zap.Int("totalReactions", len(msg.Reactions)),
-		zap.String("emoji", starEmoji))
-
-	threshold := b.Config.StarboardThreshold
-	if threshold == 0 {
-		threshold = 3 // Default threshold
+	if entry != nil {
+		b.syncBoardEntry(s, board, entry, msg, count)
+		return
+	}
+	if count < b.boardThreshold() {
+		return
 	}
 
-	b.Logger.Debug("starboard threshold check",
-		zap.Int("starCount", starCount),
-		zap.Int("threshold", threshold),
-		zap.Bool("hasEntry", entry != nil))
+	entry, err = b.DB.AddBoardEntry(
+		board.name,
+		messageID,
+		channelID,
+		guildID,
+		msg.Author.ID,
+		msg.Content,
+		count,
+		time.Now().Unix(),
+	)
+	if err != nil {
+		b.Logger.Error("failed to add board entry", zap.Error(err), zap.String("board", board.name))
+		return
+	}
 
-	if entry == nil {
-		// New entry - check if threshold is met
-		if starCount >= threshold {
-			b.Logger.Info("starboard threshold reached - creating entry",
-				zap.String("messageID", r.MessageID),
-				zap.Int("starCount", starCount),
-				zap.Int("threshold", threshold))
-
-			// Create starboard entry and post
-			content := msg.Content
-			if len(content) > 1000 {
-				content = content[:997] + "..."
-			}
-
-			entry, err = b.DB.AddStarboardEntry(
-				r.MessageID,
-				r.ChannelID,
-				r.GuildID,
-				msg.Author.ID,
-				content,
-				starCount,
-				time.Now().Unix(),
-			)
-			if err != nil {
-				b.Logger.Error("starboard failed to add entry to DB",
-					zap.Error(err),
-					zap.String("messageID", r.MessageID))
-				return
-			}
-
-			b.Logger.Info("starboard entry created in DB",
-				zap.Int64("entryID", entry.ID),
-				zap.String("originalMsgID", entry.OriginalMsgID))
-
-			// Post to starboard channel
-			starboardMsgID, err := b.postToStarboard(s, msg, starCount)
-			if err != nil {
-				b.Logger.Error("starboard failed to post to channel",
-					zap.Error(err),
-					zap.String("channelID", b.Config.StarboardChannelID))
-				return
-			}
-
-			b.Logger.Info("starboard message posted",
-				zap.String("starboardMsgID", starboardMsgID),
-				zap.String("channelID", b.Config.StarboardChannelID))
-
-			// Update entry with starboard message ID
-			if err := b.DB.UpdateStarboardEntry(r.MessageID, starCount, &starboardMsgID); err != nil {
-				b.Logger.Error("starboard failed to update entry with starboard message ID",
-					zap.Error(err),
-					zap.String("messageID", r.MessageID))
-			}
-		} else {
-			b.Logger.Debug("starboard threshold not reached yet",
-				zap.String("messageID", r.MessageID),
-				zap.Int("starCount", starCount),
-				zap.Int("threshold", threshold))
-		}
-	} else {
-		b.Logger.Info("starboard updating existing entry",
-			zap.String("messageID", r.MessageID),
-			zap.Int64("entryID", entry.ID),
-			zap.Int("newStarCount", starCount),
-			zap.String("existingStarboardMsgID", func() string {
-				if entry.StarboardMsgID != nil {
-					return *entry.StarboardMsgID
-				}
-				return "nil"
-			}()))
-
-		// Update existing entry
-		if err := b.DB.UpdateStarboardEntry(r.MessageID, starCount, entry.StarboardMsgID); err != nil {
-			b.Logger.Error("starboard failed to update entry",
-				zap.Error(err),
-				zap.String("messageID", r.MessageID))
-			return
-		}
-
-		// Update the starboard message
-		if entry.StarboardMsgID != nil {
-			b.updateStarboardMessage(s, *entry.StarboardMsgID, msg, starCount)
-		} else {
-			b.Logger.Warn("starboard entry exists but has no starboard message ID",
-				zap.String("messageID", r.MessageID))
-		}
+	postedID, err := b.postToBoard(s, msg, count, board)
+	if err != nil {
+		b.DB.DeleteBoardEntry(board.name, messageID)
+		b.Logger.Error("failed to post board entry", zap.Error(err), zap.String("board", board.name))
+		return
+	}
+	if err := b.DB.UpdateBoardEntry(board.name, messageID, count, &postedID); err != nil {
+		b.Logger.Error("failed to save board message ID", zap.Error(err), zap.String("board", board.name))
 	}
 }
 
-// handleReactionRemove handles reaction remove events for starboard
+// handleReactionRemove handles reaction remove events for starboard and sobboard.
 func (b *Bot) handleReactionRemove(s *discordgo.Session, r *discordgo.MessageReactionRemove) {
-	// Check if starboard is configured
-	if b.Config.StarboardChannelID == "" {
+	if b.Config.StarboardChannelID == "" || r.GuildID != b.Config.DiscordGuildID {
 		return
 	}
-
-	// Only process reactions in the configured guild
-	if r.GuildID != b.Config.DiscordGuildID {
+	board, ok := b.reactionBoard(r.Emoji.Name)
+	if !ok {
 		return
 	}
-
-	// Get the emoji to check (default to ⭐ if not configured)
-	starEmoji := b.Config.StarboardEmoji
-	if starEmoji == "" {
-		starEmoji = "⭐"
-	}
-
-	// Check if the reaction is the star emoji
-	if r.Emoji.Name != starEmoji {
+	if r.ChannelID == b.Config.StarboardChannelID {
+		b.handleBoardMessageReaction(s, r.MessageID, board)
 		return
 	}
-
-	// Check if this is a reaction removal on a starboard message
-	isStarboardChannel := r.ChannelID == b.Config.StarboardChannelID
-
-	if isStarboardChannel {
-		b.handleStarboardReactionRemove(s, r)
+	if b.ignoreBoardChannel(s, r.ChannelID) {
 		return
 	}
-
-	b.handleOriginalMessageReactionRemove(s, r)
+	b.handleOriginalMessageReactionRemove(s, r.ChannelID, r.MessageID, board)
 }
 
-// handleStarboardReactionRemove handles reaction removal on starboard messages
-func (b *Bot) handleStarboardReactionRemove(s *discordgo.Session, r *discordgo.MessageReactionRemove) {
-	// Find the original message ID from the starboard entry
-	entry, err := b.DB.GetStarboardEntryByStarboardMsgID(r.MessageID)
+func (b *Bot) handleOriginalMessageReactionRemove(s *discordgo.Session, channelID, messageID string, board reactionBoard) {
+	entry, err := b.DB.GetBoardEntry(board.name, messageID)
+	if err != nil || entry == nil {
+		return
+	}
+
+	msg, err := s.ChannelMessage(channelID, messageID)
 	if err != nil {
-		b.Logger.Error("starboard failed to get entry by starboard message ID",
-			zap.Error(err),
-			zap.String("starboardMsgID", r.MessageID))
+		count := entry.StarCount - 1
+		if count < 0 {
+			count = 0
+		}
+		b.syncBoardEntry(s, board, entry, nil, count)
 		return
 	}
-
-	if entry == nil {
-		b.Logger.Debug("starboard reaction removal on starboard message - no entry found",
-			zap.String("starboardMsgID", r.MessageID))
-		return
-	}
-
-	// Get the original message to count stars
-	starEmoji := b.Config.StarboardEmoji
-	if starEmoji == "" {
-		starEmoji = "⭐"
-	}
-
-	msg, err := s.ChannelMessage(entry.ChannelID, entry.OriginalMsgID)
-	if err != nil {
-		b.Logger.Error("starboard failed to get original message for removal",
-			zap.Error(err),
-			zap.String("channelID", entry.ChannelID),
-			zap.String("messageID", entry.OriginalMsgID))
-		return
-	}
-
-	starCount := b.countTotalStarboardReactions(s, msg, entry.StarboardMsgID, starEmoji)
-
-	threshold := b.Config.StarboardThreshold
-	if threshold == 0 {
-		threshold = 3
-	}
-
-	if starCount < threshold {
-		b.Logger.Info("starboard removing entry - below threshold",
-			zap.String("messageID", entry.OriginalMsgID),
-			zap.Int("starCount", starCount),
-			zap.Int("threshold", threshold))
-		// Remove from starboard
-		if entry.StarboardMsgID != nil {
-			s.ChannelMessageDelete(b.Config.StarboardChannelID, *entry.StarboardMsgID)
-		}
-		b.DB.DeleteStarboardEntry(entry.OriginalMsgID)
-	} else {
-		// Update existing entry
-		b.Logger.Info("starboard updating count after removal",
-			zap.String("messageID", entry.OriginalMsgID),
-			zap.Int("starCount", starCount))
-		if err := b.DB.UpdateStarboardEntry(entry.OriginalMsgID, starCount, entry.StarboardMsgID); err != nil {
-			b.Logger.Error("starboard failed to update entry after removal",
-				zap.Error(err),
-				zap.String("messageID", entry.OriginalMsgID))
-			return
-		}
-
-		// Update the starboard message
-		if entry.StarboardMsgID != nil {
-			b.updateStarboardMessage(s, *entry.StarboardMsgID, msg, starCount)
-		}
-	}
+	count := b.countTotalBoardReactions(s, msg, entry.StarboardMsgID, board)
+	b.syncBoardEntry(s, board, entry, msg, count)
 }
 
-// handleOriginalMessageReactionRemove handles reaction removal on original messages
-func (b *Bot) handleOriginalMessageReactionRemove(s *discordgo.Session, r *discordgo.MessageReactionRemove) {
-	// Get the emoji to check (default to ⭐ if not configured)
-	starEmoji := b.Config.StarboardEmoji
-	if starEmoji == "" {
-		starEmoji = "⭐"
-	}
-
-	b.Logger.Debug("starboard processing reaction removal",
-		zap.String("messageID", r.MessageID),
-		zap.String("userID", r.UserID))
-
-	// Get the message
-	msg, err := s.ChannelMessage(r.ChannelID, r.MessageID)
-	if err != nil {
-		// Message might be deleted, try to get from database
-		entry, dbErr := b.DB.GetStarboardEntry(r.MessageID)
-		if dbErr != nil || entry == nil {
-			b.Logger.Debug("starboard reaction removal ignored - message deleted and not in starboard",
-				zap.String("messageID", r.MessageID))
-			return
-		}
-
-		// Update star count to reflect removal (we don't know exact count, so decrement by 1)
-		newCount := entry.StarCount - 1
-		if newCount < 0 {
-			newCount = 0
-		}
-
-		threshold := b.Config.StarboardThreshold
-		if threshold == 0 {
-			threshold = 3
-		}
-
-		if newCount < threshold && entry.StarboardMsgID != nil {
-			// Remove from starboard
-			b.Logger.Info("starboard removing entry - below threshold after message deletion",
-				zap.String("messageID", r.MessageID),
-				zap.Int("newCount", newCount),
-				zap.Int("threshold", threshold))
-			s.ChannelMessageDelete(b.Config.StarboardChannelID, *entry.StarboardMsgID)
-			b.DB.DeleteStarboardEntry(r.MessageID)
-		} else {
-			b.DB.UpdateStarboardEntry(r.MessageID, newCount, entry.StarboardMsgID)
-			if entry.StarboardMsgID != nil {
-				// Update message with estimated count
-				b.updateStarboardMessage(s, *entry.StarboardMsgID, nil, newCount)
+func (b *Bot) syncBoardEntry(s *discordgo.Session, board reactionBoard, entry *db.BoardEntry, msg *discordgo.Message, count int) {
+	if count < b.boardThreshold() {
+		if entry.StarboardMsgID != nil {
+			if err := s.ChannelMessageDelete(b.Config.StarboardChannelID, *entry.StarboardMsgID); err != nil {
+				b.Logger.Warn("failed to delete board message", zap.Error(err), zap.String("board", board.name))
 			}
 		}
-		return
-	}
-
-	// Get existing entry
-	entry, err := b.DB.GetStarboardEntry(r.MessageID)
-	if err != nil {
-		b.Logger.Error("starboard failed to get entry for removal",
-			zap.Error(err),
-			zap.String("messageID", r.MessageID))
-		return
-	}
-
-	if entry == nil {
-		b.Logger.Debug("starboard reaction removal ignored - message not in starboard",
-			zap.String("messageID", r.MessageID))
-		return // Not in starboard yet
-	}
-
-	// Count total star reactions, including stars on the starboard message.
-	starCount := b.countTotalStarboardReactions(s, msg, entry.StarboardMsgID, starEmoji)
-
-	b.Logger.Debug("starboard reaction removal counted stars",
-		zap.String("messageID", r.MessageID),
-		zap.Int("starCount", starCount))
-
-	threshold := b.Config.StarboardThreshold
-	if threshold == 0 {
-		threshold = 3
-	}
-
-	if starCount < threshold {
-		b.Logger.Info("starboard removing entry - below threshold",
-			zap.String("messageID", r.MessageID),
-			zap.Int("starCount", starCount),
-			zap.Int("threshold", threshold))
-		// Remove from starboard
-		if entry.StarboardMsgID != nil {
-			s.ChannelMessageDelete(b.Config.StarboardChannelID, *entry.StarboardMsgID)
+		if err := b.DB.DeleteBoardEntry(board.name, entry.OriginalMsgID); err != nil {
+			b.Logger.Error("failed to delete board entry", zap.Error(err), zap.String("board", board.name))
 		}
-		b.DB.DeleteStarboardEntry(r.MessageID)
-	} else {
-		// Update existing entry
-		b.Logger.Info("starboard updating count after removal",
-			zap.String("messageID", r.MessageID),
-			zap.Int("starCount", starCount))
-		if err := b.DB.UpdateStarboardEntry(r.MessageID, starCount, entry.StarboardMsgID); err != nil {
-			b.Logger.Error("starboard failed to update entry after removal",
-				zap.Error(err),
-				zap.String("messageID", r.MessageID))
-			return
-		}
-
-		// Update the starboard message
-		if entry.StarboardMsgID != nil {
-			b.updateStarboardMessage(s, *entry.StarboardMsgID, msg, starCount)
-		}
-	}
-}
-
-// handleMessageDelete handles message deletion events to clean up starboard
-func (b *Bot) handleMessageDelete(s *discordgo.Session, m *discordgo.MessageDelete) {
-	// Check if starboard is configured
-	if b.Config.StarboardChannelID == "" {
 		return
 	}
 
-	b.Logger.Debug("starboard checking deleted message",
-		zap.String("messageID", m.ID))
-
-	// Check if this message is in starboard
-	entry, err := b.DB.GetStarboardEntry(m.ID)
-	if err != nil {
-		b.Logger.Error("starboard failed to check deleted message",
-			zap.Error(err),
-			zap.String("messageID", m.ID))
+	if err := b.DB.UpdateBoardEntry(board.name, entry.OriginalMsgID, count, entry.StarboardMsgID); err != nil {
+		b.Logger.Error("failed to update board entry", zap.Error(err), zap.String("board", board.name))
 		return
 	}
-
-	if entry == nil {
-		b.Logger.Debug("starboard deleted message not in starboard",
-			zap.String("messageID", m.ID))
-		return
-	}
-
-	b.Logger.Info("starboard cleaning up deleted message",
-		zap.String("messageID", m.ID),
-		zap.String("starboardMsgID", func() string {
-			if entry.StarboardMsgID != nil {
-				return *entry.StarboardMsgID
-			}
-			return "nil"
-		}()))
-
-	// Delete the starboard message
 	if entry.StarboardMsgID != nil {
-		s.ChannelMessageDelete(b.Config.StarboardChannelID, *entry.StarboardMsgID)
+		b.updateBoardMessage(s, board, *entry.StarboardMsgID, msg, count)
 	}
-
-	// Remove from database
-	b.DB.DeleteStarboardEntry(m.ID)
 }
 
-// countReactions counts the total number of a specific emoji reaction
-func countReactions(reactions []*discordgo.MessageReactions, emoji string) int {
-	for _, r := range reactions {
-		// Check for both custom and unicode emojis
-		emojiMatch := r.Emoji.Name == emoji
-		if r.Emoji.ID != "" {
-			// Custom emoji - compare by ID if needed, but usually name works
-			emojiMatch = r.Emoji.Name == emoji || r.Emoji.ID == emoji
+// handleMessageDelete cleans both boards when an original message is deleted.
+func (b *Bot) handleMessageDelete(s *discordgo.Session, m *discordgo.MessageDelete) {
+	if b.Config.StarboardChannelID == "" {
+		return
+	}
+	for _, board := range b.reactionBoards() {
+		entry, err := b.DB.GetBoardEntry(board.name, m.ID)
+		if err != nil || entry == nil {
+			continue
 		}
-		if emojiMatch {
-			return r.Count
+		if entry.StarboardMsgID != nil {
+			s.ChannelMessageDelete(b.Config.StarboardChannelID, *entry.StarboardMsgID)
+		}
+		b.DB.DeleteBoardEntry(board.name, m.ID)
+	}
+}
+
+func countReactions(reactions []*discordgo.MessageReactions, emoji string) int {
+	for _, reaction := range reactions {
+		if reaction == nil || reaction.Emoji == nil {
+			continue
+		}
+		if reaction.Emoji.Name == emoji || reaction.Emoji.ID != "" && reaction.Emoji.ID == emoji {
+			return reaction.Count
 		}
 	}
 	return 0
 }
 
-func (b *Bot) countTotalStarboardReactions(s *discordgo.Session, originalMsg *discordgo.Message, starboardMsgID *string, starEmoji string) int {
-	starCount := 0
+func (b *Bot) countTotalBoardReactions(s *discordgo.Session, originalMsg *discordgo.Message, boardMessageID *string, board reactionBoard) int {
+	count := 0
 	if originalMsg != nil {
-		starCount += countReactions(originalMsg.Reactions, starEmoji)
+		count = countReactions(originalMsg.Reactions, board.emoji)
 	}
-	if starboardMsgID == nil {
-		return starCount
+	if boardMessageID == nil {
+		return count
 	}
 
-	starboardMsg, err := s.ChannelMessage(b.Config.StarboardChannelID, *starboardMsgID)
+	boardMessage, err := s.ChannelMessage(b.Config.StarboardChannelID, *boardMessageID)
 	if err != nil {
-		b.Logger.Warn("failed to get starboard message for star counting",
-			zap.Error(err),
-			zap.String("starboardMsgID", *starboardMsgID))
-		return starCount
+		b.Logger.Warn("failed to get board message for reaction count", zap.Error(err), zap.String("board", board.name))
+		return count
 	}
-
-	return starCount + countReactions(starboardMsg.Reactions, starEmoji)
+	return count + countReactions(boardMessage.Reactions, board.emoji)
 }
 
-// postToStarboard posts a message to the starboard channel
-func (b *Bot) postToStarboard(s *discordgo.Session, msg *discordgo.Message, starCount int) (string, error) {
-	starEmoji := b.Config.StarboardEmoji
-	if starEmoji == "" {
-		starEmoji = "⭐"
+func (b *Bot) postToBoard(s *discordgo.Session, msg *discordgo.Message, count int, board reactionBoard) (string, error) {
+	guildID := msg.GuildID
+	if guildID == "" {
+		guildID = b.Config.DiscordGuildID
 	}
-
-	// Build embed
-	description := msg.Content
-	if description == "" && len(msg.Embeds) > 0 {
-		description = "*[Message contains embeds]*"
-	}
-
 	embed := &discordgo.MessageEmbed{
 		Author: &discordgo.MessageEmbedAuthor{
 			Name:    msg.Author.Username,
 			IconURL: msg.Author.AvatarURL(""),
 		},
-		Description: description,
-		Color:       0xFFD700, // Gold color
+		Description: boardDescription(msg, guildID),
+		Color:       0xFFD700,
 		Timestamp:   msg.Timestamp.Format(time.RFC3339),
 		Footer: &discordgo.MessageEmbedFooter{
 			Text: fmt.Sprintf("#%s", msg.ChannelID),
 		},
 	}
-
-	// Add image if message has attachments
-	if len(msg.Attachments) > 0 {
-		for _, att := range msg.Attachments {
-			if isImage(att.ContentType) {
-				embed.Image = &discordgo.MessageEmbedImage{
-					URL: att.URL,
-				}
-				break
-			}
+	for _, attachment := range msg.Attachments {
+		if isImage(attachment.ContentType) {
+			embed.Image = &discordgo.MessageEmbedImage{URL: attachment.URL}
+			break
 		}
 	}
 
-	// Create message content with star count and link to original message
-	messageURL := fmt.Sprintf("https://discord.com/channels/%s/%s/%s", b.Config.DiscordGuildID, msg.ChannelID, msg.ID)
-	content := fmt.Sprintf("%s %d | <%s>", starEmoji, starCount, messageURL)
-
-	b.Logger.Info("posting to starboard",
-		zap.String("channelID", b.Config.StarboardChannelID),
-		zap.String("author", msg.Author.Username),
-		zap.Int("starCount", starCount))
-
-	// Send to starboard channel
-	starboardMsg, err := s.ChannelMessageSendComplex(b.Config.StarboardChannelID, &discordgo.MessageSend{
-		Content: content,
+	messageURL := discordMessageURL(guildID, msg.ChannelID, msg.ID)
+	posted, err := s.ChannelMessageSendComplex(b.Config.StarboardChannelID, &discordgo.MessageSend{
+		Content: fmt.Sprintf("%s %d | <%s>", board.emoji, count, messageURL),
 		Embeds:  []*discordgo.MessageEmbed{embed},
 	})
 	if err != nil {
 		return "", err
 	}
-
-	return starboardMsg.ID, nil
+	return posted.ID, nil
 }
 
-// updateStarboardMessage updates an existing starboard message
-func (b *Bot) updateStarboardMessage(s *discordgo.Session, starboardMsgID string, msg *discordgo.Message, starCount int) {
-	starEmoji := b.Config.StarboardEmoji
-	if starEmoji == "" {
-		starEmoji = "⭐"
+func boardDescription(msg *discordgo.Message, guildID string) string {
+	description := msg.Content
+	if description == "" && len(msg.Embeds) > 0 {
+		description = "*[Message contains embeds]*"
+	}
+	if msg.MessageReference == nil {
+		return truncateRunes(description, 4096)
 	}
 
-	// Create content with star count and link to original message
+	replyText := "*[Replied message unavailable]*"
+	replyAuthor := "a message"
+	channelID := msg.ChannelID
+	if msg.MessageReference.ChannelID != "" {
+		channelID = msg.MessageReference.ChannelID
+	}
+	messageID := msg.MessageReference.MessageID
+	if reply := msg.ReferencedMessage; reply != nil {
+		if reply.Content != "" {
+			replyText = reply.Content
+		} else if len(reply.Attachments) > 0 || len(reply.Embeds) > 0 {
+			replyText = "*[Message contains attachments or embeds]*"
+		}
+		if reply.Author != nil {
+			replyAuthor = "@" + reply.Author.Username
+		}
+		if reply.ChannelID != "" {
+			channelID = reply.ChannelID
+		}
+		if reply.ID != "" {
+			messageID = reply.ID
+		}
+	}
+
+	header := fmt.Sprintf("-# Replying to [%s](%s)\n", replyAuthor, discordMessageURL(guildID, channelID, messageID))
+	replyBlock := header + "> " + strings.ReplaceAll(replyText, "\n", "\n> ")
+	description = truncateRunes(description, 3840)
+	available := 4096 - len([]rune(description)) - 2
+	return truncateRunes(replyBlock, available) + "\n\n" + description
+}
+
+func truncateRunes(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	if limit == 1 {
+		return "…"
+	}
+	return string(runes[:limit-1]) + "…"
+}
+
+func discordMessageURL(guildID, channelID, messageID string) string {
+	return fmt.Sprintf("https://discord.com/channels/%s/%s/%s", guildID, channelID, messageID)
+}
+
+func (b *Bot) updateBoardMessage(s *discordgo.Session, board reactionBoard, boardMessageID string, msg *discordgo.Message, count int) {
 	var messageURL string
 	if msg != nil {
-		messageURL = fmt.Sprintf("https://discord.com/channels/%s/%s/%s", b.Config.DiscordGuildID, msg.ChannelID, msg.ID)
-	} else {
-		// If we don't have the message, try to get it from the database
-		entry, err := b.DB.GetStarboardEntryByStarboardMsgID(starboardMsgID)
-		if err == nil && entry != nil {
-			messageURL = fmt.Sprintf("https://discord.com/channels/%s/%s/%s", entry.GuildID, entry.ChannelID, entry.OriginalMsgID)
+		guildID := msg.GuildID
+		if guildID == "" {
+			guildID = b.Config.DiscordGuildID
 		}
+		messageURL = discordMessageURL(guildID, msg.ChannelID, msg.ID)
+	} else if entry, err := b.DB.GetBoardEntryByStarboardMsgID(board.name, boardMessageID); err == nil && entry != nil {
+		messageURL = discordMessageURL(entry.GuildID, entry.ChannelID, entry.OriginalMsgID)
 	}
 
-	var content string
+	content := fmt.Sprintf("%s %d", board.emoji, count)
 	if messageURL != "" {
-		content = fmt.Sprintf("%s %d | <%s>", starEmoji, starCount, messageURL)
-	} else {
-		content = fmt.Sprintf("%s %d", starEmoji, starCount)
+		content += fmt.Sprintf(" | <%s>", messageURL)
 	}
-
-	b.Logger.Debug("updating starboard message",
-		zap.String("starboardMsgID", starboardMsgID),
-		zap.Int("newStarCount", starCount))
-
-	// Edit the message content (to update star count)
-	s.ChannelMessageEdit(b.Config.StarboardChannelID, starboardMsgID, content)
+	if _, err := s.ChannelMessageEdit(b.Config.StarboardChannelID, boardMessageID, content); err != nil {
+		b.Logger.Warn("failed to update board message", zap.Error(err), zap.String("board", board.name))
+	}
 }
 
-// RefreshAllStarboard refreshes all starboard entries by rechecking their star counts
+// RefreshAllStarboard refreshes both starboard and sobboard entries.
 func (b *Bot) RefreshAllStarboard(s *discordgo.Session) error {
-	entries, err := b.DB.GetAllStarboardEntries()
-	if err != nil {
-		return fmt.Errorf("failed to get all starboard entries: %w", err)
-	}
-
-	starEmoji := b.Config.StarboardEmoji
-	if starEmoji == "" {
-		starEmoji = "⭐"
-	}
-
-	threshold := b.Config.StarboardThreshold
-	if threshold == 0 {
-		threshold = 3
-	}
-
-	b.Logger.Info("refreshing all starboard entries",
-		zap.Int("count", len(entries)))
-
-	for _, entry := range entries {
-		// Get the original message to count stars
-		msg, err := s.ChannelMessage(entry.ChannelID, entry.OriginalMsgID)
+	for _, board := range b.reactionBoards() {
+		entries, err := b.DB.GetAllBoardEntries(board.name)
 		if err != nil {
-			b.Logger.Error("starboard refresh failed to get message",
-				zap.Error(err),
-				zap.String("channelID", entry.ChannelID),
-				zap.String("messageID", entry.OriginalMsgID))
-			continue
+			return fmt.Errorf("getting %s entries: %w", board.name, err)
 		}
-
-		// Count stars on the original message
-		originalStarCount := countReactions(msg.Reactions, starEmoji)
-
-		// Also count stars on the starboard message itself
-		starboardStarCount := 0
-		if entry.StarboardMsgID != nil {
-			starboardMsg, err := s.ChannelMessage(b.Config.StarboardChannelID, *entry.StarboardMsgID)
-			if err == nil {
-				starboardStarCount = countReactions(starboardMsg.Reactions, starEmoji)
-				b.Logger.Debug("counted stars on starboard message",
-					zap.String("starboardMsgID", *entry.StarboardMsgID),
-					zap.Int("starboardStars", starboardStarCount))
-			} else {
-				b.Logger.Warn("failed to get starboard message for star counting",
-					zap.Error(err),
-					zap.String("starboardMsgID", *entry.StarboardMsgID))
+		for _, entry := range entries {
+			ignored, err := boardChannelIgnored(s, entry.ChannelID)
+			if err != nil {
+				b.Logger.Warn("failed to resolve board source category", zap.Error(err), zap.String("board", board.name))
+				continue
 			}
-		}
-
-		// Total star count includes stars on both messages
-		starCount := originalStarCount + starboardStarCount
-
-		b.Logger.Info("starboard refresh counted stars",
-			zap.String("messageID", entry.OriginalMsgID),
-			zap.Int("originalStars", originalStarCount),
-			zap.Int("starboardStars", starboardStarCount),
-			zap.Int("totalStars", starCount))
-
-		if starCount < threshold {
-			// Remove from starboard
-			b.Logger.Info("starboard refresh removing entry - below threshold",
-				zap.String("messageID", entry.OriginalMsgID),
-				zap.Int("starCount", starCount),
-				zap.Int("threshold", threshold))
-			if entry.StarboardMsgID != nil {
-				s.ChannelMessageDelete(b.Config.StarboardChannelID, *entry.StarboardMsgID)
-			}
-			b.DB.DeleteStarboardEntry(entry.OriginalMsgID)
-		} else {
-			// Update the entry and message
-			b.Logger.Info("starboard refresh updating entry",
-				zap.String("messageID", entry.OriginalMsgID),
-				zap.Int("starCount", starCount))
-			if err := b.DB.UpdateStarboardEntry(entry.OriginalMsgID, starCount, entry.StarboardMsgID); err != nil {
-				b.Logger.Error("starboard refresh failed to update entry",
-					zap.Error(err),
-					zap.String("messageID", entry.OriginalMsgID))
+			if ignored {
+				if entry.StarboardMsgID != nil {
+					s.ChannelMessageDelete(b.Config.StarboardChannelID, *entry.StarboardMsgID)
+				}
+				b.DB.DeleteBoardEntry(board.name, entry.OriginalMsgID)
 				continue
 			}
 
-			if entry.StarboardMsgID != nil {
-				b.updateStarboardMessage(s, *entry.StarboardMsgID, msg, starCount)
+			msg, err := s.ChannelMessage(entry.ChannelID, entry.OriginalMsgID)
+			if err != nil {
+				b.Logger.Error("failed to get message during board refresh", zap.Error(err), zap.String("board", board.name))
+				continue
 			}
+			count := b.countTotalBoardReactions(s, msg, entry.StarboardMsgID, board)
+			b.syncBoardEntry(s, board, entry, msg, count)
 		}
 	}
-
 	return nil
 }
 
-// isImage checks if a content type is an image
 func isImage(contentType string) bool {
 	return strings.HasPrefix(contentType, "image/")
 }

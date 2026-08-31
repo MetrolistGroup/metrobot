@@ -118,6 +118,17 @@ func (d *DB) migrate() error {
 			star_count      INTEGER NOT NULL DEFAULT 0,
 			timestamp       INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS sobboard (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			original_msg_id TEXT NOT NULL UNIQUE,
+			starboard_msg_id TEXT,
+			channel_id      TEXT NOT NULL,
+			guild_id        TEXT NOT NULL,
+			author_id       TEXT NOT NULL,
+			content         TEXT,
+			star_count      INTEGER NOT NULL DEFAULT 0,
+			timestamp       INTEGER NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS garmin_context_cutoffs (
 			channel_id TEXT PRIMARY KEY,
 			message_id TEXT NOT NULL,
@@ -552,9 +563,9 @@ func (d *DB) ListExcludedChannels(guildID string) ([]string, error) {
 	return channels, rows.Err()
 }
 
-// --- Starboard ---
+// --- Starboard and sobboard ---
 
-type StarboardEntry struct {
+type BoardEntry struct {
 	ID             int64
 	OriginalMsgID  string
 	StarboardMsgID *string
@@ -566,11 +577,22 @@ type StarboardEntry struct {
 	Timestamp      int64
 }
 
-func (d *DB) GetStarboardEntry(originalMsgID string) (*StarboardEntry, error) {
-	var entry StarboardEntry
+func boardTable(board string) (string, error) {
+	if board != "starboard" && board != "sobboard" {
+		return "", fmt.Errorf("unknown board %q", board)
+	}
+	return board, nil
+}
+
+func (d *DB) GetBoardEntry(board, originalMsgID string) (*BoardEntry, error) {
+	table, err := boardTable(board)
+	if err != nil {
+		return nil, err
+	}
+	var entry BoardEntry
 	var starboardMsgID sql.NullString
-	err := d.conn.QueryRow(
-		"SELECT id, original_msg_id, starboard_msg_id, channel_id, guild_id, author_id, content, star_count, timestamp FROM starboard WHERE original_msg_id = ?",
+	err = d.conn.QueryRow(
+		fmt.Sprintf("SELECT id, original_msg_id, starboard_msg_id, channel_id, guild_id, author_id, content, star_count, timestamp FROM %s WHERE original_msg_id = ?", table),
 		originalMsgID,
 	).Scan(&entry.ID, &entry.OriginalMsgID, &starboardMsgID, &entry.ChannelID, &entry.GuildID, &entry.AuthorID, &entry.Content, &entry.StarCount, &entry.Timestamp)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -585,9 +607,13 @@ func (d *DB) GetStarboardEntry(originalMsgID string) (*StarboardEntry, error) {
 	return &entry, nil
 }
 
-func (d *DB) AddStarboardEntry(originalMsgID, channelID, guildID, authorID, content string, starCount int, timestamp int64) (*StarboardEntry, error) {
+func (d *DB) AddBoardEntry(board, originalMsgID, channelID, guildID, authorID, content string, starCount int, timestamp int64) (*BoardEntry, error) {
+	table, err := boardTable(board)
+	if err != nil {
+		return nil, err
+	}
 	res, err := d.conn.Exec(
-		"INSERT INTO starboard (original_msg_id, channel_id, guild_id, author_id, content, star_count, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		fmt.Sprintf("INSERT INTO %s (original_msg_id, channel_id, guild_id, author_id, content, star_count, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)", table),
 		originalMsgID, channelID, guildID, authorID, content, starCount, timestamp,
 	)
 	if err != nil {
@@ -597,7 +623,7 @@ func (d *DB) AddStarboardEntry(originalMsgID, channelID, guildID, authorID, cont
 	if err != nil {
 		return nil, err
 	}
-	return &StarboardEntry{
+	return &BoardEntry{
 		ID:            id,
 		OriginalMsgID: originalMsgID,
 		ChannelID:     channelID,
@@ -609,31 +635,43 @@ func (d *DB) AddStarboardEntry(originalMsgID, channelID, guildID, authorID, cont
 	}, nil
 }
 
-func (d *DB) UpdateStarboardEntry(originalMsgID string, starCount int, starboardMsgID *string) error {
+func (d *DB) UpdateBoardEntry(board, originalMsgID string, starCount int, starboardMsgID *string) error {
+	table, err := boardTable(board)
+	if err != nil {
+		return err
+	}
 	if starboardMsgID != nil {
-		_, err := d.conn.Exec(
-			"UPDATE starboard SET star_count = ?, starboard_msg_id = ? WHERE original_msg_id = ?",
+		_, err = d.conn.Exec(
+			fmt.Sprintf("UPDATE %s SET star_count = ?, starboard_msg_id = ? WHERE original_msg_id = ?", table),
 			starCount, *starboardMsgID, originalMsgID,
 		)
 		return err
 	}
-	_, err := d.conn.Exec(
-		"UPDATE starboard SET star_count = ? WHERE original_msg_id = ?",
+	_, err = d.conn.Exec(
+		fmt.Sprintf("UPDATE %s SET star_count = ? WHERE original_msg_id = ?", table),
 		starCount, originalMsgID,
 	)
 	return err
 }
 
-func (d *DB) DeleteStarboardEntry(originalMsgID string) error {
-	_, err := d.conn.Exec("DELETE FROM starboard WHERE original_msg_id = ?", originalMsgID)
+func (d *DB) DeleteBoardEntry(board, originalMsgID string) error {
+	table, err := boardTable(board)
+	if err != nil {
+		return err
+	}
+	_, err = d.conn.Exec(fmt.Sprintf("DELETE FROM %s WHERE original_msg_id = ?", table), originalMsgID)
 	return err
 }
 
-func (d *DB) GetStarboardEntryByStarboardMsgID(starboardMsgID string) (*StarboardEntry, error) {
-	var entry StarboardEntry
+func (d *DB) GetBoardEntryByStarboardMsgID(board, starboardMsgID string) (*BoardEntry, error) {
+	table, err := boardTable(board)
+	if err != nil {
+		return nil, err
+	}
+	var entry BoardEntry
 	var sbMsgID sql.NullString
-	err := d.conn.QueryRow(
-		"SELECT id, original_msg_id, starboard_msg_id, channel_id, guild_id, author_id, content, star_count, timestamp FROM starboard WHERE starboard_msg_id = ?",
+	err = d.conn.QueryRow(
+		fmt.Sprintf("SELECT id, original_msg_id, starboard_msg_id, channel_id, guild_id, author_id, content, star_count, timestamp FROM %s WHERE starboard_msg_id = ?", table),
 		starboardMsgID,
 	).Scan(&entry.ID, &entry.OriginalMsgID, &sbMsgID, &entry.ChannelID, &entry.GuildID, &entry.AuthorID, &entry.Content, &entry.StarCount, &entry.Timestamp)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -648,18 +686,22 @@ func (d *DB) GetStarboardEntryByStarboardMsgID(starboardMsgID string) (*Starboar
 	return &entry, nil
 }
 
-func (d *DB) GetAllStarboardEntries() ([]*StarboardEntry, error) {
+func (d *DB) GetAllBoardEntries(board string) ([]*BoardEntry, error) {
+	table, err := boardTable(board)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := d.conn.Query(
-		"SELECT id, original_msg_id, starboard_msg_id, channel_id, guild_id, author_id, content, star_count, timestamp FROM starboard",
+		fmt.Sprintf("SELECT id, original_msg_id, starboard_msg_id, channel_id, guild_id, author_id, content, star_count, timestamp FROM %s", table),
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var entries []*StarboardEntry
+	var entries []*BoardEntry
 	for rows.Next() {
-		var entry StarboardEntry
+		var entry BoardEntry
 		var sbMsgID sql.NullString
 		err := rows.Scan(&entry.ID, &entry.OriginalMsgID, &sbMsgID, &entry.ChannelID, &entry.GuildID, &entry.AuthorID, &entry.Content, &entry.StarCount, &entry.Timestamp)
 		if err != nil {

@@ -905,7 +905,7 @@ func (b *Bot) handleRefreshStarboard(s *discordgo.Session, i *discordgo.Interact
 		return
 	}
 
-	editDeferredResponse(s, i, "✅ Starboard refreshed successfully.")
+	editDeferredResponse(s, i, "✅ Starboard and sobboard refreshed successfully.")
 }
 
 // --- Helpers ---
