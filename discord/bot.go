@@ -427,6 +427,18 @@ func (b *Bot) registerCommands() error {
 			},
 		},
 		{
+			Name:        "approvenick",
+			Description: "Allow a user's next nickname change without dehoisting (admin only)",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionUser,
+					Name:        "user",
+					Description: "User whose next nickname change should be allowed",
+					Required:    true,
+				},
+			},
+		},
+		{
 			Name:        "addadmin",
 			Description: "Add a bot admin (permaadmin only)",
 			Options: []*discordgo.ApplicationCommandOption{

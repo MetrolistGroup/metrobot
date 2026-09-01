@@ -95,6 +95,8 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 		b.handleUnwarn(s, i, opts, callerID)
 	case "dehoist":
 		b.handleDehoist(s, i, opts, callerID)
+	case "approvenick":
+		b.handleApproveNick(s, i, opts, callerID)
 	case "addadmin":
 		b.handleAddAdmin(s, i, opts, callerID)
 	case "removeadmin":
@@ -362,6 +364,7 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		"• /warnings [user] - Show warnings for a user\n" +
 		"• /unwarn [user] [id] - Remove a warning from a user\n" +
 		"• /dehoist [user] [dry] - Dehoist a user, or omit user to rerun the server\n" +
+		"• /approvenick [user] - Allow a user's next nickname change without dehoisting\n" +
 		"• /purge [count] - Delete recent messages\n" +
 		"• /scanreactions - Scan recent messages for prohibited reactions\n\n" +
 		"**Admin Management (permaadmin only):**\n" +
@@ -691,6 +694,21 @@ func (b *Bot) handleDehoist(s *discordgo.Session, i *discordgo.InteractionCreate
 	if err := editDeferredResponse(s, i, resp); err != nil {
 		b.Logger.Error("failed to edit deferred dehoist response", zap.Error(err))
 	}
+}
+
+func (b *Bot) handleApproveNick(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
+	if !b.DB.IsAdmin("discord", callerID, b.Config) {
+		respondEphemeral(s, i, "You don't have nickname approval permissions.")
+		return
+	}
+
+	targetID := opts["user"].UserValue(s).ID
+	if err := b.DB.ApproveNicknameChange(i.GuildID, targetID); err != nil {
+		b.Logger.Error("failed to approve nickname change", zap.String("userID", targetID), zap.Error(err))
+		respondEphemeral(s, i, "Could not approve the nickname change.")
+		return
+	}
+	respondEphemeral(s, i, fmt.Sprintf("Approved <@%s>'s next nickname change.", targetID))
 }
 
 func (b *Bot) handleAddAdmin(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
@@ -1063,8 +1081,18 @@ func (b *Bot) onGuildMemberUpdate(s *discordgo.Session, m *discordgo.GuildMember
 		return
 	}
 
-	// Check if the user changed their nickname (we only auto-dehoist Discord changes)
-	// We can't detect if it was a Discord vs manual change, so we'll dehoist any hoisting characters
+	if m.BeforeUpdate != nil && m.BeforeUpdate.Nick == m.Nick {
+		return
+	}
+
+	approved, err := b.DB.ConsumeNicknameApproval(m.GuildID, m.User.ID)
+	if err != nil {
+		b.Logger.Error("failed to check nickname approval", zap.String("userID", m.User.ID), zap.Error(err))
+	} else if approved {
+		b.Logger.Info("skipping auto-dehoist for approved nickname change", zap.String("userID", m.User.ID))
+		return
+	}
+
 	b.autoDehoistMember(s, m.GuildID, m.User.ID, "updated member", 1)
 }
 

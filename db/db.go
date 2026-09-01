@@ -99,6 +99,11 @@ func (d *DB) migrate() error {
 			channel_id     TEXT NOT NULL,
 			PRIMARY KEY (guild_id, channel_id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS nickname_approvals (
+			guild_id TEXT NOT NULL,
+			user_id  TEXT NOT NULL,
+			PRIMARY KEY (guild_id, user_id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS mutes (
 			id             INTEGER PRIMARY KEY AUTOINCREMENT,
 			platform       TEXT NOT NULL,
@@ -522,6 +527,22 @@ func (d *DB) GetPendingMutes() ([]Mute, error) {
 		mutes = append(mutes, m)
 	}
 	return mutes, rows.Err()
+}
+
+// --- Nickname approvals ---
+
+func (d *DB) ApproveNicknameChange(guildID, userID string) error {
+	_, err := d.conn.Exec("INSERT OR IGNORE INTO nickname_approvals (guild_id, user_id) VALUES (?, ?)", guildID, userID)
+	return err
+}
+
+func (d *DB) ConsumeNicknameApproval(guildID, userID string) (bool, error) {
+	res, err := d.conn.Exec("DELETE FROM nickname_approvals WHERE guild_id = ? AND user_id = ?", guildID, userID)
+	if err != nil {
+		return false, err
+	}
+	count, err := res.RowsAffected()
+	return count > 0, err
 }
 
 // --- Excluded Channels ---
