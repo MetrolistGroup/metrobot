@@ -98,6 +98,7 @@ const chatCompletionAttemptTimeout = 15 * time.Second
 
 const (
 	chatCompletionRateLimitRetries = 3
+	chatCompletionTransportRetries = 1
 	chatCompletionRateLimitDelay   = time.Second
 )
 
@@ -272,59 +273,6 @@ type GarminAICompletion struct {
 	FinishReason string
 }
 
-type fallbackGarminAI struct {
-	clients []GarminAI
-}
-
-func NewFallbackGarminAI(clients ...GarminAI) GarminAI {
-	available := make([]GarminAI, 0, len(clients))
-	for _, client := range clients {
-		if client != nil {
-			available = append(available, client)
-		}
-	}
-	if len(available) == 1 {
-		return available[0]
-	}
-	return &fallbackGarminAI{clients: available}
-}
-
-func (f *fallbackGarminAI) Complete(ctx context.Context, request GarminAIRequest) (*GarminAICompletion, error) {
-	if len(f.clients) == 0 {
-		return nil, fmt.Errorf("no AI providers configured")
-	}
-	errs := make([]error, 0, len(f.clients))
-	for index, client := range f.clients {
-		providerCtx := ctx
-		cancel := func() {}
-		if deadline, ok := ctx.Deadline(); ok {
-			providersLeft := len(f.clients) - index
-			remaining := time.Until(deadline)
-			budget := remaining
-			if providersLeft > 1 {
-				reserve := 30 * time.Second
-				if maximumReserve := remaining / 2; reserve > maximumReserve {
-					reserve = maximumReserve
-				}
-				budget = remaining - reserve
-			}
-			if budget > 0 {
-				providerCtx, cancel = context.WithTimeout(ctx, budget)
-			}
-		}
-		completion, err := client.Complete(providerCtx, request)
-		cancel()
-		if err == nil {
-			return completion, nil
-		}
-		errs = append(errs, err)
-		if ctx.Err() != nil || index == len(f.clients)-1 {
-			break
-		}
-	}
-	return nil, errors.Join(errs...)
-}
-
 type chatCompletionClient struct {
 	keys             []string
 	endpoint         string
@@ -344,9 +292,7 @@ type chatCompletionRequest struct {
 	Models           []string                 `json:"models,omitempty"`
 	SessionID        string                   `json:"session_id,omitempty"`
 	Messages         []chatMessage            `json:"messages"`
-	Thinking         *chatThinking            `json:"thinking,omitempty"`
 	Reasoning        *chatReasoning           `json:"reasoning,omitempty"`
-	ReasoningEffort  string                   `json:"reasoning_effort,omitempty"`
 	Provider         *chatProviderPreferences `json:"provider,omitempty"`
 	MaxTokens        int                      `json:"max_tokens"`
 	Stream           bool                     `json:"stream"`
@@ -355,10 +301,6 @@ type chatCompletionRequest struct {
 }
 
 type chatMessage = GarminAIMessage
-
-type chatThinking struct {
-	Type string `json:"type"`
-}
 
 type chatReasoning struct {
 	Enabled   *bool  `json:"enabled,omitempty"`
@@ -486,6 +428,7 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 	start := int((c.nextKey.Add(1) - 1) % uint64(len(c.keys)))
 	keyAttempts := 0
 	rateLimitRetries := 0
+	transportRetries := 0
 	var lastErr error
 	for {
 		if err := ctx.Err(); err != nil {
@@ -508,6 +451,13 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 			}
 			continue
 		}
+		if isChatCompletionTransportError(err) && transportRetries < chatCompletionTransportRetries {
+			transportRetries++
+			if err := waitForChatCompletionRetry(ctx, c.rateLimitDelay); err != nil {
+				return nil, fmt.Errorf("calling %s: %w", c.provider, err)
+			}
+			continue
+		}
 		if !retry || attemptErr != nil || ctx.Err() != nil {
 			break
 		}
@@ -524,8 +474,19 @@ type chatCompletionHTTPError struct {
 	err    error
 }
 
-func (e *chatCompletionHTTPError) Error() string { return e.err.Error() }
-func (e *chatCompletionHTTPError) Unwrap() error { return e.err }
+type chatCompletionTransportError struct {
+	err error
+}
+
+func (e *chatCompletionHTTPError) Error() string      { return e.err.Error() }
+func (e *chatCompletionHTTPError) Unwrap() error      { return e.err }
+func (e *chatCompletionTransportError) Error() string { return e.err.Error() }
+func (e *chatCompletionTransportError) Unwrap() error { return e.err }
+
+func isChatCompletionTransportError(err error) bool {
+	var transportErr *chatCompletionTransportError
+	return errors.As(err, &transportErr)
+}
 
 func chatCompletionStatus(err error) int {
 	var httpErr *chatCompletionHTTPError
@@ -565,7 +526,7 @@ func (c *chatCompletionClient) askWithKey(ctx context.Context, payload []byte, k
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, true, fmt.Errorf("calling %s: %w", c.provider, ctxErr)
 		}
-		return nil, true, fmt.Errorf("calling %s: %w", c.provider, err)
+		return nil, true, &chatCompletionTransportError{err: fmt.Errorf("calling %s: %w", c.provider, err)}
 	}
 	defer resp.Body.Close()
 

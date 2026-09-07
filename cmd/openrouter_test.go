@@ -41,9 +41,6 @@ func TestOpenRouterClientUsesCapableRouteByDefault(t *testing.T) {
 	if len(request.Messages) == 0 || !request.Messages[0].Cache {
 		t.Errorf("stable system prompt was not marked for provider caching: %#v", request.Messages)
 	}
-	if request.Thinking != nil {
-		t.Errorf("thinking = %#v, want omitted", request.Thinking)
-	}
 	if request.Provider == nil || request.Provider.ZDR || request.Provider.DataCollection != "deny" || !request.Provider.RequireParameters || request.Provider.Sort.By != "throughput" || request.Provider.Sort.Partition != "none" {
 		t.Errorf("provider routing = %#v", request.Provider)
 	}

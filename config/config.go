@@ -11,7 +11,6 @@ type Config struct {
 	DiscordToken      string   `json:"discord_token"`
 	TelegramToken     string   `json:"telegram_token"`
 	GitHubToken       string   `json:"github_token"`
-	DeepSeekAPIKeys   []string `json:"deepseek_api_keys"`
 	OpenRouterAPIKeys []string `json:"openrouter_api_keys"`
 	OpenRouterModel   string   `json:"openrouter_model"`
 	FirecrawlAPIKeys  []string `json:"firecrawl_api_keys"`
@@ -91,11 +90,6 @@ func (c *Config) validate() error {
 	}
 	if len(c.PermaAdminTelegramIDs) == 0 {
 		return fmt.Errorf("permaadmin_telegram_ids must contain at least one ID")
-	}
-	for i, key := range c.DeepSeekAPIKeys {
-		if strings.TrimSpace(key) == "" {
-			return fmt.Errorf("deepseek_api_keys[%d] is empty", i)
-		}
 	}
 	for i, key := range c.OpenRouterAPIKeys {
 		if strings.TrimSpace(key) == "" {

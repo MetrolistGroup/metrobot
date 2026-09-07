@@ -1106,7 +1106,7 @@ func garminWebSearchRequested(prompt string) bool {
 func garminExplicitWebSearchRequested(prompt string) bool {
 	return containsAnyGarminPhrase(prompt,
 		"search the web", "search web", "web search", "browse the web", "browse web", "browse the internet",
-		"search online", "look online", "google ") || strings.Contains(prompt, "http://") || strings.Contains(prompt, "https://")
+		"search online", "look online", "look up ", "lookup ", "google ") || strings.Contains(prompt, "http://") || strings.Contains(prompt, "https://")
 }
 
 func garminHasGitHubRepositoryReference(prompt string) bool {

@@ -2,7 +2,6 @@
   "discord_token": "MTQ...",
   "telegram_token": "1234:ABCD",
   "github_token": "github_pat",
-  "deepseek_api_keys": ["sk-example-1", "sk-example-2"],
   "openrouter_api_keys": ["sk-or-example-1", "sk-or-example-2"],
   "openrouter_model": "qwen/qwen3.7-flash",
   "firecrawl_api_keys": ["fc-example-1", "fc-example-2"],

@@ -308,6 +308,12 @@ func TestGarminToolsForConversationSkipsCasualChat(t *testing.T) {
 	}
 }
 
+func TestGarminExplicitWebSearchRecognizesLookUp(t *testing.T) {
+	if !garminExplicitWebSearchRequested("look up the latest story from the guardian") {
+		t.Fatal("look up request was not recognized as explicit web search")
+	}
+}
+
 func TestGarminToolsForConversationSelectsRelevantTools(t *testing.T) {
 	tests := []struct {
 		prompt string

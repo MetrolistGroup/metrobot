@@ -79,15 +79,8 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		garminAIRequests:     make(map[string]map[string]context.CancelFunc),
 		garminAIAmbientBusy:  make(map[string]uint64),
 	}
-	var aiProviders []cmd.GarminAI
 	if len(cfg.OpenRouterAPIKeys) > 0 {
-		aiProviders = append(aiProviders, cmd.NewOpenRouterClient(cfg.OpenRouterAPIKeys, cfg.OpenRouterModel))
-	}
-	if len(cfg.DeepSeekAPIKeys) > 0 {
-		aiProviders = append(aiProviders, cmd.NewDeepSeekClient(cfg.DeepSeekAPIKeys))
-	}
-	if len(aiProviders) > 0 {
-		bot.garminAI = cmd.NewFallbackGarminAI(aiProviders...)
+		bot.garminAI = cmd.NewOpenRouterClient(cfg.OpenRouterAPIKeys, cfg.OpenRouterModel)
 	}
 	if bot.garminAI != nil {
 		memoryPath := cfg.GarminMemoryFile
