@@ -131,23 +131,40 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 			}
 		}
 	}
+	if webToolRequired {
+		call := cmd.GarminAIToolCall{
+			ID:   "required-web-search",
+			Type: "function",
+			Function: cmd.GarminAIFunctionCall{
+				Name:      "search_web",
+				Arguments: mustJSON(map[string]any{"query": truncateRunes(strings.TrimSpace(garminUserText(messages)), 500), "limit": 5}),
+			},
+		}
+		conversation = append(conversation, cmd.GarminAIMessage{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{call}})
+		result.ToolCalls++
+		visible, output, _, _ := b.executeGarminAIToolIfVisible(ctx, s, m, call)
+		if !visible {
+			result.Silent = true
+			result.Conversation = conversation
+			return result, nil
+		}
+		webToolUsed = true
+		conversation = append(conversation, cmd.GarminAIMessage{Role: "tool", ToolCallID: call.ID, Content: truncateGarminAIToolResult(output)})
+	}
 	for round := range garminAIMaxToolRounds {
 		requestTools := tools
-		toolChoice := ""
 		if repositoryToolUsed || webToolUsed {
-			toolChoice = "none"
-		} else if webToolRequired && round == 0 {
-			requestTools = onlyGarminTools(tools, "search_web")
-			toolChoice = "required"
+			requestTools = nil
 		} else if repositoryToolRequired && round == 0 {
 			requestTools = onlyGarminTools(tools, "search_github_repositories", "get_github_repository")
-			toolChoice = "required"
 		}
 		if finalOnly {
 			requestTools = nil
-			toolChoice = ""
 		}
 		requestContext := discordContext
+		if repositoryToolRequired && round == 0 {
+			requestContext += "\n\nThe user explicitly requested GitHub repository data. Call one of the supplied repository tools before answering."
+		}
 		if finalOnly {
 			requestContext += "\n\nReturn only the concise final answer now. Do not include reasoning or tool syntax."
 		}
@@ -158,7 +175,6 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 			Context:          requestContext,
 			Messages:         conversation,
 			Tools:            requestTools,
-			ToolChoice:       toolChoice,
 		})
 		result.ThinkingDuration += time.Since(started)
 		if err != nil {

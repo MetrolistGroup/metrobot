@@ -112,7 +112,6 @@ type GarminAIRequest struct {
 	Context          string
 	Messages         []GarminAIMessage
 	Tools            []GarminAITool
-	ToolChoice       string
 }
 
 type GarminAIMessage struct {
@@ -394,10 +393,7 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 		Tools:            input.Tools,
 	}
 	if len(input.Tools) > 0 {
-		request.ToolChoice = strings.TrimSpace(input.ToolChoice)
-		if request.ToolChoice == "" {
-			request.ToolChoice = "auto"
-		}
+		request.ToolChoice = "auto"
 	}
 	request.Messages[0] = chatMessage{Role: "system", Content: systemPrompt}
 	if contextMessage := strings.TrimSpace(input.Context); contextMessage != "" {

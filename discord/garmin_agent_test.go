@@ -15,6 +15,7 @@ import (
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/config"
 	"github.com/MetrolistGroup/metrobot/db"
+	"github.com/MetrolistGroup/metrobot/firecrawl"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -180,15 +181,15 @@ func TestRunGarminAIStopsRepositoryToolLoop(t *testing.T) {
 		calls++
 		names := garminToolNames(request.Tools)
 		if calls == 1 {
-			if request.ToolChoice != "required" || slices.Contains(names, "do_not_respond") || !slices.Contains(names, "search_github_repositories") {
-				t.Fatalf("first repository turn tools = %v, choice = %q", names, request.ToolChoice)
+			if slices.Contains(names, "do_not_respond") || !slices.Contains(names, "search_github_repositories") || !strings.Contains(request.Context, "Call one of the supplied repository tools") {
+				t.Fatalf("first repository turn tools = %v, context = %q", names, request.Context)
 			}
 			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{
 				ID: "repo", Type: "function", Function: cmd.GarminAIFunctionCall{Name: "search_github_repositories", Arguments: `{"query":"android music"}`},
 			}}}}, nil
 		}
-		if !slices.Contains(names, "search_github_repositories") || !slices.Contains(names, "get_github_repository") || request.ToolChoice != "none" {
-			t.Fatalf("synthesis turn tools = %v, choice = %q", names, request.ToolChoice)
+		if len(names) != 0 {
+			t.Fatalf("synthesis turn tools = %v", names)
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "the search failed cleanly."}}, nil
 	})
@@ -198,6 +199,49 @@ func TestRunGarminAIStopsRepositoryToolLoop(t *testing.T) {
 	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "search github for android music repos"}})
 	if err != nil || calls != 2 || result.Answer != "the search failed cleanly." || result.ToolCalls != 1 {
 		t.Fatalf("repository run = %#v, calls %d, error %v", result, calls, err)
+	}
+}
+
+func TestRunGarminAIDirectlyExecutesExplicitWebSearch(t *testing.T) {
+	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalTransport := http.DefaultTransport
+	http.DefaultTransport = garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		var payload struct {
+			Query string `json:"query"`
+			Limit int    `json:"limit"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode Firecrawl request: %v", err)
+		}
+		if payload.Query != "look up the latest story from the guardian" || payload.Limit != 5 {
+			t.Fatalf("Firecrawl request = %#v", payload)
+		}
+		body := `{"success":true,"data":{"web":[{"url":"https://www.theguardian.com/example","title":"Latest story","markdown":"Story text"}]}}`
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = originalTransport })
+
+	calls := 0
+	bot := &Bot{garminMemory: memory, garminFirecrawl: firecrawl.NewClient([]string{"key"})}
+	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		calls++
+		if len(request.Tools) != 0 {
+			t.Fatalf("synthesis tools = %#v", request.Tools)
+		}
+		if len(request.Messages) < 3 || request.Messages[len(request.Messages)-2].Role != "assistant" || request.Messages[len(request.Messages)-1].Role != "tool" || !strings.Contains(request.Messages[len(request.Messages)-1].Content, "https://www.theguardian.com/example") {
+			t.Fatalf("synthesis messages = %#v", request.Messages)
+		}
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "The latest story is sourced."}}, nil
+	})
+	message := &discordgo.MessageCreate{Message: &discordgo.Message{
+		ID: "1", GuildID: "guild", ChannelID: "channel", Content: "garmin, look up the latest story from the guardian", Author: &discordgo.User{ID: "user"},
+	}}
+	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "look up the latest story from the guardian"}})
+	if err != nil || calls != 1 || result.Answer != "The latest story is sourced." || result.ToolCalls != 1 {
+		t.Fatalf("web run = %#v, calls %d, error %v", result, calls, err)
 	}
 }
 
@@ -213,7 +257,7 @@ func TestRunGarminAIExecutesTextualGitHubSearchAlias(t *testing.T) {
 		if calls == 1 {
 			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "got it. searching github for metrolist forks now. ```json\n{\n  \"tool\": \"github_search\",\n  \"query\": \"MetrolistGroup Metrolist forks\"\n}\n```"}}, nil
 		}
-		if request.ToolChoice != "none" || request.Messages[len(request.Messages)-1].Role != "tool" {
+		if len(request.Tools) != 0 || request.Messages[len(request.Messages)-1].Role != "tool" {
 			t.Fatalf("tool-result request = %#v", request)
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "i couldn't reach github for that search."}}, nil
