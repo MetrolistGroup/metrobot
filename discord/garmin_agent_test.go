@@ -111,7 +111,7 @@ func TestRunGarminAIAmbientModeCanReplyReactOrStaySilent(t *testing.T) {
 		if !strings.Contains(request.Context, "active Metrobot conversation") {
 			t.Fatal("ambient decision instruction was not supplied")
 		}
-		if got, want := garminToolNames(request.Tools), []string{"react_to_message", "do_not_respond", "get_discord_profile", "search_discord_members"}; !reflect.DeepEqual(got, want) {
+		if got, want := garminToolNames(request.Tools), []string{"react_to_message", "do_not_respond"}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("ambient request tools = %v, want %v", got, want)
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{ToolCalls: []cmd.GarminAIToolCall{{
@@ -210,13 +210,14 @@ func TestRunGarminAIDirectlyExecutesExplicitWebSearch(t *testing.T) {
 	originalTransport := http.DefaultTransport
 	http.DefaultTransport = garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
 		var payload struct {
-			Query string `json:"query"`
-			Limit int    `json:"limit"`
+			Query   string   `json:"query"`
+			Limit   int      `json:"limit"`
+			Sources []string `json:"sources"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode Firecrawl request: %v", err)
 		}
-		if payload.Query != "look up the latest story from the guardian" || payload.Limit != 5 {
+		if payload.Query != "look up the latest story from the guardian" || payload.Limit != 5 || !reflect.DeepEqual(payload.Sources, []string{"news"}) {
 			t.Fatalf("Firecrawl request = %#v", payload)
 		}
 		body := `{"success":true,"data":{"web":[{"url":"https://www.theguardian.com/example","title":"Latest story","markdown":"Story text"}]}}`
@@ -228,8 +229,8 @@ func TestRunGarminAIDirectlyExecutesExplicitWebSearch(t *testing.T) {
 	bot := &Bot{garminMemory: memory, garminFirecrawl: firecrawl.NewClient([]string{"key"})}
 	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		calls++
-		if len(request.Tools) != 0 {
-			t.Fatalf("synthesis tools = %#v", request.Tools)
+		if len(request.Tools) != 0 || !strings.Contains(request.Context, "A live web search succeeded") {
+			t.Fatalf("synthesis tools = %#v, context = %q", request.Tools, request.Context)
 		}
 		if len(request.Messages) < 3 || request.Messages[len(request.Messages)-2].Role != "assistant" || request.Messages[len(request.Messages)-1].Role != "tool" || !strings.Contains(request.Messages[len(request.Messages)-1].Content, "https://www.theguardian.com/example") {
 			t.Fatalf("synthesis messages = %#v", request.Messages)
@@ -242,6 +243,33 @@ func TestRunGarminAIDirectlyExecutesExplicitWebSearch(t *testing.T) {
 	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "look up the latest story from the guardian"}})
 	if err != nil || calls != 1 || result.Answer != "The latest story is sourced." || result.ToolCalls != 1 {
 		t.Fatalf("web run = %#v, calls %d, error %v", result, calls, err)
+	}
+}
+
+func TestRunGarminAIStopsAfterWebSearchFailure(t *testing.T) {
+	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalTransport := http.DefaultTransport
+	http.DefaultTransport = garminRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		body := `{"success":false,"error":"credits exhausted"}`
+		return &http.Response{StatusCode: http.StatusPaymentRequired, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = originalTransport })
+
+	calls := 0
+	bot := &Bot{garminMemory: memory, garminFirecrawl: firecrawl.NewClient([]string{"key"})}
+	bot.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		calls++
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "invented result"}}, nil
+	})
+	message := &discordgo.MessageCreate{Message: &discordgo.Message{
+		ID: "1", GuildID: "guild", ChannelID: "channel", Content: "garmin, look up today's news", Author: &discordgo.User{ID: "user"},
+	}}
+	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "look up today's news"}})
+	if err != nil || calls != 0 || result.Answer != "web search failed just now." || result.ToolCalls != 1 {
+		t.Fatalf("web failure = %#v, calls %d, error %v", result, calls, err)
 	}
 }
 
@@ -352,9 +380,18 @@ func TestGarminToolsForConversationSkipsCasualChat(t *testing.T) {
 	}
 }
 
-func TestGarminExplicitWebSearchRecognizesLookUp(t *testing.T) {
+func TestGarminWebSearchRouting(t *testing.T) {
 	if !garminExplicitWebSearchRequested("look up the latest story from the guardian") {
 		t.Fatal("look up request was not recognized as explicit web search")
+	}
+	for prompt, want := range map[string]string{
+		"look up the latest story from the guardian": "news",
+		"find an image of a moai with sunglasses":    "images",
+		"find the Kotlin Multiplatform guide":        "web",
+	} {
+		if got := garminWebSearchSource(prompt); got != want {
+			t.Errorf("source for %q = %q, want %q", prompt, got, want)
+		}
 	}
 }
 
@@ -364,24 +401,26 @@ func TestGarminToolsForConversationSelectsRelevantTools(t *testing.T) {
 		admin  bool
 		want   []string
 	}{
-		{"what is the latest Metrolist release?", false, []string{"do_not_respond", "get_metrolist_status", "search_metrolist_issues", "get_discord_profile", "search_discord_members", "load_skill"}},
+		{"what is the latest Metrolist release?", false, []string{"do_not_respond", "get_metrolist_status", "search_metrolist_issues", "load_skill"}},
 		{"what is Nyx's GitHub username?", false, []string{"do_not_respond", "get_github_user", "get_discord_profile", "search_discord_members"}},
-		{"search GitHub repos for a Kotlin music client", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_discord_profile", "search_discord_members"}},
-		{"search GitHub for Android music clients", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_discord_profile", "search_discord_members"}},
-		{"show details for the facebook/react repository", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_discord_profile", "search_discord_members"}},
-		{"what is https://github.com/facebook/react?", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_discord_profile", "search_discord_members"}},
-		{"search the web for today's Android news", false, []string{"do_not_respond", "search_web", "get_discord_profile", "search_discord_members"}},
-		{"list saved notes", false, []string{"do_not_respond", "list_notes", "get_note", "get_discord_profile", "search_discord_members"}},
-		{"show me the playback note", false, []string{"do_not_respond", "list_notes", "get_note", "get_discord_profile", "search_discord_members"}},
-		{"playback keeps stopping", false, []string{"do_not_respond", "list_notes", "get_note", "get_discord_profile", "search_discord_members"}},
-		{"remember that releases happen on Fridays", true, []string{"do_not_respond", "get_discord_profile", "search_discord_members", "remember"}},
-		{"remember that releases happen on Fridays", false, []string{"do_not_respond", "get_discord_profile", "search_discord_members"}},
+		{"search GitHub repos for a Kotlin music client", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository"}},
+		{"search GitHub for Android music clients", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository"}},
+		{"show details for the facebook/react repository", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository"}},
+		{"what is https://github.com/facebook/react?", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository"}},
+		{"search the web for today's Android news", false, []string{"do_not_respond", "search_web"}},
+		{"list saved notes", false, []string{"do_not_respond", "list_notes", "get_note"}},
+		{"show me the playback note", false, []string{"do_not_respond", "list_notes", "get_note"}},
+		{"playback keeps stopping", false, []string{"do_not_respond", "list_notes", "get_note"}},
+		{"remember that releases happen on Fridays", true, []string{"do_not_respond", "remember"}},
+		{"remember that releases happen on Fridays", false, []string{"do_not_respond"}},
 		{"remember my pronouns are they/them", false, []string{"do_not_respond", "get_discord_profile", "search_discord_members"}},
 		{"what roles are on <@123456789012345678>'s user profile?", false, []string{"do_not_respond", "get_discord_profile", "search_discord_members"}},
-		{"what was posted in sneak-peeks?", false, []string{"do_not_respond", "get_discord_profile", "search_discord_members", "read_community_channel"}},
-		{"show me the latest minky picture", false, []string{"do_not_respond", "get_discord_profile", "search_discord_members", "read_community_channel"}},
-		{"react to this with thumb", false, []string{"react_to_message", "do_not_respond", "get_discord_profile", "search_discord_members"}},
-		{"print i love :glup:", false, []string{"list_discord_emojis", "view_discord_emoji", "do_not_respond", "get_discord_profile", "search_discord_members"}},
+		{"what was posted in sneak-peeks?", false, []string{"do_not_respond", "read_community_channel"}},
+		{"show me the latest minky picture", false, []string{"do_not_respond", "read_community_channel"}},
+		{"react to this with thumb", false, []string{"react_to_message", "do_not_respond"}},
+		{"print i love :glup:", false, []string{"list_discord_emojis", "view_discord_emoji", "do_not_respond"}},
+		{"can you give me a link to that plugin", false, []string{"do_not_respond", "search_web"}},
+		{"can you get me an image of a moai", false, []string{"do_not_respond", "search_web"}},
 	}
 	for _, test := range tests {
 		got := garminToolNames(garminToolsForConversation([]cmd.GarminAIMessage{{Role: "user", Content: test.prompt}}, test.admin, false))
@@ -442,7 +481,7 @@ func garminActionToolNames() []string {
 }
 
 func garminDefaultToolNames() []string {
-	return []string{"do_not_respond", "get_discord_profile", "search_discord_members"}
+	return []string{"do_not_respond"}
 }
 
 func garminToolNames(tools []cmd.GarminAITool) []string {

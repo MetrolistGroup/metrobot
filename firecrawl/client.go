@@ -13,21 +13,28 @@ import (
 	"unicode/utf8"
 )
 
-const apiEndpoint = "https://api.firecrawl.dev/v2/search"
+const (
+	apiEndpoint       = "https://api.firecrawl.dev/v2/search"
+	failedKeyCooldown = 48 * time.Hour
+)
 
 type Client struct {
-	keys       []string
-	endpoint   string
-	httpClient *http.Client
-	nextKey    atomic.Uint64
+	keys        []string
+	failedUntil []atomic.Int64
+	endpoint    string
+	httpClient  *http.Client
+	nextKey     atomic.Uint64
 }
 
 type searchRequest struct {
-	Query         string `json:"query"`
-	Limit         int    `json:"limit"`
-	ScrapeOptions struct {
-		Formats []string `json:"formats"`
-	} `json:"scrapeOptions"`
+	Query         string         `json:"query"`
+	Limit         int            `json:"limit"`
+	Sources       []string       `json:"sources,omitempty"`
+	ScrapeOptions *scrapeOptions `json:"scrapeOptions,omitempty"`
+}
+
+type scrapeOptions struct {
+	Formats []string `json:"formats"`
 }
 
 func NewClient(keys []string) *Client {
@@ -41,10 +48,10 @@ func newClient(keys []string, endpoint string, httpClient *http.Client) *Client 
 			cleanKeys = append(cleanKeys, key)
 		}
 	}
-	return &Client{keys: cleanKeys, endpoint: endpoint, httpClient: httpClient}
+	return &Client{keys: cleanKeys, failedUntil: make([]atomic.Int64, len(cleanKeys)), endpoint: endpoint, httpClient: httpClient}
 }
 
-func (c *Client) Search(ctx context.Context, query string, limit int) (string, error) {
+func (c *Client) Search(ctx context.Context, query string, limit int, source string) (string, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return "", fmt.Errorf("web search query is required")
@@ -63,16 +70,31 @@ func (c *Client) Search(ctx context.Context, query string, limit int) (string, e
 	}
 
 	request := searchRequest{Query: query, Limit: limit}
-	request.ScrapeOptions.Formats = []string{"markdown"}
+	switch source = strings.ToLower(strings.TrimSpace(source)); source {
+	case "", "web":
+		request.ScrapeOptions = &scrapeOptions{Formats: []string{"markdown"}}
+	case "news":
+		request.Sources = []string{"news"}
+		request.ScrapeOptions = &scrapeOptions{Formats: []string{"markdown"}}
+	case "images":
+		request.Sources = []string{"images"}
+	default:
+		return "", fmt.Errorf("web search source must be web, news, or images")
+	}
 	payload, err := json.Marshal(request)
 	if err != nil {
 		return "", fmt.Errorf("encoding Firecrawl request: %w", err)
 	}
 
 	start := int((c.nextKey.Add(1) - 1) % uint64(len(c.keys)))
+	now := time.Now().Unix()
 	var lastErr error
 	for attempt := range len(c.keys) {
-		body, status, err := c.searchWithKey(ctx, payload, c.keys[(start+attempt)%len(c.keys)])
+		keyIndex := (start + attempt) % len(c.keys)
+		if c.failedUntil[keyIndex].Load() > now {
+			continue
+		}
+		body, status, err := c.searchWithKey(ctx, payload, c.keys[keyIndex])
 		if err != nil {
 			if ctx.Err() != nil {
 				return "", fmt.Errorf("calling Firecrawl: %w", ctx.Err())
@@ -98,17 +120,27 @@ func (c *Client) Search(ctx context.Context, query string, limit int) (string, e
 		}
 
 		var response struct {
-			Error string `json:"error"`
+			Error   string          `json:"error"`
+			Details json.RawMessage `json:"details"`
 		}
 		_ = json.Unmarshal(body, &response)
 		message := strings.TrimSpace(response.Error)
 		if message == "" {
 			message = http.StatusText(status)
 		}
+		if details := strings.TrimSpace(string(response.Details)); details != "" && details != "null" {
+			message += ": " + details
+		}
 		lastErr = fmt.Errorf("Firecrawl returned %d: %s", status, message)
+		if keyFailureStatus(status) {
+			c.failedUntil[keyIndex].Store(time.Now().Add(failedKeyCooldown).Unix())
+		}
 		if !retryStatus(status) {
 			return "", lastErr
 		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("all Firecrawl API keys are cooling down")
 	}
 	return "", lastErr
 }
@@ -134,10 +166,12 @@ func (c *Client) searchWithKey(ctx context.Context, payload []byte, key string) 
 }
 
 func retryStatus(status int) bool {
+	return keyFailureStatus(status) || status == http.StatusRequestTimeout || status >= http.StatusInternalServerError
+}
+
+func keyFailureStatus(status int) bool {
 	switch status {
-	case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden,
-		http.StatusRequestTimeout, http.StatusTooManyRequests, http.StatusInternalServerError,
-		http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+	case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden, http.StatusTooManyRequests:
 		return true
 	default:
 		return false
