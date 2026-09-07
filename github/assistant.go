@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const githubAPIBase = "https://api.github.com"
@@ -19,6 +21,44 @@ type AssistantClient struct {
 	repo       string
 	httpClient *http.Client
 	apiBase    string
+}
+
+type githubCommit struct {
+	SHA     string `json:"sha"`
+	HTMLURL string `json:"html_url"`
+	Commit  struct {
+		Message string `json:"message"`
+		Author  struct {
+			Name string     `json:"name"`
+			Date *time.Time `json:"date"`
+		} `json:"author"`
+	} `json:"commit"`
+}
+
+type githubCommitResult struct {
+	SHA     string     `json:"sha"`
+	Message string     `json:"message"`
+	Author  string     `json:"author"`
+	Date    *time.Time `json:"date,omitempty"`
+	URL     string     `json:"url"`
+}
+
+func githubCommitResults(commits []githubCommit) []githubCommitResult {
+	results := make([]githubCommitResult, 0, len(commits))
+	for _, commit := range commits {
+		sha := commit.SHA
+		if len(sha) > 7 {
+			sha = sha[:7]
+		}
+		results = append(results, githubCommitResult{
+			SHA:     sha,
+			Message: strings.TrimSpace(strings.SplitN(commit.Commit.Message, "\n", 2)[0]),
+			Author:  commit.Commit.Author.Name,
+			Date:    commit.Commit.Author.Date,
+			URL:     commit.HTMLURL,
+		})
+	}
+	return results
 }
 
 func NewAssistantClient(token, owner, repo string) *AssistantClient {
@@ -37,6 +77,7 @@ func (c *AssistantClient) ProjectStatus(ctx context.Context) (string, error) {
 		Description     string     `json:"description"`
 		HTMLURL         string     `json:"html_url"`
 		Homepage        string     `json:"homepage"`
+		Private         bool       `json:"private"`
 		Archived        bool       `json:"archived"`
 		DefaultBranch   string     `json:"default_branch"`
 		StargazersCount int        `json:"stargazers_count"`
@@ -46,6 +87,9 @@ func (c *AssistantClient) ProjectStatus(ctx context.Context) (string, error) {
 	}
 	if err := c.get(ctx, fmt.Sprintf("/repos/%s/%s", url.PathEscape(c.owner), url.PathEscape(c.repo)), &repository); err != nil {
 		return "", err
+	}
+	if repository.Private {
+		return "", fmt.Errorf("private repository details are not allowed")
 	}
 
 	var release struct {
@@ -70,17 +114,7 @@ func (c *AssistantClient) ProjectStatus(ctx context.Context) (string, error) {
 		}{}
 	}
 
-	var commits []struct {
-		SHA     string `json:"sha"`
-		HTMLURL string `json:"html_url"`
-		Commit  struct {
-			Message string `json:"message"`
-			Author  struct {
-				Name string     `json:"name"`
-				Date *time.Time `json:"date"`
-			} `json:"author"`
-		} `json:"commit"`
-	}
+	var commits []githubCommit
 	if err := c.get(ctx, fmt.Sprintf("/repos/%s/%s/commits?per_page=5", url.PathEscape(c.owner), url.PathEscape(c.repo)), &commits); err != nil {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
@@ -88,34 +122,13 @@ func (c *AssistantClient) ProjectStatus(ctx context.Context) (string, error) {
 		warnings = append(warnings, "Recent commits unavailable: "+err.Error())
 	}
 
-	type commitSummary struct {
-		SHA     string     `json:"sha"`
-		Message string     `json:"message"`
-		Author  string     `json:"author"`
-		Date    *time.Time `json:"date,omitempty"`
-		URL     string     `json:"url"`
-	}
-	recent := make([]commitSummary, 0, len(commits))
-	for _, commit := range commits {
-		sha := commit.SHA
-		if len(sha) > 7 {
-			sha = sha[:7]
-		}
-		message := strings.TrimSpace(strings.SplitN(commit.Commit.Message, "\n", 2)[0])
-		recent = append(recent, commitSummary{
-			SHA:     sha,
-			Message: message,
-			Author:  commit.Commit.Author.Name,
-			Date:    commit.Commit.Author.Date,
-			URL:     commit.HTMLURL,
-		})
-	}
+	recent := githubCommitResults(commits)
 
 	result := struct {
-		Repository any             `json:"repository"`
-		Release    any             `json:"latest_release,omitempty"`
-		Commits    []commitSummary `json:"recent_commits,omitempty"`
-		Warnings   []string        `json:"warnings,omitempty"`
+		Repository any                  `json:"repository"`
+		Release    any                  `json:"latest_release,omitempty"`
+		Commits    []githubCommitResult `json:"recent_commits,omitempty"`
+		Warnings   []string             `json:"warnings,omitempty"`
 	}{Repository: repository, Commits: recent, Warnings: warnings}
 	if release.TagName != "" {
 		result.Release = release
@@ -245,6 +258,93 @@ func (c *AssistantClient) Repository(ctx context.Context, repository string) (st
 	return marshalToolResult(result.result())
 }
 
+func (c *AssistantClient) Commits(ctx context.Context, repository string, limit int) (string, error) {
+	owner, name, err := githubRepositoryName(repository, c.owner)
+	if err != nil {
+		return "", err
+	}
+	fullName := owner + "/" + name
+	if _, err := c.Repository(ctx, fullName); err != nil {
+		return "", err
+	}
+	if limit == 0 {
+		limit = 5
+	}
+	if limit < 1 || limit > 10 {
+		return "", fmt.Errorf("commit limit must be between 1 and 10")
+	}
+	var commits []githubCommit
+	path := fmt.Sprintf("/repos/%s/%s/commits?per_page=%d", url.PathEscape(owner), url.PathEscape(name), limit)
+	if err := c.get(ctx, path, &commits); err != nil {
+		return "", err
+	}
+	return marshalToolResult(struct {
+		Repository string               `json:"repository"`
+		Commits    []githubCommitResult `json:"commits"`
+	}{fullName, githubCommitResults(commits)})
+}
+
+func (c *AssistantClient) File(ctx context.Context, repository, path, ref string) (string, error) {
+	owner, name, err := githubRepositoryName(repository, c.owner)
+	if err != nil {
+		return "", err
+	}
+	fullName := owner + "/" + name
+	if _, err := c.Repository(ctx, fullName); err != nil {
+		return "", err
+	}
+	path = strings.Trim(strings.TrimSpace(path), "/")
+	if path == "" {
+		return "", fmt.Errorf("repository file path is required")
+	}
+	endpoint := fmt.Sprintf("/repos/%s/%s/contents/%s", url.PathEscape(owner), url.PathEscape(name), escapeGitHubPath(path))
+	if ref = strings.TrimSpace(ref); ref != "" {
+		endpoint += "?" + url.Values{"ref": {ref}}.Encode()
+	}
+	var file struct {
+		Type        string `json:"type"`
+		Name        string `json:"name"`
+		Path        string `json:"path"`
+		SHA         string `json:"sha"`
+		HTMLURL     string `json:"html_url"`
+		DownloadURL string `json:"download_url"`
+		Encoding    string `json:"encoding"`
+		Content     string `json:"content"`
+	}
+	if err := c.get(ctx, endpoint, &file); err != nil {
+		return "", err
+	}
+	if file.Type != "file" || file.Encoding != "base64" {
+		return "", fmt.Errorf("GitHub path is not a readable file")
+	}
+	content, err := base64.StdEncoding.DecodeString(file.Content)
+	if err != nil {
+		return "", fmt.Errorf("decoding GitHub file: %w", err)
+	}
+	if !utf8.Valid(content) {
+		return "", fmt.Errorf("binary GitHub files are not supported")
+	}
+	const contentLimit = 8 << 10
+	truncated := len(content) > contentLimit
+	if truncated {
+		end := contentLimit
+		for !utf8.Valid(content[:end]) {
+			end--
+		}
+		content = content[:end]
+	}
+	return marshalToolResult(struct {
+		Repository  string `json:"repository"`
+		Path        string `json:"path"`
+		Ref         string `json:"ref,omitempty"`
+		SHA         string `json:"sha"`
+		URL         string `json:"url"`
+		DownloadURL string `json:"download_url"`
+		Content     string `json:"content"`
+		Truncated   bool   `json:"truncated"`
+	}{fullName, file.Path, ref, file.SHA, file.HTMLURL, file.DownloadURL, string(content), truncated})
+}
+
 type githubRepository struct {
 	FullName        string     `json:"full_name"`
 	Name            string     `json:"name"`
@@ -313,6 +413,14 @@ func (r githubRepository) result() githubRepositoryResult {
 		OpenIssues: r.OpenIssuesCount, License: license, CreatedAt: r.CreatedAt,
 		UpdatedAt: r.UpdatedAt, PushedAt: r.PushedAt,
 	}
+}
+
+func escapeGitHubPath(path string) string {
+	parts := strings.Split(path, "/")
+	for index := range parts {
+		parts[index] = url.PathEscape(parts[index])
+	}
+	return strings.Join(parts, "/")
 }
 
 func githubRepositoryName(repository, defaultOwner string) (string, string, error) {

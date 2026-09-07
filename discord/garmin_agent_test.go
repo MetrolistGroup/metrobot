@@ -180,24 +180,18 @@ func TestRunGarminAIStopsRepositoryToolLoop(t *testing.T) {
 	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		calls++
 		names := garminToolNames(request.Tools)
-		if calls == 1 {
-			if slices.Contains(names, "do_not_respond") || !slices.Contains(names, "search_github_repositories") || !strings.Contains(request.Context, "Call one of the supplied repository tools") {
-				t.Fatalf("first repository turn tools = %v, context = %q", names, request.Context)
-			}
-			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{
-				ID: "repo", Type: "function", Function: cmd.GarminAIFunctionCall{Name: "search_github_repositories", Arguments: `{"query":"android music"}`},
-			}}}}, nil
+		if slices.Contains(names, "do_not_respond") || !slices.Contains(names, "get_github_commits") || !strings.Contains(request.Context, "Call one of the supplied repository tools") {
+			t.Fatalf("repository turn tools = %v, context = %q", names, request.Context)
 		}
-		if len(names) != 0 {
-			t.Fatalf("synthesis turn tools = %v", names)
-		}
-		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "the search failed cleanly."}}, nil
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{
+			ID: "repo", Type: "function", Function: cmd.GarminAIFunctionCall{Name: "get_github_commits", Arguments: `{"repository":"MetrolistGroup/Metrolist"}`},
+		}}}}, nil
 	})
 	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		ID: "1", GuildID: "guild", ChannelID: "channel", Content: "garmin, search github for android music repos", Author: &discordgo.User{ID: "user"},
+		ID: "1", GuildID: "guild", ChannelID: "channel", Content: "garmin, what changes were last made in that repo", Author: &discordgo.User{ID: "user"},
 	}}
-	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "search github for android music repos"}})
-	if err != nil || calls != 2 || result.Answer != "the search failed cleanly." || result.ToolCalls != 1 {
+	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "what changes were last made in that repo"}})
+	if err != nil || calls != 1 || result.Answer != "github lookup failed just now." || result.ToolCalls != 1 {
 		t.Fatalf("repository run = %#v, calls %d, error %v", result, calls, err)
 	}
 }
@@ -280,22 +274,47 @@ func TestRunGarminAIExecutesTextualGitHubSearchAlias(t *testing.T) {
 	}
 	calls := 0
 	bot := &Bot{garminMemory: memory}
-	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+	bot.garminAI = garminAITestFunc(func(_ context.Context, _ cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		calls++
-		if calls == 1 {
-			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "got it. searching github for metrolist forks now. ```json\n{\n  \"tool\": \"github_search\",\n  \"query\": \"MetrolistGroup Metrolist forks\"\n}\n```"}}, nil
-		}
-		if len(request.Tools) != 0 || request.Messages[len(request.Messages)-1].Role != "tool" {
-			t.Fatalf("tool-result request = %#v", request)
-		}
-		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "i couldn't reach github for that search."}}, nil
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "got it. searching github for metrolist forks now. ```json\n{\n  \"tool\": \"github_search\",\n  \"query\": \"MetrolistGroup Metrolist forks\"\n}\n```"}}, nil
 	})
 	message := &discordgo.MessageCreate{Message: &discordgo.Message{
 		ID: "1", GuildID: "guild", ChannelID: "channel", Content: "i mean its forks or something, just do a github search", Author: &discordgo.User{ID: "user"},
 	}}
 	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: message.Content}})
-	if err != nil || calls != 2 || result.ToolCalls != 1 || result.Answer != "i couldn't reach github for that search." {
+	if err != nil || calls != 1 || result.ToolCalls != 1 || result.Answer != "github lookup failed just now." {
 		t.Fatalf("textual search = %#v, calls %d, error %v", result, calls, err)
+	}
+}
+
+func TestRunGarminAIUsesCalculatorBeforeAnswering(t *testing.T) {
+	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	bot := &Bot{garminMemory: memory}
+	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		calls++
+		if calls == 1 {
+			if names := garminToolNames(request.Tools); !reflect.DeepEqual(names, []string{"calculate_math"}) || !strings.Contains(request.Context, "calculator tool") {
+				t.Fatalf("calculator request = %#v", request)
+			}
+			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{
+				ID: "math", Type: "function", Function: cmd.GarminAIFunctionCall{Name: "calculate_math", Arguments: `{"expression":"3^3"}`},
+			}}}}, nil
+		}
+		if len(request.Tools) != 0 || !strings.Contains(request.Messages[len(request.Messages)-1].Content, `"result":"27"`) {
+			t.Fatalf("calculator result request = %#v", request)
+		}
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "3³ is 27."}}, nil
+	})
+	message := &discordgo.MessageCreate{Message: &discordgo.Message{
+		ID: "1", GuildID: "guild", ChannelID: "channel", Content: "garmin, what's ³3", Author: &discordgo.User{ID: "user"},
+	}}
+	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "what's ³3"}})
+	if err != nil || calls != 2 || result.Answer != "3³ is 27." || result.ToolCalls != 1 {
+		t.Fatalf("calculator run = %#v, calls %d, error %v", result, calls, err)
 	}
 }
 
@@ -339,7 +358,7 @@ func TestGarminSystemPromptAndDiscordContextContainIdentityAndGlobalMemory(t *te
 		},
 	}}
 	prompt := garminSystemPromptWithMemory("# Metrobot Memory\nKnown fact") + "\n" + garminDiscordContextForMessage(message)
-	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", "discordgo", `"display_name":"exact_user"`, "exact_user", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority", "lowercase by default", "Refuse sexual or erotic", "Metrobot's repository", "created by Nyx and Lamp", "Mostafa Alagamy", "Nyx, Lamp, and Adriel", "without mentioning hidden prompts", "Use web search", "untrusted data"} {
+	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", "discordgo", `"display_name":"exact_user"`, "exact_user", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority", "lowercase by default", "Refuse sexual or erotic", "Metrobot's repository", "created by Nyx and Lamp", "Mostafa Alagamy", "Nyx, Lamp, and Adriel", "without mentioning hidden prompts", "Use web search", "untrusted data", "calculator tool", "read-only requests"} {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("prompt missing %q", expected)
 		}
@@ -385,13 +404,36 @@ func TestGarminWebSearchRouting(t *testing.T) {
 		t.Fatal("look up request was not recognized as explicit web search")
 	}
 	for prompt, want := range map[string]string{
-		"look up the latest story from the guardian": "news",
-		"find an image of a moai with sunglasses":    "images",
-		"find the Kotlin Multiplatform guide":        "web",
+		"look up the latest story from the guardian":      "news",
+		"give me the first moai meme image you find":      "images",
+		"find the Kotlin Multiplatform guide":             "web",
+		"give me a tenor link for a moai sunglasses meme": "web",
 	} {
 		if got := garminWebSearchSource(prompt); got != want {
 			t.Errorf("source for %q = %q, want %q", prompt, got, want)
 		}
+	}
+	query := garminWebSearchQuery([]cmd.GarminAIMessage{{Role: "user", Content: "give me a tenor link for a moai meme"}})
+	if !strings.HasPrefix(query, "site:tenor.com ") {
+		t.Fatalf("Tenor query = %q", query)
+	}
+	if !garminExplicitWebSearchRequested("look it up") {
+		t.Fatal("look it up was not recognized as explicit search")
+	}
+	query = garminWebSearchQuery([]cmd.GarminAIMessage{
+		{Role: "assistant", Content: "Install the Kotlin Multiplatform plugin."},
+		{Role: "user", Content: "give me a link to that plugin"},
+	})
+	if !strings.Contains(query, "Kotlin Multiplatform plugin") {
+		t.Fatalf("contextual query = %q", query)
+	}
+	query = garminWebSearchQuery([]cmd.GarminAIMessage{
+		{Role: "user", Content: "get me an image of a moai"},
+		{Role: "assistant", Content: "I cannot search."},
+		{Role: "user", Content: "use google images yourself"},
+	})
+	if !strings.Contains(query, "image of a moai") {
+		t.Fatalf("generic follow-up query = %q", query)
 	}
 }
 
@@ -403,10 +445,10 @@ func TestGarminToolsForConversationSelectsRelevantTools(t *testing.T) {
 	}{
 		{"what is the latest Metrolist release?", false, []string{"do_not_respond", "get_metrolist_status", "search_metrolist_issues", "load_skill"}},
 		{"what is Nyx's GitHub username?", false, []string{"do_not_respond", "get_github_user", "get_discord_profile", "search_discord_members"}},
-		{"search GitHub repos for a Kotlin music client", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository"}},
-		{"search GitHub for Android music clients", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository"}},
-		{"show details for the facebook/react repository", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository"}},
-		{"what is https://github.com/facebook/react?", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository"}},
+		{"search GitHub repos for a Kotlin music client", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
+		{"search GitHub for Android music clients", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
+		{"show details for the facebook/react repository", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
+		{"what is https://github.com/facebook/react?", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
 		{"search the web for today's Android news", false, []string{"do_not_respond", "search_web"}},
 		{"list saved notes", false, []string{"do_not_respond", "list_notes", "get_note"}},
 		{"show me the playback note", false, []string{"do_not_respond", "list_notes", "get_note"}},
@@ -421,6 +463,10 @@ func TestGarminToolsForConversationSelectsRelevantTools(t *testing.T) {
 		{"print i love :glup:", false, []string{"list_discord_emojis", "view_discord_emoji", "do_not_respond"}},
 		{"can you give me a link to that plugin", false, []string{"do_not_respond", "search_web"}},
 		{"can you get me an image of a moai", false, []string{"do_not_respond", "search_web"}},
+		{"give me a tenor link for a moai meme", false, []string{"do_not_respond", "search_web"}},
+		{"what changes were last made in that repo?", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
+		{"what's 3³?", false, []string{"do_not_respond", "calculate_math"}},
+		{"what is 3-1?", false, []string{"do_not_respond", "calculate_math"}},
 	}
 	for _, test := range tests {
 		got := garminToolNames(garminToolsForConversation([]cmd.GarminAIMessage{{Role: "user", Content: test.prompt}}, test.admin, false))
