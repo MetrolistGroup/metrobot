@@ -44,12 +44,12 @@ func (b *Bot) runGarminAppSupport(messages []cmd.GarminAIMessage) (*garminAIResu
 	bestScore := 0
 	bestContent := ""
 	bestTied := false
-	for _, name := range names {
-		content, err := b.Notes.GetNote(name)
+	for _, note := range names {
+		content, err := b.Notes.GetNote(note.Name)
 		if err != nil {
-			return nil, fmt.Errorf("reading app support note %q: %w", name, err)
+			return nil, fmt.Errorf("reading app support note %q: %w", note.Name, err)
 		}
-		score := garminAppSupportNoteScore(query, queryTokens, name, content)
+		score := garminAppSupportNoteScore(query, queryTokens, note.Name, note.ShortDesc, content)
 		if score > bestScore {
 			bestScore = score
 			bestContent = content
@@ -122,17 +122,22 @@ func garminAppSupportIntent(content string) bool {
 	return false
 }
 
-func garminAppSupportNoteScore(query string, queryTokens map[string]struct{}, name, content string) int {
+func garminAppSupportNoteScore(query string, queryTokens map[string]struct{}, name, shortDesc, content string) int {
 	normalizedName := strings.Join(garminSupportTokens(name), " ")
 	score := 0
 	if len(normalizedName) >= 3 && strings.Contains(strings.ToLower(query), normalizedName) {
 		score += 10
 	}
 	nameTokens := garminSupportTokenSet(name)
+	descriptionTokens := garminSupportTokenSet(shortDesc)
 	contentTokens := garminSupportTokenSet(content)
 	for token := range queryTokens {
 		if _, ok := nameTokens[token]; ok {
 			score += 4
+			continue
+		}
+		if _, ok := descriptionTokens[token]; ok {
+			score += 2
 			continue
 		}
 		if _, ok := contentTokens[token]; ok {

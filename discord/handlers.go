@@ -64,7 +64,7 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 	case "notes":
 		b.handleNotes(s, i)
 	case "note":
-		b.handleNote(s, i, opts, stay)
+		b.handleNote(s, i, opts, callerID, stay)
 	case "addnote":
 		b.handleAddNote(s, i, opts, callerID)
 	case "editnote":
@@ -345,8 +345,9 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		"**Notes:**\n" +
 		"• /notes - List all available notes\n" +
 		"• /note [name] - Show a specific note\n" +
-		"• /addnote [name] [content] - Add a new note (admin only)\n" +
-		"• /editnote [name] [content] - Edit a note (admin only)\n" +
+		"• /note [name] [short_desc] [content] - Add a note (admin only)\n" +
+		"• /addnote [name] [short_desc] [content] - Add a new note (admin only)\n" +
+		"• /editnote [name] [short_desc] [content] - Edit a note (admin only)\n" +
 		"• /delnote [name] - Delete a note (admin only)\n" +
 		"• All saved notes are available in #app-support\n\n" +
 		"**Bot Info:**\n" +
@@ -391,8 +392,27 @@ func (b *Bot) handleNotes(s *discordgo.Session, i *discordgo.InteractionCreate) 
 	respondEphemeral(s, i, text)
 }
 
-func (b *Bot) handleNote(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, stay bool) {
+func (b *Bot) handleNote(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string, stay bool) {
 	name := opts["name"].StringValue()
+	shortDesc, hasShortDesc := opts["short_desc"]
+	content, hasContent := opts["content"]
+	if hasShortDesc || hasContent {
+		if !hasShortDesc || !hasContent {
+			respondEphemeral(s, i, "Both short_desc and content are required when adding a note.")
+			return
+		}
+		if !b.DB.IsAdmin("discord", callerID, b.Config) {
+			respondEphemeral(s, i, "Only admins can add notes.")
+			return
+		}
+		if err := b.Notes.AddNote(name, shortDesc.StringValue(), content.StringValue()); err != nil {
+			respondPublic(s, i, fmt.Sprintf("Error adding note: %s", err))
+			return
+		}
+		respondPublic(s, i, fmt.Sprintf("Note `%s` added.", strings.ToLower(name)))
+		return
+	}
+
 	text, err := b.Notes.GetNote(name)
 	if err != nil {
 		b.Logger.Error("note error", zap.Error(err))
@@ -413,8 +433,9 @@ func (b *Bot) handleAddNote(s *discordgo.Session, i *discordgo.InteractionCreate
 		return
 	}
 	name := opts["name"].StringValue()
+	shortDesc := opts["short_desc"].StringValue()
 	content := opts["content"].StringValue()
-	if err := b.Notes.AddNote(name, content); err != nil {
+	if err := b.Notes.AddNote(name, shortDesc, content); err != nil {
 		respondPublic(s, i, fmt.Sprintf("Error adding note: %s", err))
 		return
 	}
@@ -427,8 +448,9 @@ func (b *Bot) handleEditNote(s *discordgo.Session, i *discordgo.InteractionCreat
 		return
 	}
 	name := opts["name"].StringValue()
+	shortDesc := opts["short_desc"].StringValue()
 	content := opts["content"].StringValue()
-	if err := b.Notes.EditNote(name, content); err != nil {
+	if err := b.Notes.EditNote(name, shortDesc, content); err != nil {
 		respondPublic(s, i, fmt.Sprintf("Error editing note: %s", err))
 		return
 	}

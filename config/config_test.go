@@ -15,6 +15,16 @@ func TestValidateRejectsEmptyOpenRouterKey(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsEmptyFirecrawlKey(t *testing.T) {
+	config := validConfig()
+	config.FirecrawlAPIKeys = []string{"key", "  "}
+
+	err := config.validate()
+	if err == nil || !strings.Contains(err.Error(), "firecrawl_api_keys[1]") {
+		t.Fatalf("validate() error = %v, want empty Firecrawl key error", err)
+	}
+}
+
 func validConfig() Config {
 	config := Config{
 		DiscordToken:          "discord",

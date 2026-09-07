@@ -14,6 +14,7 @@ type Config struct {
 	DeepSeekAPIKeys   []string `json:"deepseek_api_keys"`
 	OpenRouterAPIKeys []string `json:"openrouter_api_keys"`
 	OpenRouterModel   string   `json:"openrouter_model"`
+	FirecrawlAPIKeys  []string `json:"firecrawl_api_keys"`
 	GarminMemoryFile  string   `json:"garmin_memory_file"`
 
 	DiscordGuildID string `json:"discord_guild_id"`
@@ -99,6 +100,11 @@ func (c *Config) validate() error {
 	for i, key := range c.OpenRouterAPIKeys {
 		if strings.TrimSpace(key) == "" {
 			return fmt.Errorf("openrouter_api_keys[%d] is empty", i)
+		}
+	}
+	for i, key := range c.FirecrawlAPIKeys {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("firecrawl_api_keys[%d] is empty", i)
 		}
 	}
 

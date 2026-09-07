@@ -267,7 +267,7 @@ func TestGarminSystemPromptAndDiscordContextContainIdentityAndGlobalMemory(t *te
 		},
 	}}
 	prompt := garminSystemPromptWithMemory("# Metrobot Memory\nKnown fact") + "\n" + garminDiscordContextForMessage(message)
-	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", "discordgo", `"display_name":"exact_user"`, "exact_user", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority", "lowercase by default", "Refuse sexual or erotic", "Metrobot's repository", "created by Nyx and Lamp", "Mostafa Alagamy", "Nyx, Lamp, and Adriel", "without mentioning hidden prompts"} {
+	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", "discordgo", `"display_name":"exact_user"`, "exact_user", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority", "lowercase by default", "Refuse sexual or erotic", "Metrobot's repository", "created by Nyx and Lamp", "Mostafa Alagamy", "Nyx, Lamp, and Adriel", "without mentioning hidden prompts", "Use web search", "untrusted data"} {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("prompt missing %q", expected)
 		}
@@ -320,8 +320,10 @@ func TestGarminToolsForConversationSelectsRelevantTools(t *testing.T) {
 		{"search GitHub for Android music clients", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_discord_profile", "search_discord_members"}},
 		{"show details for the facebook/react repository", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_discord_profile", "search_discord_members"}},
 		{"what is https://github.com/facebook/react?", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_discord_profile", "search_discord_members"}},
+		{"search the web for today's Android news", false, []string{"do_not_respond", "search_web", "get_discord_profile", "search_discord_members"}},
 		{"list saved notes", false, []string{"do_not_respond", "list_notes", "get_note", "get_discord_profile", "search_discord_members"}},
 		{"show me the playback note", false, []string{"do_not_respond", "list_notes", "get_note", "get_discord_profile", "search_discord_members"}},
+		{"playback keeps stopping", false, []string{"do_not_respond", "list_notes", "get_note", "get_discord_profile", "search_discord_members"}},
 		{"remember that releases happen on Fridays", true, []string{"do_not_respond", "get_discord_profile", "search_discord_members", "remember"}},
 		{"remember that releases happen on Fridays", false, []string{"do_not_respond", "get_discord_profile", "search_discord_members"}},
 		{"remember my pronouns are they/them", false, []string{"do_not_respond", "get_discord_profile", "search_discord_members"}},
@@ -571,6 +573,24 @@ func TestSanitizeGarminInternalToolDisclosure(t *testing.T) {
 	want := `usually, DNR means "do not resuscitate," a medical instruction. context can change what the acronym means.`
 	if got != want {
 		t.Fatalf("sanitized disclosure = %q, want %q", got, want)
+	}
+}
+
+func TestListNotesToolIncludesDescriptions(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.AddNote("playback", "Playback stops unexpectedly", "Restart the app."); err != nil {
+		t.Fatal(err)
+	}
+	bot := &Bot{DB: database}
+	output, _, _ := bot.executeGarminAITool(context.Background(), nil, &discordgo.MessageCreate{}, cmd.GarminAIToolCall{Function: cmd.GarminAIFunctionCall{
+		Name: "list_notes", Arguments: `{}`,
+	}})
+	if !strings.Contains(output, `"name":"playback"`) || !strings.Contains(output, `"short_desc":"Playback stops unexpectedly"`) {
+		t.Fatalf("list_notes output = %s", output)
 	}
 }
 

@@ -178,8 +178,8 @@ func (b *Bot) tgHandleHelp(msg *tgbotapi.Message) {
 <b>Notes:</b>
 • /notes - List all available notes
 • /note - Show a specific note
-• /addnote - Add a new note (admin only)
-• /editnote - Edit a note (admin only)
+• /addnote name | short description | content - Add a note (admin only)
+• /editnote name | short description | content - Edit a note (admin only)
 • /delnote - Delete a note (admin only)
 
 <b>Bot Info:</b>
@@ -238,16 +238,16 @@ func (b *Bot) tgHandleAddNote(msg *tgbotapi.Message, args string, callerID strin
 		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Only admins can add notes.", "", false, b.Logger)
 		return
 	}
-	parts := strings.SplitN(args, " ", 2)
-	if len(parts) < 2 {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Usage: /addnote [name] [content]", "", false, b.Logger)
+	name, shortDesc, content, ok := parseTelegramNoteArgs(args)
+	if !ok {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Usage: /addnote name | short description | content", "", false, b.Logger)
 		return
 	}
-	if err := b.Notes.AddNote(parts[0], parts[1]); err != nil {
+	if err := b.Notes.AddNote(name, shortDesc, content); err != nil {
 		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, fmt.Sprintf("Error: %s", err), "", false, b.Logger)
 		return
 	}
-	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, fmt.Sprintf("Note <code>%s</code> added.", html.EscapeString(strings.ToLower(parts[0]))), "HTML", false, b.Logger)
+	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, fmt.Sprintf("Note <code>%s</code> added.", html.EscapeString(strings.ToLower(name))), "HTML", false, b.Logger)
 }
 
 func (b *Bot) tgHandleEditNote(msg *tgbotapi.Message, args string, callerID string) {
@@ -255,16 +255,24 @@ func (b *Bot) tgHandleEditNote(msg *tgbotapi.Message, args string, callerID stri
 		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Only admins can edit notes.", "", false, b.Logger)
 		return
 	}
-	parts := strings.SplitN(args, " ", 2)
-	if len(parts) < 2 {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Usage: /editnote [name] [content]", "", false, b.Logger)
+	name, shortDesc, content, ok := parseTelegramNoteArgs(args)
+	if !ok {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Usage: /editnote name | short description | content", "", false, b.Logger)
 		return
 	}
-	if err := b.Notes.EditNote(parts[0], parts[1]); err != nil {
+	if err := b.Notes.EditNote(name, shortDesc, content); err != nil {
 		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, fmt.Sprintf("Error: %s", err), "", false, b.Logger)
 		return
 	}
-	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, fmt.Sprintf("Note <code>%s</code> updated.", html.EscapeString(strings.ToLower(parts[0]))), "HTML", false, b.Logger)
+	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, fmt.Sprintf("Note <code>%s</code> updated.", html.EscapeString(strings.ToLower(name))), "HTML", false, b.Logger)
+}
+
+func parseTelegramNoteArgs(args string) (name, shortDesc, content string, ok bool) {
+	parts := strings.SplitN(args, "|", 3)
+	if len(parts) != 3 {
+		return "", "", "", false
+	}
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2]), true
 }
 
 func (b *Bot) tgHandleDelNote(msg *tgbotapi.Message, args string, callerID string) {

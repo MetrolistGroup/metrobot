@@ -44,8 +44,9 @@ func (d *DB) Close() error {
 func (d *DB) migrate() error {
 	migrations := []string{
 		`CREATE TABLE IF NOT EXISTS notes (
-			name    TEXT PRIMARY KEY,
-			content TEXT NOT NULL
+			name       TEXT PRIMARY KEY,
+			short_desc TEXT NOT NULL DEFAULT '',
+			content    TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS admins (
 			platform   TEXT NOT NULL,
@@ -148,6 +149,15 @@ func (d *DB) migrate() error {
 			return fmt.Errorf("executing migration: %w", err)
 		}
 	}
+	var hasNoteDescription int
+	if err := d.conn.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name = 'short_desc'`).Scan(&hasNoteDescription); err != nil {
+		return fmt.Errorf("checking notes schema: %w", err)
+	}
+	if hasNoteDescription == 0 {
+		if _, err := d.conn.Exec(`ALTER TABLE notes ADD COLUMN short_desc TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("adding note descriptions: %w", err)
+		}
+	}
 
 	return nil
 }
@@ -163,31 +173,36 @@ func (d *DB) GetNote(name string) (string, error) {
 	return content, err
 }
 
-func (d *DB) ListNotes() ([]string, error) {
-	rows, err := d.conn.Query("SELECT name FROM notes ORDER BY name")
+type NoteSummary struct {
+	Name      string `json:"name"`
+	ShortDesc string `json:"short_desc"`
+}
+
+func (d *DB) ListNotes() ([]NoteSummary, error) {
+	rows, err := d.conn.Query("SELECT name, short_desc FROM notes ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var names []string
+	var notes []NoteSummary
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
+		var note NoteSummary
+		if err := rows.Scan(&note.Name, &note.ShortDesc); err != nil {
 			return nil, err
 		}
-		names = append(names, name)
+		notes = append(notes, note)
 	}
-	return names, rows.Err()
+	return notes, rows.Err()
 }
 
-func (d *DB) AddNote(name, content string) error {
-	_, err := d.conn.Exec("INSERT INTO notes (name, content) VALUES (?, ?)", name, content)
+func (d *DB) AddNote(name, shortDesc, content string) error {
+	_, err := d.conn.Exec("INSERT INTO notes (name, short_desc, content) VALUES (?, ?, ?)", name, shortDesc, content)
 	return err
 }
 
-func (d *DB) EditNote(name, content string) error {
-	res, err := d.conn.Exec("UPDATE notes SET content = ? WHERE name = ?", content, name)
+func (d *DB) EditNote(name, shortDesc, content string) error {
+	res, err := d.conn.Exec("UPDATE notes SET short_desc = ?, content = ? WHERE name = ?", shortDesc, content, name)
 	if err != nil {
 		return err
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/config"
 	"github.com/MetrolistGroup/metrobot/db"
+	"github.com/MetrolistGroup/metrobot/firecrawl"
 	gh "github.com/MetrolistGroup/metrobot/github"
 	"github.com/bwmarrin/discordgo"
 	"go.uber.org/zap"
@@ -32,6 +33,7 @@ type Bot struct {
 	garminAI             cmd.GarminAI
 	garminMemory         *cmd.GarminMemory
 	garminGitHub         *gh.AssistantClient
+	garminFirecrawl      *firecrawl.Client
 	garminAIMu           sync.Mutex
 	garminAILastUsed     map[string]time.Time
 	garminAIContexts     map[string]garminAIContext
@@ -101,6 +103,9 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		}
 		bot.garminMemory = memory
 		bot.garminGitHub = gh.NewAssistantClient(cfg.GitHubToken, cfg.GitHubOwner, cfg.GitHubRepo)
+		if len(cfg.FirecrawlAPIKeys) > 0 {
+			bot.garminFirecrawl = firecrawl.NewClient(cfg.FirecrawlAPIKeys)
+		}
 		bot.garminAISlots = make(chan struct{}, 3)
 	}
 
@@ -159,13 +164,26 @@ func (b *Bot) registerCommands() error {
 		},
 		{
 			Name:        "note",
-			Description: "Show a specific note",
+			Description: "Show a note, or add one with a description and content",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "name",
-					Description: "Note name",
+					Description: "Note name without spaces",
 					Required:    true,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "short_desc",
+					Description: "Short description (required when adding)",
+					Required:    false,
+					MaxLength:   160,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "content",
+					Description: "Multi-line content (required when adding)",
+					Required:    false,
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionBoolean,
@@ -187,8 +205,15 @@ func (b *Bot) registerCommands() error {
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "short_desc",
+					Description: "Short description",
+					Required:    true,
+					MaxLength:   160,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "content",
-					Description: "Note content",
+					Description: "Multi-line note content",
 					Required:    true,
 				},
 			},
@@ -205,8 +230,15 @@ func (b *Bot) registerCommands() error {
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "short_desc",
+					Description: "New short description",
+					Required:    true,
+					MaxLength:   160,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "content",
-					Description: "New content",
+					Description: "New multi-line content",
 					Required:    true,
 				},
 			},
