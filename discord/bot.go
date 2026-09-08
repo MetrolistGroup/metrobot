@@ -43,6 +43,8 @@ type Bot struct {
 	garminAIAmbientBusy  map[string]uint64
 	garminAIAmbientSeq   uint64
 	garminAISlots        chan struct{}
+	messageLogMu         sync.Mutex
+	messageLogCache      map[string][]cachedLogMessage
 	TimedBanRestorer     func()
 }
 
@@ -56,7 +58,8 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		return nil, fmt.Errorf("creating discord session: %w", err)
 	}
 
-	session.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsGuildMembers | discordgo.IntentsGuildBans | discordgo.IntentsGuildMessageReactions | discordgo.IntentsMessageContent
+	session.Identify.Intents = discordgo.IntentsGuilds | discordgo.IntentsGuildMessages | discordgo.IntentsGuildMembers | discordgo.IntentsGuildBans | discordgo.IntentsGuildMessageReactions | discordgo.IntentsMessageContent
+	session.State.MaxMessageCount = messageLogCachePerChannel
 
 	bot := &Bot{
 		Session:              session,
@@ -78,6 +81,7 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		garminContextCutoffs: make(map[string]string),
 		garminAIRequests:     make(map[string]map[string]context.CancelFunc),
 		garminAIAmbientBusy:  make(map[string]uint64),
+		messageLogCache:      make(map[string][]cachedLogMessage),
 	}
 	if len(cfg.OpenRouterAPIKeys) > 0 {
 		bot.garminAI = cmd.NewOpenRouterClient(cfg.OpenRouterAPIKeys, cfg.OpenRouterModel)
@@ -112,8 +116,21 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 	session.AddHandler(bot.onMessageCreate)
 	session.AddHandler(bot.onGuildMemberAdd)
 	session.AddHandler(bot.onGuildMemberUpdate)
+	session.AddHandler(bot.onGuildMemberUpdateLog)
+	session.AddHandler(bot.onGuildMemberRemoveLog)
+	session.AddHandler(bot.onGuildBanAddLog)
+	session.AddHandler(bot.onGuildBanRemoveLog)
+	session.AddHandler(bot.onGuildRoleCreateLog)
+	session.AddHandler(bot.onGuildRoleUpdateLog)
+	session.AddHandler(bot.onGuildRoleDeleteLog)
+	session.AddHandler(bot.onChannelUpdateLog)
+	session.AddHandler(bot.onReactionAddLog)
+	session.AddHandler(bot.onReactionRemoveLog)
 	session.AddHandler(bot.handleReactionAdd)
 	session.AddHandler(bot.handleReactionRemove)
+	session.AddHandler(bot.onMessageUpdateLog)
+	session.AddHandler(bot.onMessageDeleteLog)
+	session.AddHandler(bot.onMessageDeleteBulkLog)
 	session.AddHandler(bot.handleMessageDelete)
 
 	return bot, nil

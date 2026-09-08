@@ -115,6 +115,7 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 }
 
 func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
+	b.rememberMessageForLogs(s, m.Message)
 	if m.Author.Bot || m.GuildID != b.Config.DiscordGuildID {
 		return
 	}
