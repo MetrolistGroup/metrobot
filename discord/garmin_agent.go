@@ -93,6 +93,16 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 		return nil, err
 	}
 	systemPrompt := garminSystemPromptWithMemory(memory)
+	result := &garminAIResult{Skills: make(map[string]struct{})}
+	skillName := garminSkillForConversation(messages)
+	if skillName != "" {
+		skillContent, err := loadGarminSkill(skillName)
+		if err != nil {
+			return nil, err
+		}
+		systemPrompt += "\n\nAutomatically loaded " + skillName + " skill:\n" + skillContent
+		result.Skills[skillName] = struct{}{}
+	}
 	conversation := append([]cmd.GarminAIMessage(nil), copyGarminAIMessages(messages)...)
 	discordContext := b.garminDiscordContextForConversation(s, m, messages)
 	if s != nil {
@@ -106,6 +116,13 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 		discordContext += "\n\nThis is an unprefixed message during an active Metrobot conversation. Default to do_not_respond: most ambient channel messages are not for you. Never answer merely because Metrobot is mentioned in the third person. Short reactions or commentary get at most react_to_message. Send text only for a direct follow-up question or clear direct address to you."
 	}
 	tools := garminToolsForConversation(messages, isGarminOwner(m.Author.ID), ambient)
+	if skillName != "" {
+		tools = withoutGarminTools(tools, "load_skill")
+	}
+	forceWebSearch := garminToolAvailable(tools, "search_web")
+	if !ambient && b.garminFirecrawl != nil && garminRedirectChannelID(s, m.ChannelID) == garminGeneralID && !forceWebSearch {
+		tools = append(tools, onlyGarminTools(garminAITools, "search_web")...)
+	}
 	if b.garminFirecrawl == nil {
 		tools = withoutGarminTools(tools, "search_web")
 	}
@@ -114,13 +131,12 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 		tools = withoutGarminTools(tools, "do_not_respond")
 	}
 	repositoryToolRequired := explicitlyTriggered && (garminToolAvailable(tools, "search_github_repositories") || garminToolAvailable(tools, "get_github_repository") || garminToolAvailable(tools, "get_github_commits") || garminToolAvailable(tools, "get_github_file"))
-	webToolRequired := explicitlyTriggered && garminToolAvailable(tools, "search_web")
+	webToolRequired := explicitlyTriggered && forceWebSearch && garminToolAvailable(tools, "search_web")
 	mathToolRequired := explicitlyTriggered && garminToolAvailable(tools, "calculate_math")
 	repositoryToolUsed := false
 	webToolUsed := false
 	calculationUsed := false
 	finalOnly := false
-	result := &garminAIResult{Skills: make(map[string]struct{})}
 	if channelName := garminReadableChannelForConversation(messages); channelName != "" {
 		channelOutput, channelErr := b.readGarminCommunityChannel(s, channelName, "", 15)
 		if channelErr != nil {
@@ -1133,6 +1149,23 @@ func mustJSON(value any) string {
 		return `{"error":"failed to encode result"}`
 	}
 	return string(data)
+}
+
+func garminSkillForConversation(messages []cmd.GarminAIMessage) string {
+	prompt := strings.ToLower(garminUserText(messages))
+	if garminAppSupportSkillAnswer(prompt) != "" || garminAppSupportIntent(prompt) && containsAnyGarminPhrase(prompt,
+		"help", "support", "issue", "problem", "broken", "not working", "not showing", "missing",
+		"doesn't", "doesnt", "isn't", "isnt", "aren't", "arent", "can't", "cant", "won't", "wont",
+		"fix", "crash", "stopping", "fails", "failed", "error", "how do", "how can", "where", "donate", "kmp") {
+		return "support"
+	}
+	if strings.Contains(prompt, "metrolist") && (strings.Contains(prompt, "?") || containsAnyGarminPhrase(prompt,
+		"what", "who", "when", "where", "why", "how", "tell me", "about", "latest", "release", "version",
+		"update", "status", "maintained", "maintenance", "development", "roadmap", "repository", "github",
+		"issue", "bug", "feature", "download", "apk", "website", "abandoned", "dead")) {
+		return "metrolist"
+	}
+	return ""
 }
 
 func garminToolsForConversation(messages []cmd.GarminAIMessage, isAdmin, ambient bool) []cmd.GarminAITool {

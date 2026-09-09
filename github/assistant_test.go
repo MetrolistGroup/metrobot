@@ -41,18 +41,22 @@ func TestAssistantClientSearchIssuesScopesRepository(t *testing.T) {
 	var query string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query = r.URL.Query().Get("q")
-		_, _ = w.Write([]byte(`{"total_count":0,"items":[]}`))
+		_, _ = w.Write([]byte(`{"total_count":1,"items":[{"number":1,"title":"Lyrics fixed","state":"closed","state_reason":"completed"}]}`))
 	}))
 	defer server.Close()
 
 	client := NewAssistantClient("", "MetrolistGroup", "Metrolist")
 	client.apiBase = server.URL
 	client.httpClient = server.Client()
-	if _, err := client.SearchIssues(context.Background(), "lyrics is:open"); err != nil {
+	result, err := client.SearchIssues(context.Background(), "lyrics is:open")
+	if err != nil {
 		t.Fatalf("SearchIssues() error = %v", err)
 	}
 	if query != "repo:MetrolistGroup/Metrolist is:issue lyrics is:open" {
 		t.Fatalf("query = %q", query)
+	}
+	if !strings.Contains(result, `"state_reason":"completed"`) {
+		t.Fatalf("SearchIssues() = %s", result)
 	}
 }
 

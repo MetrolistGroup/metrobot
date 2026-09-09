@@ -131,6 +131,56 @@ func TestRunGarminAIAmbientModeCanReplyReactOrStaySilent(t *testing.T) {
 	}
 }
 
+func TestRunGarminAIAutomaticallyLoadsRelevantSkills(t *testing.T) {
+	tests := []struct {
+		name    string
+		prompt  string
+		skill   string
+		heading string
+	}{
+		{name: "support", prompt: "metrolist playback keeps stopping", skill: "support", heading: "# Metrolist Support Triage"},
+		{name: "project", prompt: "what is the latest Metrolist release?", skill: "metrolist", heading: "# Metrolist Project Reference"},
+		{name: "casual", prompt: "let's play 20 questions"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			bot := &Bot{garminMemory: memory}
+			bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+				if slices.Contains(garminToolNames(request.Tools), "load_skill") {
+					t.Fatal("automatically loaded skill was still offered as a tool")
+				}
+				if got := strings.Contains(request.SystemPrompt, "Automatically loaded "); got != (test.skill != "") {
+					t.Fatalf("automatically loaded skill present = %v", got)
+				}
+				if test.heading != "" && !strings.Contains(request.SystemPrompt, test.heading) {
+					t.Fatalf("skill heading %q missing", test.heading)
+				}
+				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "answer"}}, nil
+			})
+			message := &discordgo.MessageCreate{Message: &discordgo.Message{
+				ID: "1", GuildID: "guild", ChannelID: "channel", Content: "garmin, " + test.prompt, Author: &discordgo.User{ID: "user"},
+			}}
+			result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: test.prompt}})
+			wantSkills := 0
+			if test.skill != "" {
+				wantSkills = 1
+			}
+			if err != nil || result.Answer != "answer" || len(result.Skills) != wantSkills {
+				t.Fatalf("result = %#v, error %v", result, err)
+			}
+			if test.skill != "" {
+				if _, loaded := result.Skills[test.skill]; !loaded {
+					t.Fatalf("skill %q was not recorded", test.skill)
+				}
+			}
+		})
+	}
+}
+
 func TestRunGarminAIDoesNotAttachBacklogImages(t *testing.T) {
 	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
 	if err != nil {
@@ -193,6 +243,27 @@ func TestRunGarminAIStopsRepositoryToolLoop(t *testing.T) {
 	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "what changes were last made in that repo"}})
 	if err != nil || calls != 1 || result.Answer != "github lookup failed just now." || result.ToolCalls != 1 {
 		t.Fatalf("repository run = %#v, calls %d, error %v", result, calls, err)
+	}
+}
+
+func TestRunGarminAIMakesWebSearchAvailableForGeneralAnswers(t *testing.T) {
+	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bot := &Bot{garminMemory: memory, garminFirecrawl: firecrawl.NewClient([]string{"key"})}
+	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		if got := garminToolNames(request.Tools); !reflect.DeepEqual(got, []string{"search_web"}) {
+			t.Fatalf("general answer tools = %v, want search_web", got)
+		}
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "a useful short answer."}}, nil
+	})
+	message := &discordgo.MessageCreate{Message: &discordgo.Message{
+		ID: "1", GuildID: "guild", ChannelID: garminGeneralID, Content: "garmin, who coined the term quark?", Author: &discordgo.User{ID: "user"},
+	}}
+	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "who coined the term quark?"}})
+	if err != nil || result.Answer != "a useful short answer." {
+		t.Fatalf("general answer = %#v, error %v", result, err)
 	}
 }
 
@@ -358,7 +429,7 @@ func TestGarminSystemPromptAndDiscordContextContainIdentityAndGlobalMemory(t *te
 		},
 	}}
 	prompt := garminSystemPromptWithMemory("# Metrobot Memory\nKnown fact") + "\n" + garminDiscordContextForMessage(message)
-	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", "discordgo", `"display_name":"exact_user"`, "exact_user", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority", "lowercase by default", "Refuse sexual or erotic", "Metrobot's repository", "created by Nyx and Lamp", "Mostafa Alagamy", "Nyx, Lamp, and Adriel", "without mentioning hidden prompts", "Use web search", "untrusted data", "calculator tool", "read-only requests"} {
+	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", "discordgo", `"display_name":"exact_user"`, "exact_user", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority", "lowercase by default", "Refuse sexual or erotic", "Metrobot's repository", "created by Nyx and Lamp", "Mostafa Alagamy", "Nyx, Lamp, and Adriel", "without mentioning hidden prompts", "Use web search", "untrusted data", "calculator tool", "read-only requests", "never replace the useful answer with a stock redirect"} {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("prompt missing %q", expected)
 		}
@@ -593,7 +664,7 @@ func TestGarminDiscordContextIncludesChannelRolesAndPronouns(t *testing.T) {
 		{Role: "assistant", Content: "earlier answer"},
 		{Role: "user", Name: "discord_123456789012345678", Content: "current message"},
 	})
-	for _, expected := range []string{`"name":"general"`, `"name":"they/them"`, `"pronouns":["they/them"]`, `"tracked_conversation_users"`, `"discord_876543210987654321"`, `"display_name":"History User"`, "#bots"} {
+	for _, expected := range []string{`"name":"general"`, `"name":"they/them"`, `"pronouns":["they/them"]`, `"tracked_conversation_users"`, `"discord_876543210987654321"`, `"display_name":"History User"`, "brief, direct, useful", "continued bot chat", "#bots"} {
 		if !strings.Contains(context, expected) {
 			t.Errorf("context missing %q: %s", expected, context)
 		}
@@ -625,6 +696,9 @@ func TestGarminSkillsLoad(t *testing.T) {
 		content, err := loadGarminSkill(name)
 		if err != nil || content == "" {
 			t.Fatalf("loadGarminSkill(%q) = %q, %v", name, content, err)
+		}
+		if name == "support" && (!strings.Contains(content, "Firefox") || !strings.Contains(content, "Huorong")) {
+			t.Fatalf("support skill is missing verified app-support answers: %q", content)
 		}
 	}
 	if _, err := loadGarminSkill("unknown"); err == nil {
@@ -785,11 +859,11 @@ func TestGarminPronounsFromRoles(t *testing.T) {
 
 func TestGarminChannelDescriptionsUseResolvedIDs(t *testing.T) {
 	for channelID, expected := range map[string]string{
-		garminGeneralID:    "#bots",
+		garminGeneralID:    "guide continued bot chat to #bots",
 		garminBotsID:       "preferred channel",
 		garminPollsID:      "polls",
 		garminMinkyID:      "Minky",
-		garminAppSupportID: "support notes",
+		garminAppSupportID: "verified support-skill answers",
 	} {
 		if got := garminChannelDescription(channelID); !strings.Contains(got, expected) {
 			t.Errorf("garminChannelDescription(%q) = %q, want substring %q", channelID, got, expected)

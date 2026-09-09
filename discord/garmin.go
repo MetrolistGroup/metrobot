@@ -148,18 +148,10 @@ func (b *Bot) handleGarminAIWithMode(s *discordgo.Session, m *discordgo.MessageC
 }
 
 func enforceGarminChannelReply(channelID, answer string) string {
-	if channelID != garminGeneralID {
-		return answer
+	if channelID == garminGeneralID {
+		return firstGarminSentence(answer)
 	}
-	answer = firstGarminSentence(answer)
-	if answer == "" {
-		return answer
-	}
-	lower := strings.ToLower(answer)
-	if containsAnyGarminPhrase(lower, "<#"+garminBotsID+">", "#bots") || garminRefusalAnswer(lower) {
-		return answer
-	}
-	return strings.TrimSpace(answer) + " continue in <#" + garminBotsID + "> if you wanna chat more."
+	return answer
 }
 
 func garminAIAmbientEnabled(s *discordgo.Session, channelID string) bool {

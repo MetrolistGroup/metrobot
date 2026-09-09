@@ -150,13 +150,14 @@ func (c *AssistantClient) SearchIssues(ctx context.Context, query string) (strin
 	var search struct {
 		TotalCount int `json:"total_count"`
 		Items      []struct {
-			Number    int        `json:"number"`
-			Title     string     `json:"title"`
-			State     string     `json:"state"`
-			HTMLURL   string     `json:"html_url"`
-			CreatedAt *time.Time `json:"created_at"`
-			UpdatedAt *time.Time `json:"updated_at"`
-			User      struct {
+			Number      int        `json:"number"`
+			Title       string     `json:"title"`
+			State       string     `json:"state"`
+			StateReason string     `json:"state_reason"`
+			HTMLURL     string     `json:"html_url"`
+			CreatedAt   *time.Time `json:"created_at"`
+			UpdatedAt   *time.Time `json:"updated_at"`
+			User        struct {
 				Login string `json:"login"`
 			} `json:"user"`
 			Labels []struct {

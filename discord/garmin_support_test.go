@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
+	"github.com/MetrolistGroup/metrobot/config"
 	"github.com/MetrolistGroup/metrobot/db"
 	"github.com/bwmarrin/discordgo"
 	"go.uber.org/zap"
@@ -30,6 +32,9 @@ func TestRunGarminAppSupportReturnsOnlyRelevantNoteContent(t *testing.T) {
 	if err := database.AddNote("downloads", "Find downloaded songs", "Use the Downloads tab in Metrolist."); err != nil {
 		t.Fatal(err)
 	}
+	if err := database.AddNote("donate", "Donate to Metrolist and get KMP access", "Donate through one of the official team links."); err != nil {
+		t.Fatal(err)
+	}
 	bot := &Bot{DB: database, Notes: &cmd.NotesHandler{DB: database}}
 	bot.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		t.Fatal("app-support invoked the generative AI provider")
@@ -43,6 +48,10 @@ func TestRunGarminAppSupportReturnsOnlyRelevantNoteContent(t *testing.T) {
 	}
 	if result.Answer != "Restart the Metrolist app, then retry playback." {
 		t.Fatalf("app-support answer = %q", result.Answer)
+	}
+	result, err = bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "Where can I donate to get KMP?"}})
+	if err != nil || result.Answer != "Donate through one of the official team links." {
+		t.Fatalf("donation answer = %q, %v", result.Answer, err)
 	}
 
 	result, err = bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "tell me a joke"}})
@@ -70,6 +79,89 @@ func TestGarminAppSupportNoteMatchingUsesRelevantNotes(t *testing.T) {
 	}
 	if garminAppSupportIntent("server rules and moderation") {
 		t.Fatal("non-app note was classified as app support")
+	}
+	if !garminAppSupportIntent("Where can I donate to get KMP?") {
+		t.Fatal("donation question was not classified as app support")
+	}
+}
+
+func TestGarminAppSupportUsesOnlyVerifiedAutomaticAnswers(t *testing.T) {
+	for _, test := range []struct {
+		prompt string
+		want   string
+	}{
+		{"Chrome fails whenever I download the APK", garminChromeDownloadReply},
+		{"I donated, how do I get the supporter role?", garminDonorRoleReply},
+		{"the app crashed", garminCrashContextReply},
+		{"why did VirusTotal say the app has a virus?", garminVirusReply},
+		{"the app crashed trying to add a song to the queue", ""},
+		{"where can I donate to get KMP?", ""},
+	} {
+		if got := garminAppSupportSkillAnswer(test.prompt); got != test.want {
+			t.Errorf("garminAppSupportSkillAnswer(%q) = %q, want %q", test.prompt, got, test.want)
+		}
+	}
+
+	fixed := `{"items":[{"title":"Playback stops after two songs","state":"closed","state_reason":"completed","html_url":"https://github.com/MetrolistGroup/Metrolist/issues/1","labels":[{"name":"bug"}]}]}`
+	if got := garminFixedAppSupportIssue("playback stops after two songs", fixed); !strings.Contains(got, "/issues/1") {
+		t.Fatalf("completed matching issue answer = %q", got)
+	}
+	wontfix := strings.Replace(fixed, `"bug"`, `"wontfix"`, 1)
+	if got := garminFixedAppSupportIssue("playback stops after two songs", wontfix); got != "" {
+		t.Fatalf("wontfix issue answer = %q", got)
+	}
+	genericCrash := strings.Replace(fixed, "Playback stops after two songs", "Metrolist Crash Report", 1)
+	if got := garminFixedAppSupportIssue("app crashed trying to add a song to the queue", genericCrash); got != "" {
+		t.Fatalf("generic crash issue answer = %q", got)
+	}
+}
+
+func TestOnMessageCreateAutomaticallyAnswersVerifiedAppSupport(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	replies := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		replies <- string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"reply","channel_id":"` + garminAppSupportID + `"}`))
+	}))
+	defer server.Close()
+	session, err := discordgo.New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client = server.Client()
+	session.Client.Transport = rewriteDiscordTransport{base: session.Client.Transport, target: server.URL}
+	bot := &Bot{
+		Config: &config.Config{DiscordGuildID: "guild"}, DB: database, Notes: &cmd.NotesHandler{DB: database},
+		Logger: zap.NewNop(), garminProcessor: cmd.NewGarminProcessor(), garminAIContexts: make(map[string]garminAIContext),
+		garminAIUserContexts: make(map[string]garminAIContext), garminContextCutoffs: make(map[string]string),
+	}
+	bot.onMessageCreate(session, &discordgo.MessageCreate{Message: &discordgo.Message{
+		ID: "message", GuildID: "guild", ChannelID: garminAppSupportID,
+		Author: &discordgo.User{ID: "user"}, Content: "why did VirusTotal say the app has a virus?",
+	}})
+	select {
+	case body := <-replies:
+		if !strings.Contains(body, "false positive") || !strings.Contains(body, "Huorong") {
+			t.Fatalf("automatic support reply = %s", body)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("automatic app-support reply timed out")
+	}
+
+	bot.handleGarminAutomaticAppSupport(session, &discordgo.MessageCreate{Message: &discordgo.Message{
+		ID: "unknown", GuildID: "guild", ChannelID: garminAppSupportID,
+		Author: &discordgo.User{ID: "user"}, Content: "the widget looks weird",
+	}})
+	select {
+	case body := <-replies:
+		t.Fatalf("unsupported automatic reply = %s", body)
+	default:
 	}
 }
 

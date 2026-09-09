@@ -226,13 +226,13 @@ func garminChannelDescription(channelID string) string {
 	case garminPollsID:
 		return "staff polls users about app designs and possible features"
 	case garminGeneralID:
-		return "general community chat; Garmin replies should be brief and continued bot chat belongs in #bots"
+		return "general community chat; Garmin replies should be brief, direct, useful, and guide continued bot chat to #bots"
 	case garminBotsID:
 		return "the preferred channel for normal conversations and commands with bots"
 	case garminChatThreadID:
 		return "a thread where normal conversations with Metrobot are welcome despite being under general"
 	case garminAppSupportID:
-		return "Metrolist app support; replies must use saved support notes only"
+		return "Metrolist app support; automatic replies use only exact saved notes, verified support-skill answers, or matching official issues marked completed"
 	default:
 		return ""
 	}

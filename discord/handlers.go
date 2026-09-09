@@ -158,6 +158,10 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		sendReplyAllowEmbeds(s, m.ChannelID, m.ID, text, false, b.Logger)
 		return
 	}
+	if m.ChannelID == garminAppSupportID && garminAppSupportIntent(content) {
+		go b.handleGarminAutomaticAppSupport(s, m)
+		return
+	}
 
 	matches := chatModPattern.FindStringSubmatch(content)
 	if matches == nil {
