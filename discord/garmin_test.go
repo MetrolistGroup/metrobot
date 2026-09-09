@@ -346,6 +346,25 @@ func TestRenderGarminGuildEmojisUsesOnlyLiveAvailableNames(t *testing.T) {
 	}
 }
 
+func TestRenderGarminGuildEmojisRepairsMissingClosingColon(t *testing.T) {
+	state := discordgo.NewState()
+	if err := state.GuildAdd(&discordgo.Guild{ID: "guild", Emojis: []*discordgo.Emoji{{
+		ID: "1", Name: "hm", Available: true,
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	session := &discordgo.Session{State: state}
+	for input, want := range map[string]string{
+		"nah i don't have jokes :hm": "nah i don't have jokes <:hm:1>",
+		":hm is aesthetic":           "<:hm:1> is aesthetic",
+		"keep :missing as text":      "keep :missing as text",
+	} {
+		if got := renderGarminGuildEmojis(session, "guild", input); got != want {
+			t.Errorf("renderGarminGuildEmojis(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestRenderGarminGuildEmojisRefreshesStaleState(t *testing.T) {
 	session, err := discordgo.New("Bot test")
 	if err != nil {

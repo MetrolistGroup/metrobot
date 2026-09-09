@@ -40,6 +40,7 @@ type garminAIContext struct {
 var (
 	garminAICustomEmojiPattern     = regexp.MustCompile(`<a?:([A-Za-z0-9_~]+):(\d+)>`)
 	garminAICustomShortcodePattern = regexp.MustCompile(`:([A-Za-z_~][A-Za-z0-9_~]{1,63}):`)
+	garminAILooseShortcodePattern  = regexp.MustCompile(`(^|[[:space:]]):([A-Za-z_~][A-Za-z0-9_~]{1,63})([[:space:].,!?;]|$)`)
 )
 
 func (b *Bot) handleGarminAI(s *discordgo.Session, m *discordgo.MessageCreate, messages []cmd.GarminAIMessage) {
@@ -874,7 +875,7 @@ func garminEmojiImageURL(emoji *discordgo.Emoji) string {
 }
 
 func renderGarminGuildEmojis(s *discordgo.Session, guildID, answer string) string {
-	if !garminAICustomEmojiPattern.MatchString(answer) && !garminAICustomShortcodePattern.MatchString(answer) {
+	if !garminAICustomEmojiPattern.MatchString(answer) && !garminAICustomShortcodePattern.MatchString(answer) && !garminAILooseShortcodePattern.MatchString(answer) {
 		return answer
 	}
 	emojis, err := garminLiveGuildEmojis(s, guildID)
@@ -899,6 +900,13 @@ func renderGarminGuildEmojis(s *discordgo.Session, guildID, answer string) strin
 	})
 	answer = garminAICustomShortcodePattern.ReplaceAllStringFunc(answer, func(shortcode string) string {
 		return replaceEmoji(garminAICustomShortcodePattern.FindStringSubmatch(shortcode)[1])
+	})
+	answer = garminAILooseShortcodePattern.ReplaceAllStringFunc(answer, func(shortcode string) string {
+		match := garminAILooseShortcodePattern.FindStringSubmatch(shortcode)
+		if replacement := replaceEmoji(match[2]); replacement != "" {
+			return match[1] + replacement + match[3]
+		}
+		return shortcode
 	})
 	for i, emoji := range placeholders {
 		answer = strings.ReplaceAll(answer, fmt.Sprintf("\x00GARMIN_EMOJI_%d\x00", i), emoji)
