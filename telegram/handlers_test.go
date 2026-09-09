@@ -60,6 +60,15 @@ func TestFormatTelegramNoteHTML(t *testing.T) {
 	}
 }
 
+func TestFormatTelegramKMPNoteHTML(t *testing.T) {
+	formatted := formatTelegramNoteHTML("## What is KMP?\n\nKMP stands for Kotlin Multiplatform.\n\n## Supported platforms\n\n* Linux\n* Android")
+	for _, want := range []string{"<b>What is KMP?</b>", "KMP stands for Kotlin Multiplatform.", "<b>Supported platforms</b>", "• Linux", "• Android"} {
+		if !strings.Contains(formatted, want) {
+			t.Fatalf("formatted KMP note missing %q in %q", want, formatted)
+		}
+	}
+}
+
 func TestFormatTelegramNoteHTMLKeepsBoldOutOfCode(t *testing.T) {
 	formatted := formatTelegramNoteHTML("`**do not bold**`")
 	want := "<code>**do not bold**</code>"

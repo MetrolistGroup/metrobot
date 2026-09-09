@@ -61,13 +61,6 @@ func (b *Bot) handleGarminAIWithMode(s *discordgo.Session, m *discordgo.MessageC
 		b.sendGarminReply(s, m, "Ask me something after `garmin,`.")
 		return
 	}
-	if m.ChannelID == garminAppSupportID {
-		if ambient && !garminAppSupportIntent(garminUserText(messages)) {
-			return
-		}
-		b.handleGarminAppSupport(s, m, messages)
-		return
-	}
 	if b.garminAI == nil {
 		if ambient {
 			return
@@ -125,10 +118,15 @@ func (b *Bot) handleGarminAIWithMode(s *discordgo.Session, m *discordgo.MessageC
 		return
 	}
 	if strings.TrimSpace(result.Answer) == "" {
-		if ambient {
+		if ambient || m.ChannelID == garminAppSupportID {
 			return
 		}
 		b.sendGarminReply(s, m, "I couldn't produce a useful answer for that.")
+		return
+	}
+	if m.ChannelID == garminAppSupportID {
+		conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: result.Answer})
+		b.sendGarminAppSupportReplyAndRememberIfVisible(s, m, result.Answer, conversation, result.NoteName)
 		return
 	}
 	result.Answer = enforceGarminChannelReply(garminRedirectChannelID(s, m.ChannelID), result.Answer)

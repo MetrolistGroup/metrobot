@@ -25,6 +25,7 @@ var garminSkillFiles embed.FS
 
 type garminAIResult struct {
 	Answer           string
+	NoteName         string
 	Conversation     []cmd.GarminAIMessage
 	ToolCalls        int
 	Skills           map[string]struct{}
@@ -85,9 +86,7 @@ func (b *Bot) runGarminAI(ctx context.Context, s *discordgo.Session, m *discordg
 }
 
 func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, messages []cmd.GarminAIMessage, ambient bool, ambientToken uint64) (*garminAIResult, error) {
-	if m.ChannelID == garminAppSupportID {
-		return b.runGarminAppSupport(messages)
-	}
+	appSupport := m.ChannelID == garminAppSupportID
 	memory, err := b.garminMemory.Read()
 	if err != nil {
 		return nil, err
@@ -95,6 +94,9 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 	systemPrompt := garminSystemPromptWithMemory(memory)
 	result := &garminAIResult{Skills: make(map[string]struct{})}
 	skillName := garminSkillForConversation(messages)
+	if appSupport {
+		skillName = "support"
+	}
 	if skillName != "" {
 		skillContent, err := loadGarminSkill(skillName)
 		if err != nil {
@@ -115,7 +117,13 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 	if ambient {
 		discordContext += "\n\nThis is an unprefixed message during an active Metrobot conversation. Default to do_not_respond: most ambient channel messages are not for you. Never answer merely because Metrobot is mentioned in the third person. Short reactions or commentary get at most react_to_message. Send text only for a direct follow-up question or clear direct address to you."
 	}
+	if appSupport {
+		discordContext += "\n\nYou are the dedicated Metrolist app-support agent. Use only an exact saved note, a verified answer in the loaded support skill, or an official issue explicitly marked completed. Use list_notes before get_note when a note may apply. Ignore staff coordination, chatter, and unsupported requests instead of replying about the channel or missing information."
+	}
 	tools := garminToolsForConversation(messages, isGarminOwner(m.Author.ID), ambient)
+	if appSupport {
+		tools = onlyGarminTools(garminAITools, "do_not_respond", "list_notes", "get_note", "search_metrolist_issues")
+	}
 	if skillName != "" {
 		tools = withoutGarminTools(tools, "load_skill")
 	}
@@ -326,6 +334,15 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 				ToolCallID: toolCall.ID,
 				Content:    truncateGarminAIToolResult(output),
 			})
+			if appSupport && toolCall.Function.Name == "get_note" && garminToolResultError(output) == "" {
+				var args garminToolArgs
+				if json.Unmarshal([]byte(toolCall.Function.Arguments), &args) == nil {
+					result.Answer = output
+					result.NoteName = strings.ToLower(strings.TrimSpace(args.Name))
+					result.Conversation = conversation
+					return result, nil
+				}
+			}
 			if toolCall.Function.Name == "search_web" {
 				if garminToolResultError(output) != "" {
 					result.Answer = "web search failed just now."
@@ -1153,10 +1170,10 @@ func mustJSON(value any) string {
 
 func garminSkillForConversation(messages []cmd.GarminAIMessage) string {
 	prompt := strings.ToLower(garminUserText(messages))
-	if garminAppSupportSkillAnswer(prompt) != "" || garminAppSupportIntent(prompt) && containsAnyGarminPhrase(prompt,
+	if garminAppSupportIntent(prompt) && containsAnyGarminPhrase(prompt,
 		"help", "support", "issue", "problem", "broken", "not working", "not showing", "missing",
 		"doesn't", "doesnt", "isn't", "isnt", "aren't", "arent", "can't", "cant", "won't", "wont",
-		"fix", "crash", "stopping", "fails", "failed", "error", "how do", "how can", "where", "donate", "kmp") {
+		"fix", "crash", "stopping", "fails", "failed", "error", "how do", "how can", "where", "why", "donate", "kmp") {
 		return "support"
 	}
 	if strings.Contains(prompt, "metrolist") && (strings.Contains(prompt, "?") || containsAnyGarminPhrase(prompt,

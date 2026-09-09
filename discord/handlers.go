@@ -36,6 +36,10 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 	if i.GuildID != b.Config.DiscordGuildID {
 		return
 	}
+	if i.Type == discordgo.InteractionMessageComponent {
+		b.handleKMPNoteComponent(s, i)
+		return
+	}
 
 	if i.Type == discordgo.InteractionApplicationCommandAutocomplete {
 		b.handleAutocomplete(s, i)
@@ -137,13 +141,15 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		go b.handleGarminAI(s, m, b.garminAITriggeredConversation(m, prompt))
 		return
 	}
-	if messages, continuation := b.garminAIContinuation(m, content); continuation {
-		b.cancelGarminAIAmbient(m)
-		if b.autoWarnGarminAbuse(s, m, content) {
+	if m.ChannelID != garminAppSupportID {
+		if messages, continuation := b.garminAIContinuation(m, content); continuation {
+			b.cancelGarminAIAmbient(m)
+			if b.autoWarnGarminAbuse(s, m, content) {
+				return
+			}
+			go b.handleGarminAI(s, m, messages)
 			return
 		}
-		go b.handleGarminAI(s, m, messages)
-		return
 	}
 
 	// Check for "Ok Garmin" trigger (case insensitive, comma optional)
@@ -155,16 +161,22 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 			b.Logger.Debug("note not found", zap.String("note", noteName), zap.Error(err))
 			return
 		}
+		if strings.EqualFold(noteName, "kmp") && b.sendKMPNoteReply(s, m.ChannelID, m.ID, text) != nil {
+			return
+		}
 		sendReplyAllowEmbeds(s, m.ChannelID, m.ID, text, false, b.Logger)
 		return
 	}
-	if m.ChannelID == garminAppSupportID && garminAppSupportIntent(content) {
-		go b.handleGarminAutomaticAppSupport(s, m)
-		return
-	}
-
 	matches := chatModPattern.FindStringSubmatch(content)
 	if matches == nil {
+		if m.ChannelID == garminAppSupportID {
+			messages := []cmd.GarminAIMessage{garminAIUserMessage(m, content)}
+			if continuation, ok := b.garminAIContinuation(m, content); ok {
+				messages = continuation
+			}
+			go b.handleGarminAutomaticAppSupport(s, m, messages)
+			return
+		}
 		if garminAIAmbientTargetsOtherUser(s, m) || b.stopGarminAIAmbient(m, content) || !garminAIAmbientEnabled(s, m.ChannelID) {
 			return
 		}
@@ -426,6 +438,9 @@ func (b *Bot) handleNote(s *discordgo.Session, i *discordgo.InteractionCreate, o
 		return
 	}
 
+	if strings.EqualFold(name, "kmp") && b.respondKMPNote(s, i, text, !stay) {
+		return
+	}
 	if stay {
 		respondPublicAllowEmbeds(s, i, text)
 	} else {

@@ -232,7 +232,7 @@ func garminChannelDescription(channelID string) string {
 	case garminChatThreadID:
 		return "a thread where normal conversations with Metrobot are welcome despite being under general"
 	case garminAppSupportID:
-		return "Metrolist app support; automatic replies use only exact saved notes, verified support-skill answers, or matching official issues marked completed"
+		return "Metrolist app support; Qwen ignores non-requests and hands clear requests to an agent using only exact saved notes, verified support-skill answers, or matching official issues marked completed"
 	default:
 		return ""
 	}
