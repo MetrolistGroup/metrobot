@@ -5,6 +5,13 @@ import (
 	"testing"
 )
 
+func TestTelegramModerationMentionsAreSilent(t *testing.T) {
+	msg := newTelegramModerationMessage(123, `<a href="tg://user?id=456">@user</a>`)
+	if msg.ParseMode != "HTML" || !msg.DisableNotification {
+		t.Fatalf("moderation message parse mode = %q, silent = %v", msg.ParseMode, msg.DisableNotification)
+	}
+}
+
 func TestExtractTriggeredNoteName(t *testing.T) {
 	tests := []struct {
 		name    string

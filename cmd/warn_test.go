@@ -35,6 +35,21 @@ func (b *fakeWarnBanner) GetAllMembers() ([]MemberInfo, error)         { return 
 func (b *fakeWarnBanner) Platform() string                             { return b.platform }
 func (b *fakeWarnBanner) ChatID() string                               { return b.chatID }
 
+func TestInfractionUserRefsUseNativeMentions(t *testing.T) {
+	for _, tt := range []struct {
+		platform string
+		want     string
+	}{
+		{platform: PlatformDiscord, want: "<@123>"},
+		{platform: PlatformTelegram, want: `<a href="tg://user?id=123">@testuser</a>`},
+	} {
+		banner := &fakeWarnBanner{platform: tt.platform}
+		if got := formatUserRef(banner, "123"); got != tt.want {
+			t.Errorf("formatUserRef(%s) = %q, want %q", tt.platform, got, tt.want)
+		}
+	}
+}
+
 func TestWarningsAreOneIndexed(t *testing.T) {
 	database := openWarnTestDB(t)
 	handler := &WarnHandler{DB: database}

@@ -66,7 +66,7 @@ func (h *WarnHandler) Warn(banner PlatformBanner, callerID, targetID, reason str
 
 	h.DB.LogModAction(platform, "system", targetID, "timeout", fmt.Sprintf("Timeout for %s after warn #%d", util.FormatDuration(timeoutDuration), count))
 
-	response := fmt.Sprintf("⚠️ %s has been warned. Reason: %s (warning #%d). Auto-action: timed out for %s.", formatUserRef(banner, targetID), reasonText, count, util.FormatDuration(timeoutDuration))
+	response := fmt.Sprintf("⚠️ %s has been warned. Reason: %s (warning #%d). Auto-action: timed out for %s.", formatUserRef(banner, targetID), formatUserText(banner, reasonText), count, util.FormatDuration(timeoutDuration))
 
 	return response, nil, c, nil
 }
@@ -88,7 +88,11 @@ func (h *WarnHandler) Warnings(banner PlatformBanner, targetID string) (string, 
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("**Warnings for %s:**\n", formatUserRef(banner, targetID)))
+	if banner.Platform() == PlatformTelegram {
+		sb.WriteString(fmt.Sprintf("<b>Warnings for %s:</b>\n", formatUserRef(banner, targetID)))
+	} else {
+		sb.WriteString(fmt.Sprintf("**Warnings for %s:**\n", formatUserRef(banner, targetID)))
+	}
 
 	for i, w := range warnings {
 		reason := w.Reason
@@ -96,7 +100,7 @@ func (h *WarnHandler) Warnings(banner PlatformBanner, targetID string) (string, 
 			reason = "no reason"
 		}
 		ts := time.Unix(w.Timestamp, 0).Format("2006-01-02")
-		sb.WriteString(fmt.Sprintf("[%d] %s - by %s - %s\n", i+1, reason, formatUserRef(banner, w.WarnedBy), ts))
+		sb.WriteString(fmt.Sprintf("[%d] %s - by %s - %s\n", i+1, formatUserText(banner, reason), formatUserRef(banner, w.WarnedBy), ts))
 	}
 
 	sb.WriteString(fmt.Sprintf("\nWarnings: %d/%d", len(warnings), threshold))

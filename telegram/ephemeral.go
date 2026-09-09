@@ -64,6 +64,22 @@ func sendPublicReply(bot *tgbotapi.BotAPI, chatID int64, replyToMsgID int, text 
 	}
 }
 
+func sendPublicModerationReply(bot *tgbotapi.BotAPI, chatID int64, replyToMsgID int, text string, logger *zap.Logger) {
+	msg := newTelegramModerationMessage(chatID, text)
+	msg.ReplyToMessageID = replyToMsgID
+	if _, err := bot.Send(msg); err != nil {
+		logger.Error("failed to send telegram moderation message", zap.Error(err))
+	}
+}
+
+func newTelegramModerationMessage(chatID int64, text string) tgbotapi.MessageConfig {
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = "HTML"
+	msg.DisableNotification = true
+	msg.DisableWebPagePreview = true
+	return msg
+}
+
 func sendPublicNoteReply(bot *tgbotapi.BotAPI, chatID int64, replyToMsgID int, text string, autoDelete bool, logger *zap.Logger) {
 	msg := newTelegramNoteMessage(chatID, text)
 	msg.ReplyToMessageID = replyToMsgID

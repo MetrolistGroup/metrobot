@@ -36,10 +36,18 @@ func respondPublic(s *discordgo.Session, i *discordgo.InteractionCreate, content
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
-			Content: suppressDiscordEmbeds(content),
-			Flags:   discordgo.MessageFlagsSuppressEmbeds,
+			Content:         suppressDiscordEmbeds(content),
+			Flags:           discordgo.MessageFlagsSuppressEmbeds,
+			AllowedMentions: &discordgo.MessageAllowedMentions{},
 		},
 	})
+}
+
+func noPingMessage(content string) *discordgo.MessageSend {
+	return &discordgo.MessageSend{
+		Content:         content,
+		AllowedMentions: &discordgo.MessageAllowedMentions{},
+	}
 }
 
 func respondPublicAllowEmbeds(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {

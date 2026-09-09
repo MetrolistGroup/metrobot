@@ -23,7 +23,7 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 			b.Logger.Error("ban failed", zap.Error(err))
 			return
 		}
-		s.ChannelMessageSend(channelID, resp)
+		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))
 
 	case "dban":
 		resp, _, err := b.Moderation.DBan(banner, callerID, targetID, args, b.Config)
@@ -31,7 +31,7 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 			b.Logger.Error("dban failed", zap.Error(err))
 			return
 		}
-		s.ChannelMessageSend(channelID, resp)
+		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))
 
 	case "tban":
 		if len(parts) < 2 {
@@ -51,7 +51,7 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 			b.Logger.Error("tban failed", zap.Error(err))
 			return
 		}
-		s.ChannelMessageSend(channelID, resp)
+		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))
 
 	case "sban":
 		resp, _, err := b.Moderation.SBan(banner, callerID, targetID, args, b.Config)
@@ -59,7 +59,7 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 			b.Logger.Error("sban failed", zap.Error(err))
 			return
 		}
-		s.ChannelMessageSend(channelID, resp)
+		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))
 
 	case "mute":
 		if len(parts) < 2 {
@@ -79,7 +79,7 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 			b.Logger.Error("mute failed", zap.Error(err))
 			return
 		}
-		s.ChannelMessageSend(channelID, resp)
+		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))
 
 	case "warn":
 		resp, extras, _, err := b.Warn.Warn(banner, callerID, targetID, args, b.Config)
@@ -87,9 +87,9 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 			b.Logger.Error("warn failed", zap.Error(err))
 			return
 		}
-		s.ChannelMessageSend(channelID, resp)
+		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))
 		for _, extra := range extras {
-			s.ChannelMessageSend(channelID, extra)
+			s.ChannelMessageSendComplex(channelID, noPingMessage(extra))
 		}
 	}
 }

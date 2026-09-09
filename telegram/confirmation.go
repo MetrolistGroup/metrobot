@@ -23,7 +23,7 @@ func (b *Bot) executePrefixCommand(chatID int64, callerID, action, args, targetI
 			b.Logger.Error("ban failed", zap.Error(err))
 			return
 		}
-		b.API.Send(tgbotapi.NewMessage(chatID, resp))
+		b.API.Send(newTelegramModerationMessage(chatID, resp))
 
 	case "dban":
 		resp, _, err := b.Moderation.DBan(banner, callerID, targetID, args, b.Config)
@@ -31,7 +31,7 @@ func (b *Bot) executePrefixCommand(chatID int64, callerID, action, args, targetI
 			b.Logger.Error("dban failed", zap.Error(err))
 			return
 		}
-		b.API.Send(tgbotapi.NewMessage(chatID, resp))
+		b.API.Send(newTelegramModerationMessage(chatID, resp))
 
 	case "tban":
 		if len(parts) < 2 {
@@ -51,7 +51,7 @@ func (b *Bot) executePrefixCommand(chatID int64, callerID, action, args, targetI
 			b.Logger.Error("tban failed", zap.Error(err))
 			return
 		}
-		b.API.Send(tgbotapi.NewMessage(chatID, resp))
+		b.API.Send(newTelegramModerationMessage(chatID, resp))
 
 	case "sban":
 		resp, _, err := b.Moderation.SBan(banner, callerID, targetID, args, b.Config)
@@ -59,7 +59,7 @@ func (b *Bot) executePrefixCommand(chatID int64, callerID, action, args, targetI
 			b.Logger.Error("sban failed", zap.Error(err))
 			return
 		}
-		b.API.Send(tgbotapi.NewMessage(chatID, resp))
+		b.API.Send(newTelegramModerationMessage(chatID, resp))
 
 	case "mute":
 		if len(parts) < 2 {
@@ -79,7 +79,7 @@ func (b *Bot) executePrefixCommand(chatID int64, callerID, action, args, targetI
 			b.Logger.Error("mute failed", zap.Error(err))
 			return
 		}
-		b.API.Send(tgbotapi.NewMessage(chatID, resp))
+		b.API.Send(newTelegramModerationMessage(chatID, resp))
 
 	case "warn":
 		resp, extras, _, err := b.Warn.Warn(banner, callerID, targetID, args, b.Config)
@@ -87,7 +87,7 @@ func (b *Bot) executePrefixCommand(chatID int64, callerID, action, args, targetI
 			b.Logger.Error("warn failed", zap.Error(err))
 			return
 		}
-		b.API.Send(tgbotapi.NewMessage(chatID, resp))
+		b.API.Send(newTelegramModerationMessage(chatID, resp))
 		for _, extra := range extras {
 			msg := tgbotapi.NewMessage(chatID, extra)
 			msg.DisableWebPagePreview = true

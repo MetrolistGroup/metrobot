@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"fmt"
+	"html"
+	"strconv"
 	"strings"
 	"time"
 
@@ -78,7 +80,7 @@ func (h *ModerationHandler) Ban(banner PlatformBanner, callerID, targetID, reaso
 		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "ban", targetID, callerID, reason, targetName, moderatorName)
 	}
 
-	reasonText := " Reason: " + reason
+	reasonText := " Reason: " + formatUserText(banner, reason)
 	return fmt.Sprintf("🔨 %s has been permanently banned.%s", formatUserRef(banner, targetID), reasonText), c, nil
 }
 
@@ -111,7 +113,7 @@ func (h *ModerationHandler) DBan(banner PlatformBanner, callerID, targetID, reas
 		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "dban", targetID, callerID, reason, targetName, moderatorName)
 	}
 
-	reasonText := " Reason: " + reason
+	reasonText := " Reason: " + formatUserText(banner, reason)
 	return fmt.Sprintf("🔨 %s has been banned and their messages deleted.%s", formatUserRef(banner, targetID), reasonText), c, nil
 }
 
@@ -147,7 +149,7 @@ func (h *ModerationHandler) TBan(banner PlatformBanner, callerID, targetID strin
 		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "tban", targetID, callerID, reason, targetName, moderatorName)
 	}
 
-	reasonText := " Reason: " + reason
+	reasonText := " Reason: " + formatUserText(banner, reason)
 	return fmt.Sprintf("⏱️ %s has been banned for %s.%s", formatUserRef(banner, targetID), util.FormatDuration(duration), reasonText), c, nil
 }
 
@@ -188,7 +190,7 @@ func (h *ModerationHandler) SBan(banner PlatformBanner, callerID, targetID, reas
 		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "sban", targetID, callerID, reason, targetName, moderatorName)
 	}
 
-	reasonText := " Reason: " + reason
+	reasonText := " Reason: " + formatUserText(banner, reason)
 	return fmt.Sprintf("🧹 %s has been softbanned.%s", formatUserRef(banner, targetID), reasonText), c, nil
 }
 
@@ -227,7 +229,7 @@ func (h *ModerationHandler) Mute(banner PlatformBanner, callerID, targetID strin
 		h.DB.LogModAction(banner.Platform(), "system", targetID, "unmute", "timed mute expired")
 	})
 
-	reasonText := " Reason: " + reason
+	reasonText := " Reason: " + formatUserText(banner, reason)
 	return fmt.Sprintf("🔇 %s has been muted for %s.%s", formatUserRef(banner, targetID), util.FormatDuration(duration), reasonText), c, nil
 }
 
@@ -425,12 +427,29 @@ func stripAllowedHoistChars(s string) string {
 }
 
 func formatUserRef(banner PlatformBanner, userID string) string {
-	// Get username to format nicely without pinging
-	username, err := banner.GetUsername(userID)
-	if err != nil || username == "" {
-		// Fallback to userID if we can't get username
-		return "`@" + userID + "`"
+	if banner.Platform() == PlatformDiscord {
+		if _, err := strconv.ParseUint(userID, 10, 64); err == nil {
+			return "<@" + userID + ">"
+		}
 	}
 
-	return "`@" + username + "`"
+	username, err := banner.GetUsername(userID)
+	if err != nil || username == "" {
+		username = userID
+	}
+	if banner.Platform() == PlatformTelegram {
+		username = html.EscapeString(username)
+		if _, err := strconv.ParseInt(userID, 10, 64); err == nil {
+			return fmt.Sprintf(`<a href="tg://user?id=%s">@%s</a>`, userID, username)
+		}
+	}
+
+	return "@" + username
+}
+
+func formatUserText(banner PlatformBanner, text string) string {
+	if banner.Platform() == PlatformTelegram {
+		return html.EscapeString(text)
+	}
+	return text
 }

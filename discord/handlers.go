@@ -312,11 +312,12 @@ func (b *Bot) autoWarnGarminAbuse(s *discordgo.Session, m *discordgo.MessageCrea
 	}
 	b.Logger.Info("automatic Metrobot abuse warning issued",
 		zap.String("user", m.Author.ID), zap.String("message", m.ID))
-	_, _ = s.ChannelMessageSend(m.ChannelID, response)
+	_, _ = s.ChannelMessageSendComplex(m.ChannelID, noPingMessage(response))
 	for _, extra := range extras {
 		_, _ = s.ChannelMessageSendComplex(m.ChannelID, &discordgo.MessageSend{
-			Content: suppressDiscordEmbeds(extra),
-			Flags:   discordgo.MessageFlagsSuppressEmbeds,
+			Content:         suppressDiscordEmbeds(extra),
+			Flags:           discordgo.MessageFlagsSuppressEmbeds,
+			AllowedMentions: &discordgo.MessageAllowedMentions{},
 		})
 	}
 	return true

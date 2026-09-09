@@ -360,7 +360,7 @@ func (b *Bot) tgHandleBan(msg *tgbotapi.Message, args string, callerID string) {
 		b.Logger.Error("ban failed", zap.Error(err))
 		return
 	}
-	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, resp, "", false, b.Logger)
+	sendPublicModerationReply(b.API, msg.Chat.ID, msg.MessageID, resp, b.Logger)
 }
 
 func (b *Bot) tgHandleDBan(msg *tgbotapi.Message, args string, callerID string) {
@@ -400,7 +400,7 @@ func (b *Bot) tgHandleDBan(msg *tgbotapi.Message, args string, callerID string) 
 		b.Logger.Error("dban failed", zap.Error(err))
 		return
 	}
-	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, resp, "", false, b.Logger)
+	sendPublicModerationReply(b.API, msg.Chat.ID, msg.MessageID, resp, b.Logger)
 }
 
 func (b *Bot) tgHandleTBan(msg *tgbotapi.Message, args string, callerID string) {
@@ -445,7 +445,7 @@ func (b *Bot) tgHandleTBan(msg *tgbotapi.Message, args string, callerID string) 
 		b.Logger.Error("tban failed", zap.Error(err))
 		return
 	}
-	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, resp, "", false, b.Logger)
+	sendPublicModerationReply(b.API, msg.Chat.ID, msg.MessageID, resp, b.Logger)
 }
 
 func (b *Bot) tgHandleSBan(msg *tgbotapi.Message, args string, callerID string) {
@@ -485,7 +485,7 @@ func (b *Bot) tgHandleSBan(msg *tgbotapi.Message, args string, callerID string) 
 		b.Logger.Error("sban failed", zap.Error(err))
 		return
 	}
-	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, resp, "", false, b.Logger)
+	sendPublicModerationReply(b.API, msg.Chat.ID, msg.MessageID, resp, b.Logger)
 }
 
 func (b *Bot) tgHandleMute(msg *tgbotapi.Message, args string, callerID string) {
@@ -531,7 +531,7 @@ func (b *Bot) tgHandleMute(msg *tgbotapi.Message, args string, callerID string) 
 		b.Logger.Error("mute failed", zap.Error(err))
 		return
 	}
-	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, resp, "", false, b.Logger)
+	sendPublicModerationReply(b.API, msg.Chat.ID, msg.MessageID, resp, b.Logger)
 }
 
 func (b *Bot) tgHandleWarn(msg *tgbotapi.Message, args string, callerID string) {
@@ -575,7 +575,7 @@ func (b *Bot) tgHandleWarn(msg *tgbotapi.Message, args string, callerID string) 
 		b.Logger.Error("warn failed", zap.Error(err))
 		return
 	}
-	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, resp, "", false, b.Logger)
+	sendPublicModerationReply(b.API, msg.Chat.ID, msg.MessageID, resp, b.Logger)
 	for _, extra := range extras {
 		reply := tgbotapi.NewMessage(msg.Chat.ID, extra)
 		reply.DisableWebPagePreview = true
@@ -600,7 +600,7 @@ func (b *Bot) tgHandleWarnings(msg *tgbotapi.Message, args string) {
 		b.Logger.Error("warnings error", zap.Error(err))
 		return
 	}
-	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, resp, "", false, b.Logger)
+	sendPublicModerationReply(b.API, msg.Chat.ID, msg.MessageID, resp, b.Logger)
 }
 
 func (b *Bot) tgHandleUnwarn(msg *tgbotapi.Message, args string, callerID string) {
@@ -647,7 +647,7 @@ func (b *Bot) tgHandleUnwarn(msg *tgbotapi.Message, args string, callerID string
 		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, fmt.Sprintf("Error: %s", err), "", false, b.Logger)
 		return
 	}
-	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, resp, "", false, b.Logger)
+	sendPublicModerationReply(b.API, msg.Chat.ID, msg.MessageID, resp, b.Logger)
 }
 
 func (b *Bot) tgHandleDehoist(msg *tgbotapi.Message, args string, callerID string) {
@@ -709,7 +709,7 @@ func (b *Bot) tgHandleAddAdmin(msg *tgbotapi.Message, args string, callerID stri
 		b.Logger.Error("addadmin error", zap.Error(err))
 		return
 	}
-	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, resp, "", false, b.Logger)
+	sendPublicModerationReply(b.API, msg.Chat.ID, msg.MessageID, resp, b.Logger)
 }
 
 func (b *Bot) tgHandleRemoveAdmin(msg *tgbotapi.Message, args string, callerID string) {
@@ -729,7 +729,7 @@ func (b *Bot) tgHandleRemoveAdmin(msg *tgbotapi.Message, args string, callerID s
 		b.Logger.Error("removeadmin error", zap.Error(err))
 		return
 	}
-	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, resp, "", false, b.Logger)
+	sendPublicModerationReply(b.API, msg.Chat.ID, msg.MessageID, resp, b.Logger)
 }
 
 func (b *Bot) tgHandlePing(msg *tgbotapi.Message) {
