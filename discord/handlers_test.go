@@ -5,10 +5,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/config"
 	"github.com/MetrolistGroup/metrobot/db"
 	"github.com/bwmarrin/discordgo"
@@ -204,8 +206,13 @@ func TestBulkRoleRequiresManageRolesAndLowerRole(t *testing.T) {
 		t.Fatal("member without Manage Roles could assign a role")
 	}
 
-	ids := parseDiscordUserIDs("<@12345678901234567>, 234567890123456789 <@12345678901234567> nope")
-	if len(ids) != 2 || ids[0] != "12345678901234567" || ids[1] != "234567890123456789" {
-		t.Fatalf("parseDiscordUserIDs returned %v", ids)
+	users := parseBulkRoleUsers("@birdy.2.0, @dubba_kench, <@234567890123456789> @BIRDY.2.0 missing")
+	ids, missing := resolveBulkRoleUsers(users, []cmd.MemberInfo{
+		{UserID: "12345678901234567", Username: "birdy.2.0"},
+		{UserID: "345678901234567890", Username: "dubba_kench"},
+	})
+	wantIDs := []string{"12345678901234567", "345678901234567890", "234567890123456789"}
+	if !slices.Equal(ids, wantIDs) || !slices.Equal(missing, []string{"missing"}) {
+		t.Fatalf("resolved ids=%v missing=%v, want ids=%v missing=[missing]", ids, missing, wantIDs)
 	}
 }

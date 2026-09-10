@@ -537,7 +537,7 @@ func (b *Bot) registerCommands() error {
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "users",
-					Description: "Space- or comma-separated user mentions or IDs",
+					Description: "Space- or comma-separated usernames, mentions, or IDs",
 					Required:    true,
 				},
 			},

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/internal/decancer"
@@ -17,7 +18,6 @@ import (
 )
 
 var chatModPattern = regexp.MustCompile(`(?i)^!(ban|dban|tban|sban|kick|mute|timeout|warn)\s*(.*)$`)
-var discordUserIDPattern = regexp.MustCompile(`\d{17,20}`)
 
 const (
 	garminLimitedKillUserID = "509572562683035676"
@@ -209,8 +209,13 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	action := strings.ToLower(matches[1])
 	args := strings.TrimSpace(matches[2])
 	callerID := m.Author.ID
+	member := m.Member
+	if member == nil && s.State != nil {
+		member, _ = s.State.Member(m.GuildID, callerID)
+	}
 
-	if !b.canUseModerationAction(m.Member, callerID, action) {
+	if !b.canUseModerationAction(member, callerID, action) {
+		sendReply(s, m.ChannelID, m.ID, "You don't have permission to use that moderation command.", false, b.Logger)
 		return
 	}
 
@@ -806,9 +811,9 @@ func (b *Bot) handleBulkRole(s *discordgo.Session, i *discordgo.InteractionCreat
 		return
 	}
 
-	userIDs := parseDiscordUserIDs(opts["users"].StringValue())
-	if len(userIDs) == 0 {
-		respondEphemeral(s, i, "Provide at least one user mention or ID.")
+	users := parseBulkRoleUsers(opts["users"].StringValue())
+	if len(users) == 0 {
+		respondEphemeral(s, i, "Provide at least one username, mention, or ID.")
 		return
 	}
 	if err := deferResponse(s, i, true); err != nil {
@@ -842,6 +847,18 @@ func (b *Bot) handleBulkRole(s *discordgo.Session, i *discordgo.InteractionCreat
 		return
 	}
 
+	members, err := b.newBanner().GetAllMembers()
+	if err != nil {
+		b.Logger.Error("failed to get members for bulkrole", zap.Error(err))
+		_ = editDeferredResponse(s, i, "Couldn't load server members.")
+		return
+	}
+	userIDs, missing := resolveBulkRoleUsers(users, members)
+	if len(userIDs) == 0 {
+		_ = editDeferredResponse(s, i, "Couldn't find any matching server members.")
+		return
+	}
+
 	succeeded := 0
 	for _, userID := range userIDs {
 		// ponytail: sequential edits respect Discord rate limits; add workers only if large runs become too slow.
@@ -852,7 +869,17 @@ func (b *Bot) handleBulkRole(s *discordgo.Session, i *discordgo.InteractionCreat
 		succeeded++
 	}
 
-	result := fmt.Sprintf("Added role %q to %d of %d users.", role.Name, succeeded, len(userIDs))
+	result := fmt.Sprintf("Added role %q to %d users.", role.Name, succeeded)
+	if failed := len(userIDs) - succeeded; failed > 0 {
+		result += fmt.Sprintf(" %d role updates failed.", failed)
+	}
+	if len(missing) > 0 {
+		shown := missing[:min(len(missing), 10)]
+		result += fmt.Sprintf(" Couldn't find %d: @%s.", len(missing), strings.Join(shown, ", @"))
+		if len(missing) > len(shown) {
+			result += fmt.Sprintf(" (%d more)", len(missing)-len(shown))
+		}
+	}
 	if err := editDeferredResponse(s, i, result); err != nil {
 		b.Logger.Error("failed to edit bulkrole response", zap.Error(err))
 	}
@@ -1157,11 +1184,44 @@ func min(a, b int) int {
 	return b
 }
 
-func parseDiscordUserIDs(input string) []string {
+func parseBulkRoleUsers(input string) []string {
 	seen := make(map[string]struct{})
-	var ids []string
-	for _, id := range discordUserIDPattern.FindAllString(input, -1) {
-		if _, err := strconv.ParseUint(id, 10, 64); err != nil {
+	var users []string
+	for _, user := range strings.FieldsFunc(input, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
+		user = strings.TrimPrefix(strings.TrimSuffix(strings.TrimPrefix(user, "<@"), ">"), "!")
+		user = strings.TrimPrefix(user, "@")
+		key := strings.ToLower(user)
+		if user == "" {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		users = append(users, user)
+	}
+	return users
+}
+
+func resolveBulkRoleUsers(users []string, members []cmd.MemberInfo) (ids, missing []string) {
+	byUsername := make(map[string]string, len(members))
+	for _, member := range members {
+		byUsername[strings.ToLower(member.Username)] = member.UserID
+	}
+
+	seen := make(map[string]struct{})
+	for _, user := range users {
+		id := ""
+		if len(user) >= 17 && len(user) <= 20 {
+			if _, err := strconv.ParseUint(user, 10, 64); err == nil {
+				id = user
+			}
+		}
+		if id == "" {
+			id = byUsername[strings.ToLower(user)]
+		}
+		if id == "" {
+			missing = append(missing, user)
 			continue
 		}
 		if _, exists := seen[id]; exists {
@@ -1170,7 +1230,7 @@ func parseDiscordUserIDs(input string) []string {
 		seen[id] = struct{}{}
 		ids = append(ids, id)
 	}
-	return ids
+	return ids, missing
 }
 
 func canAssignRole(member *discordgo.Member, role *discordgo.Role, roles []*discordgo.Role, guildID string) bool {

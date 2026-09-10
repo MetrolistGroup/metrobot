@@ -2,6 +2,16 @@ package cmd
 
 import "testing"
 
+func TestProcessTriggerSupportsModeratorCommands(t *testing.T) {
+	processor := NewGarminProcessor()
+	for _, command := range []string{"mute", "timeout", "kick", "sban"} {
+		input := "ok garmin " + command + " @someone 1m reason"
+		if got := processor.ProcessTrigger(input); got != "!"+command+" @someone 1m reason" {
+			t.Errorf("ProcessTrigger(%q) = %q", input, got)
+		}
+	}
+}
+
 func TestExtractGarminPrompt(t *testing.T) {
 	tests := []struct {
 		name      string

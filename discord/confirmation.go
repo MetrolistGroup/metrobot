@@ -15,12 +15,16 @@ import (
 func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, action, args, targetID string) {
 	banner := b.newBanner()
 	parts := strings.Fields(args)
+	failed := func(err error) {
+		b.Logger.Error(action+" failed", zap.Error(err))
+		_, _ = s.ChannelMessageSendComplex(channelID, noPingMessage("Couldn't execute "+action+". Check my permissions and role hierarchy."))
+	}
 
 	switch action {
 	case "ban":
 		resp, _, err := b.Moderation.Ban(banner, callerID, targetID, args, b.Config)
 		if err != nil {
-			b.Logger.Error("ban failed", zap.Error(err))
+			failed(err)
 			return
 		}
 		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))
@@ -28,7 +32,7 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 	case "dban":
 		resp, _, err := b.Moderation.DBan(banner, callerID, targetID, args, b.Config)
 		if err != nil {
-			b.Logger.Error("dban failed", zap.Error(err))
+			failed(err)
 			return
 		}
 		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))
@@ -48,7 +52,7 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 		}
 		resp, _, err := b.Moderation.TBan(banner, callerID, targetID, dur, reason, b.Config)
 		if err != nil {
-			b.Logger.Error("tban failed", zap.Error(err))
+			failed(err)
 			return
 		}
 		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))
@@ -56,7 +60,7 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 	case "sban":
 		resp, _, err := b.Moderation.SBan(banner, callerID, targetID, args, b.Config)
 		if err != nil {
-			b.Logger.Error("sban failed", zap.Error(err))
+			failed(err)
 			return
 		}
 		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))
@@ -64,7 +68,7 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 	case "kick":
 		resp, _, err := b.Moderation.Kick(banner, callerID, targetID, args, b.Config)
 		if err != nil {
-			b.Logger.Error("kick failed", zap.Error(err))
+			failed(err)
 			return
 		}
 		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))
@@ -84,7 +88,7 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 		}
 		resp, _, err := b.Moderation.Mute(banner, callerID, targetID, dur, reason, b.Config)
 		if err != nil {
-			b.Logger.Error("mute failed", zap.Error(err))
+			failed(err)
 			return
 		}
 		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))
@@ -92,7 +96,7 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 	case "warn":
 		resp, extras, _, err := b.Warn.Warn(banner, callerID, targetID, args, b.Config)
 		if err != nil {
-			b.Logger.Error("warn failed", zap.Error(err))
+			failed(err)
 			return
 		}
 		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))

@@ -24,14 +24,16 @@ type GarminProcessor struct {
 func NewGarminProcessor() *GarminProcessor {
 	return &GarminProcessor{
 		supportedCommands: map[string]bool{
-			"ban":   true,
-			"dban":  true,
-			"tban":  true,
-			"sban":  true,
-			"mute":  true,
-			"warn":  true,
-			"notes": true,
-			"note":  true,
+			"ban":     true,
+			"dban":    true,
+			"tban":    true,
+			"sban":    true,
+			"kick":    true,
+			"mute":    true,
+			"timeout": true,
+			"warn":    true,
+			"notes":   true,
+			"note":    true,
 		},
 	}
 }
