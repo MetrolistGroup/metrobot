@@ -108,6 +108,7 @@ func TestGarminKillRequiresAuthorizedReplyAndUsesUserTimeout(t *testing.T) {
 	if err := session.State.GuildAdd(&discordgo.Guild{ID: "guild", Roles: []*discordgo.Role{
 		{ID: "guild"},
 		{ID: "staff", Permissions: discordgo.PermissionModerateMembers},
+		{ID: discordModeratorRoleID},
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -116,6 +117,7 @@ func TestGarminKillRequiresAuthorizedReplyAndUsesUserTimeout(t *testing.T) {
 	}
 	for _, member := range []*discordgo.Member{
 		{GuildID: "guild", User: &discordgo.User{ID: "staff"}, Roles: []string{"staff"}},
+		{GuildID: "guild", User: &discordgo.User{ID: "moderator"}, Roles: []string{discordModeratorRoleID}},
 		{GuildID: "guild", User: &discordgo.User{ID: "user"}},
 	} {
 		if err := session.State.MemberAdd(member); err != nil {
@@ -126,6 +128,9 @@ func TestGarminKillRequiresAuthorizedReplyAndUsesUserTimeout(t *testing.T) {
 	bot := &Bot{Config: &config.Config{DiscordGuildID: "guild"}, Logger: zap.NewNop()}
 	message := func(author string, reply bool) *discordgo.MessageCreate {
 		m := &discordgo.Message{ID: "command", GuildID: "guild", ChannelID: "channel", Content: "ok garmin kill", Author: &discordgo.User{ID: author}}
+		if author == "moderator" {
+			m.Member = &discordgo.Member{Roles: []string{discordModeratorRoleID}}
+		}
 		if reply {
 			m.ReferencedMessage = &discordgo.Message{ID: "target-message", Author: &discordgo.User{ID: "target"}}
 		}
@@ -148,9 +153,59 @@ func TestGarminKillRequiresAuthorizedReplyAndUsesUserTimeout(t *testing.T) {
 		t.Errorf("limited user timeout duration = %s, want about 5s", remaining)
 	}
 
+	bot.onMessageCreate(session, message("moderator", true))
+	if len(requests) != 9 {
+		t.Fatalf("moderator reply made %d total requests, want 9: %v", len(requests), requests)
+	}
+	if remaining := timeouts[2]; remaining < 25*time.Second || remaining > 35*time.Second {
+		t.Errorf("moderator timeout duration = %s, want about 30s", remaining)
+	}
+
 	bot.onMessageCreate(session, message("user", true))
 	bot.onMessageCreate(session, message("staff", false))
-	if len(requests) != 6 {
-		t.Fatalf("unauthorized or non-reply command made requests: %v", requests[6:])
+	if len(requests) != 9 {
+		t.Fatalf("unauthorized or non-reply command made requests: %v", requests[9:])
+	}
+}
+
+func TestModeratorRoleHasOnlyRequestedModerationActions(t *testing.T) {
+	bot := &Bot{}
+	member := &discordgo.Member{Roles: []string{discordModeratorRoleID}}
+
+	for _, action := range []string{"kill", "sban", "kick", "mute", "timeout"} {
+		if !bot.canUseModerationAction(member, "moderator", action) {
+			t.Errorf("moderator cannot use %s", action)
+		}
+	}
+	for _, action := range []string{"ban", "dban", "tban", "warn"} {
+		if bot.canUseModerationAction(member, "moderator", action) {
+			t.Errorf("moderator can unexpectedly use %s", action)
+		}
+	}
+}
+
+func TestBulkRoleRequiresManageRolesAndLowerRole(t *testing.T) {
+	roles := []*discordgo.Role{
+		{ID: "top", Position: 10},
+		{ID: "lower", Position: 9},
+		{ID: "equal", Position: 10},
+		{ID: "managed", Position: 8, Managed: true},
+	}
+	member := &discordgo.Member{Roles: []string{"top"}, Permissions: discordgo.PermissionManageRoles}
+
+	if !canAssignRole(member, roles[1], roles, "guild") {
+		t.Fatal("lower role should be assignable")
+	}
+	if canAssignRole(member, roles[2], roles, "guild") || canAssignRole(member, roles[3], roles, "guild") {
+		t.Fatal("equal or managed role should not be assignable")
+	}
+	member.Permissions = 0
+	if canAssignRole(member, roles[1], roles, "guild") {
+		t.Fatal("member without Manage Roles could assign a role")
+	}
+
+	ids := parseDiscordUserIDs("<@12345678901234567>, 234567890123456789 <@12345678901234567> nope")
+	if len(ids) != 2 || ids[0] != "12345678901234567" || ids[1] != "234567890123456789" {
+		t.Fatalf("parseDiscordUserIDs returned %v", ids)
 	}
 }

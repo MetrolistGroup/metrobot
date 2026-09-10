@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -15,9 +16,13 @@ import (
 	"go.uber.org/zap"
 )
 
-var chatModPattern = regexp.MustCompile(`(?i)^!(ban|dban|tban|sban|mute|warn)\s*(.*)$`)
+var chatModPattern = regexp.MustCompile(`(?i)^!(ban|dban|tban|sban|kick|mute|timeout|warn)\s*(.*)$`)
+var discordUserIDPattern = regexp.MustCompile(`\d{17,20}`)
 
-const garminLimitedKillUserID = "509572562683035676"
+const (
+	garminLimitedKillUserID = "509572562683035676"
+	discordModeratorRoleID  = "1495442011749220563"
+)
 
 var garminDirectSlurPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\bn[^a-z0-9]*[i1!][^a-z0-9]*[gq][^a-z0-9]*[gq][^a-z0-9]*(?:[e3][^a-z0-9]*r|[a4@])s?\b`),
@@ -89,7 +94,9 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 		b.handleTBan(s, i, opts, callerID)
 	case "sban":
 		b.handleSBan(s, i, opts, callerID)
-	case "mute":
+	case "kick":
+		b.handleKick(s, i, opts, callerID)
+	case "mute", "timeout":
 		b.handleMute(s, i, opts, callerID)
 	case "warn":
 		b.handleWarn(s, i, opts, callerID)
@@ -101,6 +108,8 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 		b.handleDehoist(s, i, opts, callerID)
 	case "approvenick":
 		b.handleApproveNick(s, i, opts, callerID)
+	case "bulkrole":
+		b.handleBulkRole(s, i, opts, callerID)
 	case "addadmin":
 		b.handleAddAdmin(s, i, opts, callerID)
 	case "removeadmin":
@@ -201,18 +210,20 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	args := strings.TrimSpace(matches[2])
 	callerID := m.Author.ID
 
-	if !b.DB.IsAdmin("discord", callerID, b.Config) {
+	if !b.canUseModerationAction(m.Member, callerID, action) {
 		return
 	}
 
 	if args == "" {
 		usageMap := map[string]string{
-			"ban":  "ban - usage: ban [user] [reason]",
-			"dban": "dban - usage: dban [user] [reason]",
-			"tban": "tban - usage: tban [user] [duration] [reason]",
-			"sban": "sban - usage: sban [user] [reason]",
-			"mute": "mute - usage: mute [user] [duration] [reason]",
-			"warn": "warn - usage: warn [user] [reason]",
+			"ban":     "ban - usage: ban [user] [reason]",
+			"dban":    "dban - usage: dban [user] [reason]",
+			"tban":    "tban - usage: tban [user] [duration] [reason]",
+			"sban":    "sban - usage: sban [user] [reason]",
+			"kick":    "kick - usage: kick [user] [reason]",
+			"mute":    "mute - usage: mute [user] [duration] [reason]",
+			"timeout": "timeout - usage: timeout [user] [duration] [reason]",
+			"warn":    "warn - usage: warn [user] [reason]",
 		}
 		sendReply(s, m.ChannelID, m.ID, usageMap[action], false, b.Logger)
 		return
@@ -283,11 +294,26 @@ func (b *Bot) handleGarminKill(s *discordgo.Session, m *discordgo.MessageCreate)
 }
 
 func (b *Bot) garminKillStaff(s *discordgo.Session, m *discordgo.MessageCreate) bool {
-	if b.DB != nil && b.Config != nil && b.DB.IsAdmin("discord", m.Author.ID, b.Config) {
+	if b.canUseModerationAction(m.Member, m.Author.ID, "kill") {
 		return true
 	}
 	permissions, err := s.UserChannelPermissions(m.Author.ID, m.ChannelID)
 	return err == nil && permissions&(discordgo.PermissionAdministrator|discordgo.PermissionModerateMembers) != 0
+}
+
+func (b *Bot) canUseModerationAction(member *discordgo.Member, callerID, action string) bool {
+	if b.DB != nil && b.Config != nil && b.DB.IsAdmin("discord", callerID, b.Config) {
+		return true
+	}
+	if member == nil || !slices.Contains(member.Roles, discordModeratorRoleID) {
+		return false
+	}
+	switch action {
+	case "kill", "sban", "kick", "mute", "timeout":
+		return true
+	default:
+		return false
+	}
 }
 
 func (b *Bot) handleGarminContextResetMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -373,17 +399,20 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		"• /latest - Show the latest release\n" +
 		"• /actions - Show GitHub Actions build status\n" +
 		"• /ping - Check latency to various services\n\n" +
-		"**Moderation (admin only):**\n" +
+		"**Moderation:**\n" +
 		"• /ban [user] [reason] - Permanently ban a user\n" +
 		"• /dban [user] [reason] - Ban and delete messages\n" +
 		"• /tban [user] [duration] [reason] - Temporarily ban a user\n" +
-		"• /sban [user] [reason] - Softban a user\n" +
-		"• /mute [user] [duration] [reason] - Mute a user\n" +
+		"• /sban [user] [reason] - Softban a user (admin/moderator)\n" +
+		"• /kick [user] [reason] - Kick a user (admin/moderator)\n" +
+		"• /timeout [user] [duration] [reason] - Timeout a user (admin/moderator)\n" +
+		"• /mute [user] [duration] [reason] - Timeout alias (admin/moderator)\n" +
 		"• /warn [user] [reason] - Warn a user\n" +
 		"• /warnings [user] - Show warnings for a user\n" +
 		"• /unwarn [user] [id] - Remove a warning from a user\n" +
 		"• /dehoist [user] [dry] - Dehoist a user, or omit user to rerun the server\n" +
 		"• /approvenick [user] - Allow a user's next nickname change without dehoisting\n" +
+		"• /bulkrole [role] [users] - Add a lower role to multiple users (Manage Roles required)\n" +
 		"• /purge [count] - Delete recent messages\n" +
 		"• /scanreactions - Scan recent messages for prohibited reactions\n\n" +
 		"**Admin Management (permaadmin only):**\n" +
@@ -603,8 +632,8 @@ func (b *Bot) handleTBan(s *discordgo.Session, i *discordgo.InteractionCreate, o
 }
 
 func (b *Bot) handleSBan(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
-	if !b.DB.IsAdmin("discord", callerID, b.Config) {
-		respondEphemeral(s, i, "You don't have ban permissions.")
+	if !b.canUseModerationAction(i.Member, callerID, "sban") {
+		respondEphemeral(s, i, "You don't have softban permissions.")
 		return
 	}
 	targetUser := opts["user"].UserValue(s)
@@ -620,9 +649,26 @@ func (b *Bot) handleSBan(s *discordgo.Session, i *discordgo.InteractionCreate, o
 	respondPublic(s, i, resp)
 }
 
+func (b *Bot) handleKick(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
+	if !b.canUseModerationAction(i.Member, callerID, "kick") {
+		respondEphemeral(s, i, "You don't have kick permissions.")
+		return
+	}
+	targetUser := opts["user"].UserValue(s)
+	reason := getOptString(opts, "reason")
+
+	resp, _, err := b.Moderation.Kick(b.newBanner(), callerID, targetUser.ID, reason, b.Config)
+	if err != nil {
+		b.Logger.Error("kick failed", zap.Error(err))
+		respondEphemeral(s, i, "Error executing kick.")
+		return
+	}
+	respondPublic(s, i, resp)
+}
+
 func (b *Bot) handleMute(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
-	if !b.DB.IsAdmin("discord", callerID, b.Config) {
-		respondEphemeral(s, i, "You don't have mute permissions.")
+	if !b.canUseModerationAction(i.Member, callerID, "timeout") {
+		respondEphemeral(s, i, "You don't have timeout permissions.")
 		return
 	}
 	targetUser := opts["user"].UserValue(s)
@@ -752,6 +798,64 @@ func (b *Bot) handleApproveNick(s *discordgo.Session, i *discordgo.InteractionCr
 		return
 	}
 	respondEphemeral(s, i, fmt.Sprintf("Approved <@%s>'s next nickname change.", targetID))
+}
+
+func (b *Bot) handleBulkRole(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
+	if i.Member == nil || i.Member.Permissions&(discordgo.PermissionAdministrator|discordgo.PermissionManageRoles) == 0 {
+		respondEphemeral(s, i, "You need Manage Roles to use this command.")
+		return
+	}
+
+	userIDs := parseDiscordUserIDs(opts["users"].StringValue())
+	if len(userIDs) == 0 {
+		respondEphemeral(s, i, "Provide at least one user mention or ID.")
+		return
+	}
+	if err := deferResponse(s, i, true); err != nil {
+		b.Logger.Error("failed to defer bulkrole interaction", zap.Error(err))
+		return
+	}
+
+	guild, err := s.State.Guild(i.GuildID)
+	var roles []*discordgo.Role
+	if err == nil {
+		roles = guild.Roles
+	} else {
+		roles, err = s.GuildRoles(i.GuildID)
+	}
+	if err != nil {
+		b.Logger.Error("failed to get roles for bulkrole", zap.Error(err))
+		_ = editDeferredResponse(s, i, "Couldn't load server roles.")
+		return
+	}
+
+	roleID := opts["role"].RoleValue(nil, i.GuildID).ID
+	var role *discordgo.Role
+	for _, candidate := range roles {
+		if candidate.ID == roleID {
+			role = candidate
+			break
+		}
+	}
+	if !canAssignRole(i.Member, role, roles, i.GuildID) {
+		_ = editDeferredResponse(s, i, "That role must be editable and below your highest role.")
+		return
+	}
+
+	succeeded := 0
+	for _, userID := range userIDs {
+		// ponytail: sequential edits respect Discord rate limits; add workers only if large runs become too slow.
+		if err := s.GuildMemberRoleAdd(i.GuildID, userID, role.ID, discordgo.WithAuditLogReason("Bulk role add by "+callerID)); err != nil {
+			b.Logger.Warn("bulkrole add failed", zap.String("user", userID), zap.String("role", role.ID), zap.Error(err))
+			continue
+		}
+		succeeded++
+	}
+
+	result := fmt.Sprintf("Added role %q to %d of %d users.", role.Name, succeeded, len(userIDs))
+	if err := editDeferredResponse(s, i, result); err != nil {
+		b.Logger.Error("failed to edit bulkrole response", zap.Error(err))
+	}
 }
 
 func (b *Bot) handleAddAdmin(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
@@ -1051,6 +1155,36 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func parseDiscordUserIDs(input string) []string {
+	seen := make(map[string]struct{})
+	var ids []string
+	for _, id := range discordUserIDPattern.FindAllString(input, -1) {
+		if _, err := strconv.ParseUint(id, 10, 64); err != nil {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func canAssignRole(member *discordgo.Member, role *discordgo.Role, roles []*discordgo.Role, guildID string) bool {
+	if member == nil || role == nil || role.Managed || role.ID == guildID || member.Permissions&(discordgo.PermissionAdministrator|discordgo.PermissionManageRoles) == 0 {
+		return false
+	}
+
+	highest := -1
+	for _, candidate := range roles {
+		if candidate.Position > highest && slices.Contains(member.Roles, candidate.ID) {
+			highest = candidate.Position
+		}
+	}
+	return role.Position < highest
 }
 
 func getOptString(opts map[string]*discordgo.ApplicationCommandInteractionDataOption, name string) string {

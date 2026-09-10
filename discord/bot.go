@@ -159,6 +159,7 @@ func (b *Bot) Stop() {
 }
 
 func (b *Bot) registerCommands() error {
+	manageRolesPermission := int64(discordgo.PermissionManageRoles)
 	commands := []*discordgo.ApplicationCommand{
 		{
 			Name:        "help",
@@ -361,7 +362,7 @@ func (b *Bot) registerCommands() error {
 		},
 		{
 			Name:        "sban",
-			Description: "Softban a user (ban + unban to clear messages) (admin only)",
+			Description: "Softban a user (admin/moderator)",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionUser,
@@ -378,8 +379,26 @@ func (b *Bot) registerCommands() error {
 			},
 		},
 		{
+			Name:        "kick",
+			Description: "Kick a user (admin/moderator)",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionUser,
+					Name:        "user",
+					Description: "User to kick",
+					Required:    true,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "reason",
+					Description: "Kick reason",
+					Required:    true,
+				},
+			},
+		},
+		{
 			Name:        "mute",
-			Description: "Temporarily mute a user (admin only)",
+			Description: "Temporarily mute a user (admin/moderator)",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionUser,
@@ -397,6 +416,30 @@ func (b *Bot) registerCommands() error {
 					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "reason",
 					Description: "Mute reason",
+					Required:    true,
+				},
+			},
+		},
+		{
+			Name:        "timeout",
+			Description: "Timeout a user (admin/moderator)",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionUser,
+					Name:        "user",
+					Description: "User to timeout",
+					Required:    true,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "duration",
+					Description: "Timeout duration (e.g. 10m, 1h, 7d)",
+					Required:    true,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "reason",
+					Description: "Timeout reason",
 					Required:    true,
 				},
 			},
@@ -476,6 +519,25 @@ func (b *Bot) registerCommands() error {
 					Type:        discordgo.ApplicationCommandOptionUser,
 					Name:        "user",
 					Description: "User whose next nickname change should be allowed",
+					Required:    true,
+				},
+			},
+		},
+		{
+			Name:                     "bulkrole",
+			Description:              "Add one role to multiple users",
+			DefaultMemberPermissions: &manageRolesPermission,
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionRole,
+					Name:        "role",
+					Description: "Role to add",
+					Required:    true,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "users",
+					Description: "Space- or comma-separated user mentions or IDs",
 					Required:    true,
 				},
 			},
@@ -601,6 +663,10 @@ func (d *DiscordBanner) BanAndDeleteMessages(userID, reason string) error {
 
 func (d *DiscordBanner) Unban(userID string) error {
 	return d.session.GuildBanDelete(d.guildID, userID)
+}
+
+func (d *DiscordBanner) Kick(userID, reason string) error {
+	return d.session.GuildMemberDeleteWithReason(d.guildID, userID, reason)
 }
 
 func (d *DiscordBanner) DeleteMessages(userID string) error {

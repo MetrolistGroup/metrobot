@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,7 @@ type fakeModerationBanner struct {
 
 	banErr      error
 	restrictErr error
+	kickCalls   int
 	unbanCalls  int
 	unmuteCalls int
 }
@@ -29,6 +31,10 @@ func (b *fakeModerationBanner) Unban(userID string) error {
 	return nil
 }
 func (b *fakeModerationBanner) DeleteMessages(userID string) error { return nil }
+func (b *fakeModerationBanner) Kick(userID, reason string) error {
+	b.kickCalls++
+	return nil
+}
 func (b *fakeModerationBanner) Restrict(userID string, untilDate int64) error {
 	return b.restrictErr
 }
@@ -64,6 +70,16 @@ func openTimerTestDB(t *testing.T) *db.DB {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	return database
+}
+
+func TestKickUsesPlatformKick(t *testing.T) {
+	handler := &ModerationHandler{DB: openTimerTestDB(t)}
+	banner := &fakeModerationBanner{platform: "discord", chatID: "guild"}
+
+	response, _, err := handler.Kick(banner, "mod", "123", "reason", fakeModerationConfig{})
+	if err != nil || banner.kickCalls != 1 || !strings.Contains(response, "<@123> has been kicked") {
+		t.Fatalf("Kick response=%q calls=%d err=%v", response, banner.kickCalls, err)
+	}
 }
 
 func TestTBanSchedulesManagedTimerAndDeletesOnExpiry(t *testing.T) {

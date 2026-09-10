@@ -61,7 +61,15 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 		}
 		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))
 
-	case "mute":
+	case "kick":
+		resp, _, err := b.Moderation.Kick(banner, callerID, targetID, args, b.Config)
+		if err != nil {
+			b.Logger.Error("kick failed", zap.Error(err))
+			return
+		}
+		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))
+
+	case "mute", "timeout":
 		if len(parts) < 2 {
 			return
 		}

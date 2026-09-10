@@ -56,6 +56,10 @@ type messageDeletingBanner interface {
 	BanAndDeleteMessages(userID, reason string) error
 }
 
+type kickingBanner interface {
+	Kick(userID, reason string) error
+}
+
 // SetCaseHandler sets the case handler for moderation actions
 func (h *ModerationHandler) SetCaseHandler(ch *CaseHandler) {
 	h.CaseHandler = ch
@@ -151,6 +155,31 @@ func (h *ModerationHandler) TBan(banner PlatformBanner, callerID, targetID strin
 
 	reasonText := " Reason: " + formatUserText(banner, reason)
 	return fmt.Sprintf("⏱️ %s has been banned for %s.%s", formatUserRef(banner, targetID), util.FormatDuration(duration), reasonText), c, nil
+}
+
+func (h *ModerationHandler) Kick(banner PlatformBanner, callerID, targetID, reason string, cfg db.PermaAdminProvider) (string, *db.Case, error) {
+	if h.DB.IsAdmin(banner.Platform(), targetID, cfg) {
+		return "I will not kick an admin.", nil, nil
+	}
+
+	kicker, ok := banner.(kickingBanner)
+	if !ok {
+		return "", nil, fmt.Errorf("kicking is not supported on %s", banner.Platform())
+	}
+	if err := kicker.Kick(targetID, reason); err != nil {
+		return "", nil, fmt.Errorf("kicking user: %w", err)
+	}
+
+	h.DB.LogModAction(banner.Platform(), callerID, targetID, "kick", reason)
+
+	var c *db.Case
+	if h.CaseHandler != nil {
+		targetName, _ := banner.GetDisplayName(targetID)
+		moderatorName, _ := banner.GetDisplayName(callerID)
+		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "kick", targetID, callerID, reason, targetName, moderatorName)
+	}
+
+	return fmt.Sprintf("👢 %s has been kicked. Reason: %s", formatUserRef(banner, targetID), formatUserText(banner, reason)), c, nil
 }
 
 func (h *ModerationHandler) SBan(banner PlatformBanner, callerID, targetID, reason string, cfg db.PermaAdminProvider) (string, *db.Case, error) {
