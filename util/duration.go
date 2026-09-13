@@ -8,10 +8,10 @@ import (
 	"time"
 )
 
-var durationPattern = regexp.MustCompile(`(?i)(\d+)\s*(y(?:r|ear)?s?|mon(?:th)?s?|d(?:ay)?s?|h(?:r|our)?s?|m(?:in(?:ute)?)?s?|s(?:ec(?:ond)?)?s?)`)
+var durationPattern = regexp.MustCompile(`(?i)(\d+)\s*(y(?:r|ear)?s?|mo(?:n(?:th)?)?s?|d(?:ay)?s?|h(?:r|our)?s?|m(?:in(?:ute)?)?s?|s(?:ec(?:ond)?)?s?)`)
 
 // ParseDuration parses a human-readable duration string into a time.Duration.
-// Supported units: y/yr/year, mon/month, d/day, h/hr/hour, m/min/minute, s/sec/second.
+// Supported units: y/yr/year, mo/mon/month, d/day, h/hr/hour, m/min/minute, s/sec/second.
 // Supports combinations like "1h2m", "4h36m", "1y2mon3d".
 func ParseDuration(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
@@ -37,7 +37,7 @@ func ParseDuration(s string) (time.Duration, error) {
 		switch {
 		case strings.HasPrefix(unit, "y"):
 			total += time.Duration(value) * 365 * 24 * time.Hour
-		case strings.HasPrefix(unit, "mon"):
+		case strings.HasPrefix(unit, "mo"):
 			total += time.Duration(value) * 30 * 24 * time.Hour
 		case strings.HasPrefix(unit, "d"):
 			total += time.Duration(value) * 24 * time.Hour
