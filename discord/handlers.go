@@ -20,7 +20,7 @@ import (
 var chatModPattern = regexp.MustCompile(`(?i)^!(ban|dban|tban|sban|kick|mute|timeout|warn)\s*(.*)$`)
 
 const (
-	garminLimitedKillUserID = "509572562683035676"
+	discordCoolPeopleRoleID = "1530657656526737548"
 	discordModeratorRoleID  = "1495442011749220563"
 )
 
@@ -274,12 +274,15 @@ func (b *Bot) handleGarminKill(s *discordgo.Session, m *discordgo.MessageCreate)
 	if m.ReferencedMessage == nil || m.ReferencedMessage.Author == nil {
 		return
 	}
-	timeout := 30 * time.Second
-	timeoutReason := "30-second timeout"
-	if m.Author.ID == garminLimitedKillUserID {
+	var timeout time.Duration
+	var timeoutReason string
+	if b.garminKillStaff(s, m) {
+		timeout = 30 * time.Second
+		timeoutReason = "30-second timeout"
+	} else if m.Member != nil && slices.Contains(m.Member.Roles, discordCoolPeopleRoleID) {
 		timeout = 5 * time.Second
 		timeoutReason = "5-second timeout"
-	} else if !b.garminKillStaff(s, m) {
+	} else {
 		return
 	}
 	targetID := m.ReferencedMessage.Author.ID
