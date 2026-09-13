@@ -39,3 +39,28 @@ func TestNotesRequireSearchableNameAndDescription(t *testing.T) {
 		t.Fatalf("note content = %q, %v", content, err)
 	}
 }
+
+func TestRenameNotePreservesContentAndDescription(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	handler := &NotesHandler{DB: database}
+
+	if err := handler.AddNote("update", "How to update", "Download the APK."); err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.RenameNote("UPDATE", " up "); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handler.GetNote("update"); err == nil {
+		t.Fatal("old note name still exists")
+	}
+	if content, err := handler.GetNote("up"); err != nil || content != "Download the APK." {
+		t.Fatalf("renamed note content = %q, %v", content, err)
+	}
+	if list, err := handler.ListNotes(); err != nil || !strings.Contains(list, "`up` - How to update") {
+		t.Fatalf("renamed note list = %q, %v", list, err)
+	}
+}

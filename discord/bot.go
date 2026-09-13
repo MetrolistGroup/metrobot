@@ -255,6 +255,24 @@ func (b *Bot) registerCommands() error {
 			},
 		},
 		{
+			Name:        "renamenote",
+			Description: "Rename an existing note (admin only)",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "name",
+					Description: "Current note name",
+					Required:    true,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "new_name",
+					Description: "New note name without spaces",
+					Required:    true,
+				},
+			},
+		},
+		{
 			Name:        "delnote",
 			Description: "Delete a note (admin only)",
 			Options: []*discordgo.ApplicationCommandOption{

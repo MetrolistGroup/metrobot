@@ -213,6 +213,18 @@ func (d *DB) EditNote(name, shortDesc, content string) error {
 	return nil
 }
 
+func (d *DB) RenameNote(oldName, newName string) error {
+	res, err := d.conn.Exec("UPDATE notes SET name = ? WHERE name = ?", newName, oldName)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("note %q not found", oldName)
+	}
+	return nil
+}
+
 func (d *DB) DeleteNote(name string) error {
 	res, err := d.conn.Exec("DELETE FROM notes WHERE name = ?", name)
 	if err != nil {

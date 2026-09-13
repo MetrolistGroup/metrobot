@@ -108,6 +108,7 @@ func (b *Bot) registerCommands() {
 		{Command: "note", Description: "Show a specific note"},
 		{Command: "addnote", Description: "Add a new note (admin)"},
 		{Command: "editnote", Description: "Edit a note (admin)"},
+		{Command: "renamenote", Description: "Rename a note (admin)"},
 		{Command: "delnote", Description: "Delete a note (admin)"},
 		{Command: "version", Description: "Show release info"},
 		{Command: "latest", Description: "Show the latest release"},

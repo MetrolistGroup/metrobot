@@ -77,15 +77,26 @@ func (h *NotesHandler) EditNote(name, shortDesc, content string) error {
 	return h.DB.EditNote(name, shortDesc, content)
 }
 
+func (h *NotesHandler) RenameNote(oldName, newName string) error {
+	oldName, err := validateNoteName(oldName)
+	if err != nil {
+		return err
+	}
+	newName, err = validateNoteName(newName)
+	if err != nil {
+		return err
+	}
+	return h.DB.RenameNote(oldName, newName)
+}
+
 func validateNote(name, shortDesc, content string) (string, string, string, error) {
-	name = strings.ToLower(strings.TrimSpace(name))
+	name, err := validateNoteName(name)
+	if err != nil {
+		return "", "", "", err
+	}
 	shortDesc = strings.TrimSpace(shortDesc)
 	content = normalizeNoteContent(content)
 	switch {
-	case name == "":
-		return "", "", "", fmt.Errorf("note name is required")
-	case strings.ContainsFunc(name, unicode.IsSpace):
-		return "", "", "", fmt.Errorf("note name cannot contain spaces")
 	case shortDesc == "":
 		return "", "", "", fmt.Errorf("note short description is required")
 	case strings.ContainsAny(shortDesc, "\r\n"):
@@ -98,10 +109,21 @@ func validateNote(name, shortDesc, content string) (string, string, string, erro
 	return name, shortDesc, content, nil
 }
 
-func (h *NotesHandler) DeleteNote(name string) error {
+func validateNoteName(name string) (string, error) {
 	name = strings.ToLower(strings.TrimSpace(name))
-	if name == "" {
-		return fmt.Errorf("note name is required")
+	switch {
+	case name == "":
+		return "", fmt.Errorf("note name is required")
+	case strings.ContainsFunc(name, unicode.IsSpace):
+		return "", fmt.Errorf("note name cannot contain spaces")
+	}
+	return name, nil
+}
+
+func (h *NotesHandler) DeleteNote(name string) error {
+	name, err := validateNoteName(name)
+	if err != nil {
+		return err
 	}
 	return h.DB.DeleteNote(name)
 }

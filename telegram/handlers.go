@@ -135,6 +135,8 @@ func (b *Bot) handleCommand(msg *tgbotapi.Message, callerID string) {
 		b.tgHandleAddNote(msg, args, callerID)
 	case "editnote":
 		b.tgHandleEditNote(msg, args, callerID)
+	case "renamenote":
+		b.tgHandleRenameNote(msg, args, callerID)
 	case "delnote":
 		b.tgHandleDelNote(msg, args, callerID)
 	case "version":
@@ -180,6 +182,7 @@ func (b *Bot) tgHandleHelp(msg *tgbotapi.Message) {
 • /note - Show a specific note
 • /addnote name | short description | content - Add a note (admin only)
 • /editnote name | short description | content - Edit a note (admin only)
+• /renamenote old_name new_name - Rename a note (admin only)
 • /delnote - Delete a note (admin only)
 
 <b>Bot Info:</b>
@@ -273,6 +276,23 @@ func parseTelegramNoteArgs(args string) (name, shortDesc, content string, ok boo
 		return "", "", "", false
 	}
 	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2]), true
+}
+
+func (b *Bot) tgHandleRenameNote(msg *tgbotapi.Message, args string, callerID string) {
+	if !b.DB.IsAdmin("telegram", callerID, b.Config) {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Only admins can rename notes.", "", false, b.Logger)
+		return
+	}
+	parts := strings.Fields(args)
+	if len(parts) != 2 {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Usage: /renamenote old_name new_name", "", false, b.Logger)
+		return
+	}
+	if err := b.Notes.RenameNote(parts[0], parts[1]); err != nil {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, fmt.Sprintf("Error: %s", err), "", false, b.Logger)
+		return
+	}
+	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, fmt.Sprintf("Note <code>%s</code> renamed to <code>%s</code>.", html.EscapeString(strings.ToLower(parts[0])), html.EscapeString(strings.ToLower(parts[1]))), "HTML", false, b.Logger)
 }
 
 func (b *Bot) tgHandleDelNote(msg *tgbotapi.Message, args string, callerID string) {

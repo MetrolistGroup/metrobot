@@ -78,6 +78,8 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 		b.handleAddNote(s, i, opts, callerID)
 	case "editnote":
 		b.handleEditNote(s, i, opts, callerID)
+	case "renamenote":
+		b.handleRenameNote(s, i, opts, callerID)
 	case "delnote":
 		b.handleDelNote(s, i, opts, callerID)
 	case "version":
@@ -397,6 +399,7 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		"• /note [name] [short_desc] [content] - Add a note (admin only)\n" +
 		"• /addnote [name] [short_desc] [content] - Add a new note (admin only)\n" +
 		"• /editnote [name] [short_desc] [content] - Edit a note (admin only)\n" +
+		"• /renamenote [name] [new_name] - Rename a note (admin only)\n" +
 		"• /delnote [name] - Delete a note (admin only)\n" +
 		"• All saved notes are available in #app-support\n\n" +
 		"**Bot Info:**\n" +
@@ -510,6 +513,20 @@ func (b *Bot) handleEditNote(s *discordgo.Session, i *discordgo.InteractionCreat
 		return
 	}
 	respondPublic(s, i, fmt.Sprintf("Note `%s` updated.", strings.ToLower(name)))
+}
+
+func (b *Bot) handleRenameNote(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
+	if !b.DB.IsAdmin("discord", callerID, b.Config) {
+		respondEphemeral(s, i, "Only admins can rename notes.")
+		return
+	}
+	name := opts["name"].StringValue()
+	newName := opts["new_name"].StringValue()
+	if err := b.Notes.RenameNote(name, newName); err != nil {
+		respondPublic(s, i, fmt.Sprintf("Error renaming note: %s", err))
+		return
+	}
+	respondPublic(s, i, fmt.Sprintf("Note `%s` renamed to `%s`.", strings.ToLower(name), strings.ToLower(newName)))
 }
 
 func (b *Bot) handleDelNote(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
