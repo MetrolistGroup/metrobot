@@ -114,6 +114,7 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 
 	session.AddHandler(bot.onInteractionCreate)
 	session.AddHandler(bot.onMessageCreate)
+	session.AddHandler(bot.onGuildTagEvent)
 	session.AddHandler(bot.onGuildMemberAdd)
 	session.AddHandler(bot.onGuildMemberUpdate)
 	session.AddHandler(bot.onGuildMemberUpdateLog)

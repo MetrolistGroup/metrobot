@@ -59,6 +59,98 @@ func TestApprovedNicknameChangePersistsAndIsConsumedOnlyByNicknameUpdate(t *test
 	}
 }
 
+func TestBlockedGuildTagBansMemberOnJoinAndUpdate(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPut || !strings.HasSuffix(r.URL.Path, "/guilds/guild/bans/user") {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if reason := r.URL.Query().Get("reason"); !strings.Contains(reason, "ROCK") || !strings.Contains(reason, blockedGuildTagID) {
+			t.Errorf("ban reason = %q", reason)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	session, err := discordgo.New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client = server.Client()
+	session.Client.Transport = rewriteDiscordTransport{base: session.Client.Transport, target: server.URL}
+	bot := &Bot{Config: &config.Config{DiscordGuildID: "guild"}, Logger: zap.NewNop()}
+
+	payload := json.RawMessage(`{"guild_id":"guild","user":{"id":"user","primary_guild":{"identity_guild_id":"1469982893056200819","identity_enabled":true,"tag":"ROCK"}}}`)
+	for _, eventType := range []string{"GUILD_MEMBER_ADD", "GUILD_MEMBER_UPDATE"} {
+		bot.onGuildTagEvent(session, &discordgo.Event{Type: eventType, RawData: payload})
+	}
+	bot.onGuildTagEvent(session, &discordgo.Event{Type: "GUILD_MEMBER_UPDATE", RawData: json.RawMessage(`{"guild_id":"guild","user":{"id":"safe","primary_guild":{"identity_guild_id":"1469982893056200819","identity_enabled":false,"tag":"ROCK"}}}`)})
+
+	if requests != 2 {
+		t.Fatalf("ban requests = %d, want 2", requests)
+	}
+}
+
+func TestNewDonorGetsPingingWelcomeNote(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.AddNote(donorWelcomeNote, "Tester onboarding", "Welcome to the tester team!"); err != nil {
+		t.Fatal(err)
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/channels/"+donorWelcomeChannelID+"/messages") {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var payload struct {
+			Content         string                           `json:"content"`
+			AllowedMentions discordgo.MessageAllowedMentions `json:"allowed_mentions"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Content != "<@user>\nWelcome to the tester team!" {
+			t.Errorf("content = %q", payload.Content)
+		}
+		if !slices.Equal(payload.AllowedMentions.Users, []string{"user"}) || len(payload.AllowedMentions.Parse) != 0 {
+			t.Errorf("allowed mentions = %#v", payload.AllowedMentions)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"welcome","channel_id":"channel"}`))
+	}))
+	defer server.Close()
+
+	session, err := discordgo.New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client = server.Client()
+	session.Client.Transport = rewriteDiscordTransport{base: session.Client.Transport, target: server.URL}
+	bot := &Bot{
+		Config: &config.Config{DiscordGuildID: "guild"},
+		DB:     database, Notes: &cmd.NotesHandler{DB: database}, Logger: zap.NewNop(),
+	}
+
+	bot.onGuildMemberUpdate(session, &discordgo.GuildMemberUpdate{
+		Member:       &discordgo.Member{GuildID: "guild", Nick: "same", User: &discordgo.User{ID: "user"}, Roles: []string{donorRoleID}},
+		BeforeUpdate: &discordgo.Member{Nick: "same"},
+	})
+	bot.onGuildMemberUpdate(session, &discordgo.GuildMemberUpdate{
+		Member:       &discordgo.Member{GuildID: "guild", Nick: "same", User: &discordgo.User{ID: "user"}, Roles: []string{donorRoleID}},
+		BeforeUpdate: &discordgo.Member{Nick: "same", Roles: []string{donorRoleID}},
+	})
+
+	if requests != 1 {
+		t.Fatalf("welcome requests = %d, want 1", requests)
+	}
+}
+
 func TestGarminKillRequiresAuthorizedReplyAndUsesUserTimeout(t *testing.T) {
 	var requests []string
 	var timeouts []time.Duration

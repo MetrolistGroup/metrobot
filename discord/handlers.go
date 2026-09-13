@@ -2,6 +2,7 @@ package discord
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"slices"
@@ -22,6 +23,10 @@ var chatModPattern = regexp.MustCompile(`(?i)^!(ban|dban|tban|sban|kick|mute|tim
 const (
 	garminLimitedKillUserID = "509572562683035676"
 	discordModeratorRoleID  = "1495442011749220563"
+	blockedGuildTagID       = "1469982893056200819"
+	donorRoleID             = "1528525769570127872"
+	donorWelcomeChannelID   = "1528531338196418683"
+	donorWelcomeNote        = "testertour"
 )
 
 var garminDirectSlurPatterns = []*regexp.Regexp{
@@ -1306,7 +1311,40 @@ func chunkString(s string, maxLen int) []string {
 	return chunks
 }
 
-// Discord event handlers for automatic dehoisting
+// Discord event handlers for automatic member actions
+
+// discordgo v0.29 drops primary_guild from User, so inspect the raw payload.
+func (b *Bot) onGuildTagEvent(s *discordgo.Session, event *discordgo.Event) {
+	if event == nil || (event.Type != "GUILD_MEMBER_ADD" && event.Type != "GUILD_MEMBER_UPDATE") {
+		return
+	}
+
+	var payload struct {
+		GuildID string `json:"guild_id"`
+		User    struct {
+			ID           string `json:"id"`
+			PrimaryGuild struct {
+				IdentityGuildID string `json:"identity_guild_id"`
+				IdentityEnabled bool   `json:"identity_enabled"`
+			} `json:"primary_guild"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(event.RawData, &payload); err != nil {
+		b.Logger.Error("failed to inspect member guild tag", zap.Error(err))
+		return
+	}
+	if payload.GuildID != b.Config.DiscordGuildID || payload.User.ID == "" ||
+		!payload.User.PrimaryGuild.IdentityEnabled || payload.User.PrimaryGuild.IdentityGuildID != blockedGuildTagID {
+		return
+	}
+
+	const reason = "Displayed the blocked ROCK server tag (guild 1469982893056200819)"
+	if err := s.GuildBanCreateWithReason(payload.GuildID, payload.User.ID, reason, 0); err != nil {
+		b.Logger.Error("failed to ban member with blocked guild tag", zap.String("userID", payload.User.ID), zap.Error(err))
+		return
+	}
+	b.Logger.Info("banned member with blocked guild tag", zap.String("userID", payload.User.ID))
+}
 
 func (b *Bot) onGuildMemberAdd(s *discordgo.Session, m *discordgo.GuildMemberAdd) {
 	if m.GuildID != b.Config.DiscordGuildID {
@@ -1335,6 +1373,9 @@ func (b *Bot) onGuildMemberUpdate(s *discordgo.Session, m *discordgo.GuildMember
 		return
 	}
 
+	if m.BeforeUpdate != nil && !slices.Contains(m.BeforeUpdate.Roles, donorRoleID) && slices.Contains(m.Roles, donorRoleID) {
+		b.sendDonorWelcome(s, m.User.ID)
+	}
 	if m.BeforeUpdate != nil && m.BeforeUpdate.Nick == m.Nick {
 		return
 	}
@@ -1348,6 +1389,21 @@ func (b *Bot) onGuildMemberUpdate(s *discordgo.Session, m *discordgo.GuildMember
 	}
 
 	b.autoDehoistMember(s, m.GuildID, m.User.ID, "updated member", 1)
+}
+
+func (b *Bot) sendDonorWelcome(s *discordgo.Session, userID string) {
+	text, err := b.Notes.GetNote(donorWelcomeNote)
+	if err != nil {
+		b.Logger.Error("failed to load donor welcome note", zap.Error(err))
+		return
+	}
+	_, err = s.ChannelMessageSendComplex(donorWelcomeChannelID, &discordgo.MessageSend{
+		Content:         fmt.Sprintf("<@%s>\n%s", userID, text),
+		AllowedMentions: &discordgo.MessageAllowedMentions{Users: []string{userID}},
+	})
+	if err != nil {
+		b.Logger.Error("failed to send donor welcome", zap.String("userID", userID), zap.Error(err))
+	}
 }
 
 func (b *Bot) autoDehoistMember(s *discordgo.Session, guildID, userID, source string, attempt int) bool {
