@@ -222,8 +222,12 @@ func TestGarminKillRequiresAuthorizedReplyAndUsesUserTimeout(t *testing.T) {
 	bot := &Bot{Config: &config.Config{DiscordGuildID: "guild"}, Logger: zap.NewNop()}
 	message := func(author string, reply bool) *discordgo.MessageCreate {
 		m := &discordgo.Message{ID: "command", GuildID: "guild", ChannelID: "channel", Content: "ok garmin kill", Author: &discordgo.User{ID: author}}
-		if author == "moderator" {
+
+		switch author {
+		case "moderator":
 			m.Member = &discordgo.Member{Roles: []string{discordModeratorRoleID}}
+		case "coolpeople":
+			m.Member = &discordgo.Member{Roles: []string{discordCoolPeopleRoleID}}
 		}
 		if reply {
 			m.ReferencedMessage = &discordgo.Message{ID: "target-message", Author: &discordgo.User{ID: "target"}}
@@ -239,7 +243,7 @@ func TestGarminKillRequiresAuthorizedReplyAndUsesUserTimeout(t *testing.T) {
 		t.Errorf("staff timeout duration = %s, want about 30s", remaining)
 	}
 
-	bot.onMessageCreate(session, message(garminLimitedKillUserID, true))
+	bot.onMessageCreate(session, message("coolpeople", true))
 	if len(requests) != 6 {
 		t.Fatalf("limited user reply made %d total requests, want 6: %v", len(requests), requests)
 	}
