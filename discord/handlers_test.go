@@ -212,6 +212,7 @@ func TestGarminKillRequiresAuthorizedReplyAndUsesUserTimeout(t *testing.T) {
 	for _, member := range []*discordgo.Member{
 		{GuildID: "guild", User: &discordgo.User{ID: "staff"}, Roles: []string{"staff"}},
 		{GuildID: "guild", User: &discordgo.User{ID: "moderator"}, Roles: []string{discordModeratorRoleID}},
+		{GuildID: "guild", User: &discordgo.User{ID: "coolpeople"}, Roles: []string{discordCoolPeopleRoleID}},
 		{GuildID: "guild", User: &discordgo.User{ID: "user"}},
 	} {
 		if err := session.State.MemberAdd(member); err != nil {
