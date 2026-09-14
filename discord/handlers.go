@@ -136,7 +136,10 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 
 func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	b.rememberMessageForLogs(s, m.Message)
-	if m.Author.Bot || m.GuildID != b.Config.DiscordGuildID {
+	if m.Author == nil || m.Author.Bot || m.WebhookID != "" || m.GuildID != b.Config.DiscordGuildID {
+		return
+	}
+	if b.repostCleanYouTubeLinks(s, m) {
 		return
 	}
 

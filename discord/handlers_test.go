@@ -266,6 +266,79 @@ func TestGarminKillRequiresAuthorizedReplyAndUsesUserTimeout(t *testing.T) {
 	}
 }
 
+func TestCleanYouTubeSourceIndicators(t *testing.T) {
+	input := `one https://youtu.be/abc?si=source. two https://www.youtube.com/watch?v=def&si=source&t=12#part three https://music.youtube.com/watch?v=ghi&si=source four https://example.com/?si=keep`
+	want := `one https://youtu.be/abc. two https://www.youtube.com/watch?v=def&t=12#part three https://music.youtube.com/watch?v=ghi four https://example.com/?si=keep`
+	if got, changed := cleanYouTubeSourceIndicators(input); !changed || got != want {
+		t.Fatalf("cleanYouTubeSourceIndicators() = %q, %v; want %q, true", got, changed, want)
+	}
+	if got, changed := cleanYouTubeSourceIndicators("https://youtube.example/watch?si=keep"); changed || got != "https://youtube.example/watch?si=keep" {
+		t.Fatalf("non-YouTube URL changed to %q", got)
+	}
+}
+
+func TestYouTubeSourceLinkIsRepostedAsUserThenDeleted(t *testing.T) {
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/channels/channel/webhooks"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":"hook","type":1,"channel_id":"channel","name":"` + youtubeCleanerWebhookName + `","token":"secret","user":{"id":"bot"}}]`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/webhooks/hook/secret"):
+			if r.URL.Query().Get("wait") != "true" {
+				t.Error("webhook execution did not wait for confirmation")
+			}
+			var payload discordgo.WebhookParams
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload.Content != "watch https://youtu.be/video" || payload.Username != "Server Name" {
+				t.Errorf("webhook payload = %#v", payload)
+			}
+			if !strings.Contains(payload.AvatarURL, "/guilds/guild/users/user/avatars/server-avatar") {
+				t.Errorf("avatar URL = %q", payload.AvatarURL)
+			}
+			if payload.AllowedMentions == nil || len(payload.AllowedMentions.Parse) != 0 {
+				t.Errorf("allowed mentions = %#v", payload.AllowedMentions)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"repost","channel_id":"channel"}`))
+		case r.Method == http.MethodDelete && strings.HasSuffix(r.URL.Path, "/channels/channel/messages/original"):
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	session, err := discordgo.New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client = server.Client()
+	session.Client.Transport = rewriteDiscordTransport{base: session.Client.Transport, target: server.URL}
+	session.State.User = &discordgo.User{ID: "bot"}
+	if err := session.State.GuildAdd(&discordgo.Guild{ID: "guild"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.State.ChannelAdd(&discordgo.Channel{ID: "channel", GuildID: "guild", Type: discordgo.ChannelTypeGuildText}); err != nil {
+		t.Fatal(err)
+	}
+
+	bot := &Bot{Config: &config.Config{DiscordGuildID: "guild"}, Logger: zap.NewNop()}
+	bot.onMessageCreate(session, &discordgo.MessageCreate{Message: &discordgo.Message{
+		ID: "original", GuildID: "guild", ChannelID: "channel", Content: "watch https://youtu.be/video?si=source",
+		Author: &discordgo.User{ID: "user", Username: "account", Avatar: "account-avatar"},
+		Member: &discordgo.Member{Nick: "Server Name", Avatar: "server-avatar"},
+	}})
+
+	if want := []string{"GET /api/v9/channels/channel/webhooks", "POST /api/v9/webhooks/hook/secret", "DELETE /api/v9/channels/channel/messages/original"}; !slices.Equal(requests, want) {
+		t.Fatalf("requests = %v, want %v", requests, want)
+	}
+}
+
 func TestModeratorRoleHasOnlyRequestedModerationActions(t *testing.T) {
 	bot := &Bot{}
 	member := &discordgo.Member{Roles: []string{discordModeratorRoleID}}
