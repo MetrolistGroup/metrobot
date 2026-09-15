@@ -172,6 +172,10 @@ func (b *Bot) registerCommands() error {
 			Description: "Forget Garmin context before this point in this channel (admin only)",
 		},
 		{
+			Name:        "quote",
+			Description: "Turn the previous message into a quote image",
+		},
+		{
 			Name:        "notes",
 			Description: "List all available notes",
 		},

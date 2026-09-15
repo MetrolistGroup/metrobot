@@ -75,6 +75,8 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 		b.handleHelp(s, i)
 	case "ctx-reset":
 		b.handleGarminContextResetInteraction(s, i, callerID)
+	case "quote":
+		b.handleQuoteInteraction(s, i)
 	case "notes":
 		b.handleNotes(s, i)
 	case "note":
@@ -144,6 +146,10 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	}
 
 	content := strings.TrimSpace(m.Content)
+	if isQuoteTrigger(content) {
+		go b.handleQuoteReply(s, m)
+		return
+	}
 	if strings.EqualFold(content, "ok garmin ctx-reset") {
 		b.handleGarminContextResetMessage(s, m)
 		return
@@ -414,6 +420,7 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		"• /delnote [name] - Delete a note (admin only)\n" +
 		"• All saved notes are available in #app-support\n\n" +
 		"**Bot Info:**\n" +
+		"• /quote - Turn the previous message into a quote image\n" +
 		"• /version [version] - Show release info\n" +
 		"• /latest - Show the latest release\n" +
 		"• /actions - Show GitHub Actions build status\n" +
