@@ -115,7 +115,8 @@ func (b *Bot) makeQuoteImage(s *discordgo.Session, message *discordgo.Message) (
 		return nil, fmt.Errorf("message has no text")
 	}
 
-	name, avatarURL := quoteAuthor(message)
+	text = resolveQuoteMentions(s, message, text)
+	name, avatarURL := quoteAuthor(s, message)
 	avatar, err := fetchQuoteAvatar(s.Client, avatarURL)
 	if err != nil {
 		b.Logger.Debug("failed to fetch quote avatar", zap.String("user", message.Author.ID), zap.Error(err))
@@ -123,18 +124,54 @@ func (b *Bot) makeQuoteImage(s *discordgo.Session, message *discordgo.Message) (
 	return renderQuote(text, name, avatar)
 }
 
-func quoteAuthor(message *discordgo.Message) (string, string) {
+func quoteAuthor(s *discordgo.Session, message *discordgo.Message) (string, string) {
 	name, avatarURL := message.Author.DisplayName(), message.Author.AvatarURL("512")
-	if message.Member != nil {
-		member := *message.Member
-		member.User = message.Author
-		member.GuildID = message.GuildID
+	member := garminCurrentGuildMember(s, message.GuildID, message.Author.ID)
+	if member == nil {
+		member = message.Member
+	}
+	if member != nil {
+		member = copyQuoteMember(member, message.GuildID, message.Author)
 		name, avatarURL = member.DisplayName(), member.AvatarURL("512")
 	}
 	if strings.TrimSpace(name) == "" {
 		name = message.Author.Username
 	}
 	return name, avatarURL
+}
+
+func resolveQuoteMentions(s *discordgo.Session, message *discordgo.Message, text string) string {
+	replacements := make([]string, 0, len(message.Mentions)*4)
+	seen := make(map[string]struct{}, len(message.Mentions))
+	for _, user := range message.Mentions {
+		if user == nil || user.ID == "" {
+			continue
+		}
+		if _, ok := seen[user.ID]; ok {
+			continue
+		}
+		seen[user.ID] = struct{}{}
+		name := user.DisplayName()
+		if member := garminCurrentGuildMember(s, message.GuildID, user.ID); member != nil {
+			name = copyQuoteMember(member, message.GuildID, user).DisplayName()
+		}
+		if strings.TrimSpace(name) != "" {
+			replacements = append(replacements, "<@"+user.ID+">", "@"+name, "<@!"+user.ID+">", "@"+name)
+		}
+	}
+	if len(replacements) == 0 {
+		return text
+	}
+	return strings.NewReplacer(replacements...).Replace(text)
+}
+
+func copyQuoteMember(member *discordgo.Member, guildID string, user *discordgo.User) *discordgo.Member {
+	copy := *member
+	copy.GuildID = guildID
+	if copy.User == nil {
+		copy.User = user
+	}
+	return &copy
 }
 
 func fetchQuoteAvatar(client *http.Client, avatarURL string) (image.Image, error) {
