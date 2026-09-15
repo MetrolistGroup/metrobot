@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -68,6 +69,7 @@ Server rules:
 
 Accuracy:
 - Never guess a person's username, display name, role, contribution, or identity. Use the Discord or GitHub tools when the supplied context is not enough.
+- Do not volunteer hosting specifications in unrelated replies. Model inference happens at the configured API provider, so never blame local VPS CPU or RAM for AI response latency.
 - Metrolist is an active YouTube Music client for Android in maintenance mode. Maintenance mode means bug fixes and minor improvements continue; it is not abandoned or dead.
 - Use tools for current releases, repository activity, commits, files, issues, people, saved notes, and other facts that may have changed. Never invent commit messages or code changes.
 - Use the calculator tool for arithmetic instead of solving it mentally.
@@ -287,6 +289,7 @@ type chatCompletionClient struct {
 	attemptTimeout   time.Duration
 	rateLimitDelay   time.Duration
 	nextKey          atomic.Uint64
+	requestMu        sync.Mutex
 }
 
 type chatCompletionRequest struct {
@@ -392,7 +395,7 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 		DisableReasoning: input.DisableReasoning,
 		Model:            c.model,
 		Messages:         make([]chatMessage, 1, messageCapacity),
-		MaxTokens:        160,
+		MaxTokens:        1024,
 		Stream:           false,
 		Tools:            input.Tools,
 	}
@@ -427,6 +430,10 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 	if err != nil {
 		return nil, fmt.Errorf("encoding %s request: %w", c.provider, err)
 	}
+
+	// ponytail: serialize calls until the OpenRouter route handles bursts reliably.
+	c.requestMu.Lock()
+	defer c.requestMu.Unlock()
 
 	start := int((c.nextKey.Add(1) - 1) % uint64(len(c.keys)))
 	keyAttempts := 0

@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestChatCompletionClientRetriesTransportFailureOnce(t *testing.T) {
@@ -97,6 +99,40 @@ func TestChatCompletionClientRoundTripsToolCalls(t *testing.T) {
 	final, err := client.Complete(context.Background(), GarminAIRequest{Messages: messages, Tools: []GarminAITool{tool}})
 	if err != nil || final.Message.Content != "done" || requests != 2 {
 		t.Fatalf("second Complete() = %#v after %d requests, error %v", final, requests, err)
+	}
+}
+
+func TestChatCompletionClientSerializesConcurrentRequests(t *testing.T) {
+	var active atomic.Int32
+	var overlapped atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if active.Add(1) > 1 {
+			overlapped.Store(true)
+		}
+		defer active.Add(-1)
+		time.Sleep(20 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer server.Close()
+
+	client := newChatCompletionClient([]string{"key"}, server.URL, "model", "test provider", nil, nil, server.Client())
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			_, err := client.Ask(context.Background(), testGarminMessages("hi"))
+			errs <- err
+		}()
+	}
+	close(start)
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if overlapped.Load() {
+		t.Fatal("concurrent provider requests overlapped")
 	}
 }
 

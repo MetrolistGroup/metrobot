@@ -32,8 +32,8 @@ func TestOpenRouterClientUsesCapableRouteByDefault(t *testing.T) {
 	if request.Model != openRouterDefaultModel || len(request.Models) != 0 {
 		t.Errorf("model route = (%q, %v), want %q", request.Model, request.Models, openRouterDefaultModel)
 	}
-	if request.Reasoning == nil || request.Reasoning.Enabled != nil || request.Reasoning.MaxTokens != 256 || request.Reasoning.Exclude {
-		t.Errorf("reasoning = %#v, want internal 256-token reasoning", request.Reasoning)
+	if request.Reasoning == nil || request.Reasoning.Enabled != nil || request.Reasoning.MaxTokens != 256 || request.Reasoning.Exclude || request.MaxTokens != 1024 {
+		t.Errorf("reasoning = %#v with %d output tokens, want 256 reasoning and 1024 output", request.Reasoning, request.MaxTokens)
 	}
 	if request.SessionID != openRouterSessionID {
 		t.Errorf("session ID = %q, want %q", request.SessionID, openRouterSessionID)
