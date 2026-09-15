@@ -3,7 +3,7 @@
   "telegram_token": "1234:ABCD",
   "github_token": "github_pat",
   "openrouter_api_keys": ["sk-or-example-1", "sk-or-example-2"],
-  "openrouter_model": "qwen/qwen3.7-flash",
+  "openrouter_model": "qwen/qwen3.8-flash",
   "firecrawl_api_keys": ["fc-example-1", "fc-example-2"],
   "garmin_memory_file": "garmin-memory.md",
   "discord_guild_id": "123",

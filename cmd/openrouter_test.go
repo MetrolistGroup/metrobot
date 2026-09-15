@@ -32,8 +32,8 @@ func TestOpenRouterClientUsesCapableRouteByDefault(t *testing.T) {
 	if request.Model != openRouterDefaultModel || len(request.Models) != 0 {
 		t.Errorf("model route = (%q, %v), want %q", request.Model, request.Models, openRouterDefaultModel)
 	}
-	if request.Reasoning == nil || request.Reasoning.Enabled != nil || request.Reasoning.MaxTokens != 32 || request.Reasoning.Exclude {
-		t.Errorf("reasoning = %#v, want internal 32-token reasoning", request.Reasoning)
+	if request.Reasoning == nil || request.Reasoning.Enabled != nil || request.Reasoning.MaxTokens != 256 || request.Reasoning.Exclude {
+		t.Errorf("reasoning = %#v, want internal 256-token reasoning", request.Reasoning)
 	}
 	if request.SessionID != openRouterSessionID {
 		t.Errorf("session ID = %q, want %q", request.SessionID, openRouterSessionID)
@@ -106,7 +106,7 @@ func TestOpenRouterClientMigratesBrokenGraniteDefault(t *testing.T) {
 	}
 }
 
-func TestOpenRouterClientMigratesPreviousGPT5NanoDefault(t *testing.T) {
+func TestOpenRouterClientMigratesPreviousQwenDefault(t *testing.T) {
 	var request chatCompletionRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -117,11 +117,11 @@ func TestOpenRouterClientMigratesPreviousGPT5NanoDefault(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newOpenRouterClient([]string{"key"}, openRouterPreviousModel, server.URL, server.Client())
+	client := newOpenRouterClient([]string{"key"}, openRouterPreviousQwen, server.URL, server.Client())
 	if _, err := client.Ask(context.Background(), testGarminMessages("hi")); err != nil {
 		t.Fatalf("Ask() error = %v", err)
 	}
-	if request.Model != openRouterDefaultModel || request.Reasoning == nil || request.Reasoning.MaxTokens != 32 || request.Reasoning.Exclude {
+	if request.Model != openRouterDefaultModel || request.Reasoning == nil || request.Reasoning.MaxTokens != 256 || request.Reasoning.Exclude {
 		t.Fatalf("previous default migration = model %q, reasoning %#v", request.Model, request.Reasoning)
 	}
 }

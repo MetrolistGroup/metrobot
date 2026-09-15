@@ -8,12 +8,13 @@ import (
 
 const (
 	openRouterEndpoint      = "https://openrouter.ai/api/v1/chat/completions"
-	openRouterDefaultModel  = "qwen/qwen3.7-flash"
+	openRouterDefaultModel  = "qwen/qwen3.8-flash"
+	openRouterPreviousQwen  = "qwen/qwen3.7-flash"
 	openRouterPreviousModel = "openai/gpt-5.4-nano"
 	openRouterOlderModel    = "openai/gpt-5-mini"
 	openRouterLegacyDefault = "upstage/solar-pro4"
 	openRouterBrokenDefault = "ibm-granite/granite-4.1-8b"
-	openRouterSessionID     = "metrobot-qwen3.7-flash-v1"
+	openRouterSessionID     = "metrobot-qwen3.8-flash-v1"
 )
 
 type OpenRouterClient struct {
@@ -26,7 +27,7 @@ func NewOpenRouterClient(keys []string, model string) *OpenRouterClient {
 
 func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http.Client) *OpenRouterClient {
 	model = strings.TrimSpace(model)
-	useDefaultRoute := model == "" || model == openRouterDefaultModel || model == openRouterPreviousModel || model == openRouterOlderModel || model == openRouterLegacyDefault || model == openRouterBrokenDefault
+	useDefaultRoute := model == "" || model == openRouterDefaultModel || model == openRouterPreviousQwen || model == openRouterPreviousModel || model == openRouterOlderModel || model == openRouterLegacyDefault || model == openRouterBrokenDefault
 	if useDefaultRoute {
 		model = openRouterDefaultModel
 	}
@@ -45,7 +46,7 @@ func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http
 					disabled := false
 					request.Reasoning = &chatReasoning{Enabled: &disabled}
 				} else {
-					request.Reasoning = &chatReasoning{MaxTokens: 32}
+					request.Reasoning = &chatReasoning{MaxTokens: 256}
 				}
 				request.SessionID = openRouterSessionID
 				if len(request.Messages) > 0 {
