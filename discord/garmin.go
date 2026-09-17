@@ -797,18 +797,23 @@ func garminAIImageURLs(m *discordgo.MessageCreate) []string {
 		return nil
 	}
 	var images []string
-	for _, attachment := range m.Attachments {
-		if attachment == nil || !garminAIImageAttachment(attachment) {
+	for _, message := range []*discordgo.Message{m.Message, m.ReferencedMessage} {
+		if message == nil {
 			continue
 		}
-		imageURL := strings.TrimSpace(attachment.URL)
-		parsed, err := url.Parse(imageURL)
-		if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
-			continue
-		}
-		images = append(images, imageURL)
-		if len(images) == garminAIMaxImages {
-			break
+		for _, attachment := range message.Attachments {
+			if attachment == nil || !garminAIImageAttachment(attachment) {
+				continue
+			}
+			imageURL := strings.TrimSpace(attachment.URL)
+			parsed, err := url.Parse(imageURL)
+			if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+				continue
+			}
+			images = append(images, imageURL)
+			if len(images) == garminAIMaxImages {
+				return images
+			}
 		}
 	}
 	return images

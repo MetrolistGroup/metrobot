@@ -128,7 +128,7 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 		tools = withoutGarminTools(tools, "load_skill")
 	}
 	forceWebSearch := garminToolAvailable(tools, "search_web")
-	if !ambient && b.garminFirecrawl != nil && garminRedirectChannelID(s, m.ChannelID) == garminGeneralID && !forceWebSearch {
+	if !ambient && !appSupport && b.garminFirecrawl != nil && !forceWebSearch {
 		tools = append(tools, onlyGarminTools(garminAITools, "search_web")...)
 	}
 	if b.garminFirecrawl == nil {
@@ -1347,6 +1347,10 @@ func garminHasGitHubRepositoryReference(prompt string) bool {
 		field = strings.Trim(field, "<>[](){}.,!?;:\"'")
 		parts := strings.Split(field, "/")
 		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			switch strings.ToLower(parts[0]) {
+			case "r", "u", "user":
+				continue
+			}
 			return true
 		}
 	}

@@ -246,7 +246,7 @@ func TestRunGarminAIStopsRepositoryToolLoop(t *testing.T) {
 	}
 }
 
-func TestRunGarminAIMakesWebSearchAvailableForGeneralAnswers(t *testing.T) {
+func TestRunGarminAIMakesWebSearchAvailableForAnswers(t *testing.T) {
 	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -259,7 +259,7 @@ func TestRunGarminAIMakesWebSearchAvailableForGeneralAnswers(t *testing.T) {
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "a useful short answer."}}, nil
 	})
 	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		ID: "1", GuildID: "guild", ChannelID: garminGeneralID, Content: "garmin, who coined the term quark?", Author: &discordgo.User{ID: "user"},
+		ID: "1", GuildID: "guild", ChannelID: "channel", Content: "garmin, who coined the term quark?", Author: &discordgo.User{ID: "user"},
 	}}
 	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "who coined the term quark?"}})
 	if err != nil || result.Answer != "a useful short answer." {
@@ -474,6 +474,9 @@ func TestGarminWebSearchRouting(t *testing.T) {
 	if !garminExplicitWebSearchRequested("look up the latest story from the guardian") {
 		t.Fatal("look up request was not recognized as explicit web search")
 	}
+	if garminRepositorySubject("look up r/sssdfg") {
+		t.Fatal("subreddit was mistaken for a GitHub repository")
+	}
 	for prompt, want := range map[string]string{
 		"look up the latest story from the guardian":      "news",
 		"give me the first moai meme image you find":      "images",
@@ -521,6 +524,7 @@ func TestGarminToolsForConversationSelectsRelevantTools(t *testing.T) {
 		{"show details for the facebook/react repository", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
 		{"what is https://github.com/facebook/react?", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
 		{"search the web for today's Android news", false, []string{"do_not_respond", "search_web"}},
+		{"look up r/sssdfg", false, []string{"do_not_respond", "search_web"}},
 		{"list saved notes", false, []string{"do_not_respond", "list_notes", "get_note"}},
 		{"show me the playback note", false, []string{"do_not_respond", "list_notes", "get_note"}},
 		{"playback keeps stopping", false, []string{"do_not_respond", "list_notes", "get_note"}},

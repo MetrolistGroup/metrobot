@@ -553,6 +553,9 @@ func TestGarminAIUserMessageIncludesImageAttachments(t *testing.T) {
 			{Filename: "notes.txt", ContentType: "text/plain", URL: "https://cdn.discordapp.com/attachments/notes.txt"},
 			{Filename: "fallback.webp", URL: "https://media.discordapp.net/attachments/fallback.webp"},
 		},
+		ReferencedMessage: &discordgo.Message{Attachments: []*discordgo.MessageAttachment{
+			{Filename: "replied.jpg", ContentType: "image/jpeg", URL: "https://cdn.discordapp.com/attachments/replied.jpg"},
+		}},
 	}}
 	got := garminAIUserMessage(message, "  what is this?  ")
 	want := cmd.GarminAIMessage{
@@ -562,6 +565,7 @@ func TestGarminAIUserMessageIncludesImageAttachments(t *testing.T) {
 		Images: []string{
 			"https://cdn.discordapp.com/attachments/photo.png",
 			"https://media.discordapp.net/attachments/fallback.webp",
+			"https://cdn.discordapp.com/attachments/replied.jpg",
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
