@@ -9,9 +9,12 @@ import (
 )
 
 const (
-	GarminMemoryFile    = "garmin-memory.md"
-	garminMemoryMaxSize = 16 * 1024
-	garminMemoryEmpty   = "# Metrobot Memory\n"
+	GarminMemoryFile           = "garmin-memory.md"
+	garminMemoryMaxSize        = 16 * 1024
+	garminLearnedMemoryMaxSize = 6 * 1024
+	garminMemoryEmpty          = "# Metrobot Memory\n"
+	garminLearnedMemoryStart   = "<!-- learned-conversation-memory:start -->"
+	garminLearnedMemoryEnd     = "<!-- learned-conversation-memory:end -->"
 )
 
 type GarminMemory struct {
@@ -83,6 +86,76 @@ func (m *GarminMemory) Append(content string) error {
 	updated := current + "\n\n" + content + "\n"
 	if current == "" {
 		updated = garminMemoryEmpty + "\n" + content + "\n"
+	}
+	return m.writeLocked(updated)
+}
+
+func (m *GarminMemory) AppendLearned(facts []string) error {
+	incoming := make([]string, 0, len(facts))
+	for _, fact := range facts {
+		fact = strings.Join(strings.Fields(strings.TrimLeft(fact, "-* \t")), " ")
+		lower := strings.ToLower(fact)
+		blocked := fact == "" || lower == "none" || len([]rune(fact)) > 300
+		for _, phrase := range []string{"discord_", "<@", "password", "api key", "secret", "token", "ignore previous", "system prompt", "you must", "you should", "follow these instructions"} {
+			blocked = blocked || strings.Contains(lower, phrase)
+		}
+		if blocked {
+			continue
+		}
+		incoming = append(incoming, fact)
+		if len(incoming) == 5 {
+			break
+		}
+	}
+	if len(incoming) == 0 {
+		return nil
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data, err := os.ReadFile(m.path)
+	if err != nil {
+		return fmt.Errorf("reading Metrobot memory: %w", err)
+	}
+	current := strings.TrimSpace(string(data))
+	prefix, suffix := current, ""
+	var learned []string
+	if start := strings.Index(current, garminLearnedMemoryStart); start >= 0 {
+		if end := strings.Index(current[start:], garminLearnedMemoryEnd); end >= 0 {
+			end += start
+			prefix = strings.TrimSpace(current[:start])
+			suffix = strings.TrimSpace(current[end+len(garminLearnedMemoryEnd):])
+			for _, line := range strings.Split(current[start+len(garminLearnedMemoryStart):end], "\n") {
+				if fact := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- ")); fact != "" && !strings.HasPrefix(fact, "#") {
+					learned = append(learned, fact)
+				}
+			}
+		}
+	}
+	existing := make(map[string]struct{}, len(learned))
+	for _, fact := range learned {
+		existing[strings.ToLower(fact)] = struct{}{}
+	}
+	for _, fact := range incoming {
+		if _, ok := existing[strings.ToLower(fact)]; !ok {
+			learned = append(learned, fact)
+			existing[strings.ToLower(fact)] = struct{}{}
+		}
+	}
+	build := func() string {
+		parts := []string{prefix}
+		if len(learned) > 0 {
+			parts = append(parts, garminLearnedMemoryStart+"\n## Learned from conversations\n\n- "+strings.Join(learned, "\n- ")+"\n"+garminLearnedMemoryEnd)
+		}
+		if suffix != "" {
+			parts = append(parts, suffix)
+		}
+		return strings.Join(parts, "\n\n") + "\n"
+	}
+	updated := build()
+	for len(learned) > 0 && (len(updated) > garminMemoryMaxSize || len(strings.Join(learned, "\n")) > garminLearnedMemoryMaxSize) {
+		learned = learned[1:]
+		updated = build()
 	}
 	return m.writeLocked(updated)
 }

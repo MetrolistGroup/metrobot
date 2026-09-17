@@ -143,6 +143,30 @@ func TestGarminAIConversationCompactsEveryTwentyMessages(t *testing.T) {
 	}
 }
 
+func TestGarminAIConversationPersistsSharedMemory(t *testing.T) {
+	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := &summaryGarminAI{summary: `{"summary":"the project decision was recorded","shared_memory":["Metrolist release notes use Markdown"]}`}
+	bot := &Bot{garminAI: model, garminMemory: memory}
+	messages := make([]cmd.GarminAIMessage, garminAICompactionMessages+1)
+	for index := range messages {
+		messages[index] = cmd.GarminAIMessage{Role: "user", Content: fmt.Sprintf("message %d", index)}
+	}
+	compacted, err := bot.compactGarminAIConversation(context.Background(), messages, "context")
+	if err != nil {
+		t.Fatal(err)
+	}
+	learned, err := memory.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(compacted[0].Content, "the project decision was recorded") || !strings.Contains(learned, "Metrolist release notes use Markdown") {
+		t.Fatalf("compacted = %#v, memory = %q", compacted, learned)
+	}
+}
+
 func TestGarminAIContinuationRejectsUntrackedAndExpiredReplies(t *testing.T) {
 	bot := &Bot{
 		garminAI: &fakeGarminAI{},
