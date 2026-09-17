@@ -195,7 +195,7 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	matches := chatModPattern.FindStringSubmatch(content)
 	if matches == nil {
 		if m.ChannelID == garminAppSupportID {
-			messages := []cmd.GarminAIMessage{garminAIUserMessage(m, content)}
+			messages := []cmd.GarminAIMessage{b.garminAIUserMessage(m, content)}
 			if continuation, ok := b.garminAIContinuation(m, content); ok {
 				messages = continuation
 			}

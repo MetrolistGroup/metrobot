@@ -547,17 +547,19 @@ func TestGarminDirectSlurDetection(t *testing.T) {
 
 func TestGarminAIUserMessageIncludesImageAttachments(t *testing.T) {
 	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		Author: &discordgo.User{ID: "123456789012345678"},
+		ChannelID: "channel",
+		Author:    &discordgo.User{ID: "123456789012345678"},
 		Attachments: []*discordgo.MessageAttachment{
 			{Filename: "photo.png", ContentType: "image/png", URL: "https://cdn.discordapp.com/attachments/photo.png"},
 			{Filename: "notes.txt", ContentType: "text/plain", URL: "https://cdn.discordapp.com/attachments/notes.txt"},
 			{Filename: "fallback.webp", URL: "https://media.discordapp.net/attachments/fallback.webp"},
 		},
-		ReferencedMessage: &discordgo.Message{Attachments: []*discordgo.MessageAttachment{
+		ReferencedMessage: &discordgo.Message{ID: "200", Attachments: []*discordgo.MessageAttachment{
 			{Filename: "replied.jpg", ContentType: "image/jpeg", URL: "https://cdn.discordapp.com/attachments/replied.jpg"},
 		}},
 	}}
-	got := garminAIUserMessage(message, "  what is this?  ")
+	bot := &Bot{}
+	got := bot.garminAIUserMessage(message, "  what is this?  ")
 	want := cmd.GarminAIMessage{
 		Role:    "user",
 		Name:    "discord_123456789012345678",
@@ -570,6 +572,10 @@ func TestGarminAIUserMessageIncludesImageAttachments(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("garminAIUserMessage() = %#v, want %#v", got, want)
+	}
+	bot.garminContextCutoffs = map[string]string{"channel": "250"}
+	if got := bot.garminAIUserMessage(message, "what is this?"); len(got.Images) != 2 {
+		t.Fatalf("pre-cutoff reply images = %v, want only current-message images", got.Images)
 	}
 }
 

@@ -473,7 +473,7 @@ func (b *Bot) sendGarminReply(s *discordgo.Session, m *discordgo.MessageCreate, 
 }
 
 func (b *Bot) garminAIContinuation(m *discordgo.MessageCreate, prompt string) ([]cmd.GarminAIMessage, bool) {
-	userMessage := garminAIUserMessage(m, prompt)
+	userMessage := b.garminAIUserMessage(m, prompt)
 	if b.garminAI == nil || !garminAIMessageHasInput(userMessage) {
 		return nil, false
 	}
@@ -498,7 +498,7 @@ func (b *Bot) garminAIContinuation(m *discordgo.MessageCreate, prompt string) ([
 }
 
 func (b *Bot) garminAIAmbientContinuation(m *discordgo.MessageCreate, prompt string) ([]cmd.GarminAIMessage, bool) {
-	userMessage := garminAIUserMessage(m, prompt)
+	userMessage := b.garminAIUserMessage(m, prompt)
 	if b.garminAI == nil || !garminAIMessageHasInput(userMessage) || m.MessageReference != nil || m.ReferencedMessage != nil {
 		return nil, false
 	}
@@ -510,7 +510,7 @@ func (b *Bot) garminAIAmbientContinuation(m *discordgo.MessageCreate, prompt str
 }
 
 func (b *Bot) garminAITriggeredConversation(m *discordgo.MessageCreate, prompt string) []cmd.GarminAIMessage {
-	userMessage := garminAIUserMessage(m, prompt)
+	userMessage := b.garminAIUserMessage(m, prompt)
 	messages, _ := b.garminAIHistory(m, "", true)
 	return append(messages, userMessage)
 }
@@ -764,6 +764,16 @@ func (b *Bot) unregisterGarminAIRequest(m *discordgo.MessageCreate) {
 	}
 }
 
+func (b *Bot) garminAIUserMessage(m *discordgo.MessageCreate, prompt string) cmd.GarminAIMessage {
+	message := garminAIUserMessage(m, prompt)
+	if m == nil || m.ReferencedMessage == nil || !b.garminMessageVisible(m.ChannelID, m.ReferencedMessage.ID) {
+		return message
+	}
+	reference := &discordgo.MessageCreate{Message: m.ReferencedMessage}
+	message.Images = uniqueGarminAIImageURLs(append(message.Images, garminAIImageURLs(reference)...), garminAIMaxImages)
+	return message
+}
+
 func garminAIUserMessage(m *discordgo.MessageCreate, prompt string) cmd.GarminAIMessage {
 	name := ""
 	if m != nil && m.Message != nil && m.Author != nil {
@@ -797,23 +807,18 @@ func garminAIImageURLs(m *discordgo.MessageCreate) []string {
 		return nil
 	}
 	var images []string
-	for _, message := range []*discordgo.Message{m.Message, m.ReferencedMessage} {
-		if message == nil {
+	for _, attachment := range m.Attachments {
+		if attachment == nil || !garminAIImageAttachment(attachment) {
 			continue
 		}
-		for _, attachment := range message.Attachments {
-			if attachment == nil || !garminAIImageAttachment(attachment) {
-				continue
-			}
-			imageURL := strings.TrimSpace(attachment.URL)
-			parsed, err := url.Parse(imageURL)
-			if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
-				continue
-			}
-			images = append(images, imageURL)
-			if len(images) == garminAIMaxImages {
-				return images
-			}
+		imageURL := strings.TrimSpace(attachment.URL)
+		parsed, err := url.Parse(imageURL)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+			continue
+		}
+		images = append(images, imageURL)
+		if len(images) == garminAIMaxImages {
+			break
 		}
 	}
 	return images

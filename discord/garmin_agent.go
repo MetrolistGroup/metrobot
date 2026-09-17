@@ -1349,7 +1349,9 @@ func garminHasGitHubRepositoryReference(prompt string) bool {
 		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
 			switch strings.ToLower(parts[0]) {
 			case "r", "u", "user":
-				continue
+				if !containsAnyGarminPhrase(strings.ToLower(prompt), "github", "repo", "repository") {
+					continue
+				}
 			}
 			return true
 		}

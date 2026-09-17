@@ -477,6 +477,9 @@ func TestGarminWebSearchRouting(t *testing.T) {
 	if garminRepositorySubject("look up r/sssdfg") {
 		t.Fatal("subreddit was mistaken for a GitHub repository")
 	}
+	if !garminRepositorySubject("look up user/repo") || !garminRepositorySubject("look up GitHub r/project") {
+		t.Fatal("explicit GitHub repository references were mistaken for Reddit references")
+	}
 	for prompt, want := range map[string]string{
 		"look up the latest story from the guardian":      "news",
 		"give me the first moai meme image you find":      "images",
