@@ -660,8 +660,7 @@ func TestGarminDiscordContextIncludesChannelRolesAndPronouns(t *testing.T) {
 		Member: &discordgo.Member{Roles: []string{"role-pronouns", "role-team"}},
 	}}
 	context := (&Bot{}).garminDiscordContextForConversation(session, message, []cmd.GarminAIMessage{
-		{Role: "user", Name: "discord_876543210987654321", Content: "earlier message"},
-		{Role: "assistant", Content: "earlier answer"},
+		{Role: "assistant", Name: garminAIConversationSummaryName, Content: "earlier conversation" + garminAIConversationParticipantsPrefix + "discord_876543210987654321"},
 		{Role: "user", Name: "discord_123456789012345678", Content: "current message"},
 	})
 	for _, expected := range []string{`"name":"general"`, `"name":"they/them"`, `"pronouns":["they/them"]`, `"tracked_conversation_users"`, `"discord_876543210987654321"`, `"display_name":"History User"`, "brief, direct, useful", "continued bot chat", "#bots"} {

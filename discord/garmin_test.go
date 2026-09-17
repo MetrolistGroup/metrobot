@@ -104,6 +104,9 @@ func TestGarminAIConversationCompactsEveryTwentyMessages(t *testing.T) {
 		if index%2 == 0 {
 			role = "user"
 			name = "discord_nyx"
+			if index == 2 {
+				name = "discord_lamp"
+			}
 		}
 		messages = append(messages, cmd.GarminAIMessage{Role: role, Name: name, Content: fmt.Sprintf("message %d", index), Images: []string{"https://example.com/image.png"}})
 	}
@@ -113,7 +116,7 @@ func TestGarminAIConversationCompactsEveryTwentyMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].Name != garminAIConversationSummaryName || got[1].Content != "continue" || !strings.Contains(got[0].Content, model.summary) {
+	if len(got) != 2 || got[0].Name != garminAIConversationSummaryName || got[1].Content != "continue" || !strings.Contains(got[0].Content, model.summary) || !strings.Contains(got[0].Content, "discord_lamp") {
 		t.Fatalf("compacted conversation = %#v", got)
 	}
 	if len(model.request.Messages) != garminAICompactionMessages || !model.request.DisableReasoning || model.request.Context == "" {
