@@ -246,7 +246,7 @@ func fetchQuoteAvatar(client *http.Client, avatarURL string) (image.Image, error
 	if avatarURL == "" {
 		return nil, fmt.Errorf("author has no avatar")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, avatarURL, nil)
 	if err != nil {

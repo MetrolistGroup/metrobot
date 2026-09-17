@@ -46,7 +46,7 @@ func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http
 					disabled := false
 					request.Reasoning = &chatReasoning{Enabled: &disabled}
 				} else {
-					request.Reasoning = &chatReasoning{MaxTokens: 32}
+					request.Reasoning = &chatReasoning{MaxTokens: 128}
 				}
 				request.SessionID = openRouterSessionID
 				if len(request.Messages) > 0 {
