@@ -464,7 +464,14 @@ func (b *quoteMarkdownBuilder) add(text string, style quoteTextStyle) {
 	if text == "" {
 		return
 	}
-	if !b.spoilers || style&quoteCode != 0 {
+	if style&quoteCode != 0 {
+		if b.spoiler {
+			style |= quoteSpoiler
+		}
+		b.addRaw(text, style)
+		return
+	}
+	if !b.spoilers {
 		b.addRaw(text, style)
 		return
 	}

@@ -56,20 +56,20 @@ func TestQuoteUsesServerDisplayNames(t *testing.T) {
 }
 
 func TestQuoteMarkdownStylesAndNewlines(t *testing.T) {
-	spans := parseQuoteMarkdown("**bold** and *italic*\n\n__under__ `code` ~~gone~~ [site](https://example.com) ||hidden||")
+	spans := parseQuoteMarkdown("**bold** and *italic*\n\n__under__ `code` ~~gone~~ [site](https://example.com) ||hidden `secret`||")
 	var plain strings.Builder
 	styles := make(map[string]quoteTextStyle)
 	for _, span := range spans {
 		plain.WriteString(span.text)
 		styles[span.text] |= span.style
 	}
-	if got := plain.String(); got != "bold and italic\n\nunder code gone site hidden" {
+	if got := plain.String(); got != "bold and italic\n\nunder code gone site hidden secret" {
 		t.Fatalf("rendered markdown text = %q", got)
 	}
 	for text, style := range map[string]quoteTextStyle{
 		"bold": quoteBold, "italic": quoteItalic, "under": quoteUnderline,
 		"code": quoteCode, "gone": quoteStrike, "site": quoteLink | quoteUnderline,
-		"hidden": quoteSpoiler,
+		"hidden ": quoteSpoiler, "secret": quoteCode | quoteSpoiler,
 	} {
 		if styles[text]&style != style {
 			t.Errorf("style for %q = %08b, want %08b", text, styles[text], style)
