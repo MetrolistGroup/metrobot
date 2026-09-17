@@ -6,6 +6,7 @@ require (
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/google/go-github/v60 v60.0.0
+	github.com/yuin/goldmark v1.7.13
 	go.uber.org/zap v1.28.0
 	golang.org/x/image v0.46.0
 	golang.org/x/oauth2 v0.36.0

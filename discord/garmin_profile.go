@@ -116,14 +116,8 @@ func garminDiscordContext(b *Bot, s *discordgo.Session, m *discordgo.MessageCrea
 	}
 	if len(messages) > 0 {
 		users := map[string]any{}
-		for _, message := range messages {
-			userID, ok := strings.CutPrefix(message.Name, "discord_")
-			if !ok || userID == "" {
-				continue
-			}
-			if _, exists := users[message.Name]; exists {
-				continue
-			}
+		for _, name := range garminAIConversationParticipants(messages) {
+			userID, _ := strings.CutPrefix(name, "discord_")
 			var trackedUser *discordgo.User
 			var trackedMember *discordgo.Member
 			if userID == m.Author.ID {
@@ -139,7 +133,7 @@ func garminDiscordContext(b *Bot, s *discordgo.Session, m *discordgo.MessageCrea
 			if len(identity) == 0 {
 				identity["id"] = userID
 			}
-			users[message.Name] = identity
+			users[name] = identity
 		}
 		if len(users) > 0 {
 			context["tracked_conversation_users"] = users

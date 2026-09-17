@@ -3,6 +3,7 @@ package discord
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -90,6 +91,55 @@ func TestGarminAIContinuationIncludesBoundedContext(t *testing.T) {
 	}
 	if !reflect.DeepEqual(messages, want) {
 		t.Fatalf("messages = %#v, want %#v", messages, want)
+	}
+}
+
+func TestGarminAIConversationCompactsEveryTwentyMessages(t *testing.T) {
+	model := &summaryGarminAI{summary: "Nyx (discord_nyx) chose option B; the game score is 4-2."}
+	bot := &Bot{garminAI: model}
+	messages := make([]cmd.GarminAIMessage, 0, garminAICompactionMessages+1)
+	for index := range garminAICompactionMessages {
+		role := "assistant"
+		name := ""
+		if index%2 == 0 {
+			role = "user"
+			name = "discord_nyx"
+			if index == 2 {
+				name = "discord_lamp"
+			}
+		}
+		messages = append(messages, cmd.GarminAIMessage{Role: role, Name: name, Content: fmt.Sprintf("message %d", index), Images: []string{"https://example.com/image.png"}})
+	}
+	messages = append(messages, cmd.GarminAIMessage{Role: "user", Name: "discord_nyx", Content: "continue"})
+
+	got, err := bot.compactGarminAIConversation(context.Background(), messages, `{"tracked_conversation_users":[]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Name != garminAIConversationSummaryName || got[1].Content != "continue" || !strings.Contains(got[0].Content, model.summary) || !strings.Contains(got[0].Content, "discord_lamp") {
+		t.Fatalf("compacted conversation = %#v", got)
+	}
+	if len(model.request.Messages) != garminAICompactionMessages || !model.request.DisableReasoning || model.request.Context == "" {
+		t.Fatalf("summary request = %#v", model.request)
+	}
+	for _, message := range model.request.Messages {
+		if len(message.Images) != 0 {
+			t.Fatalf("summary request retained image data: %#v", message)
+		}
+	}
+
+	model.summary = "merged summary"
+	secondCycle := append(copyGarminAIMessages(got[:1]), messages[:garminAICompactionMessages]...)
+	secondCycle = append(secondCycle, cmd.GarminAIMessage{Role: "user", Name: "discord_nyx", Content: "next cycle"})
+	got, err = bot.compactGarminAIConversation(context.Background(), secondCycle, "context")
+	if err != nil || len(got) != 2 || got[1].Content != "next cycle" || len(model.request.Messages) != garminAICompactionMessages+1 || model.request.Messages[0].Name != garminAIConversationSummaryName {
+		t.Fatalf("second compaction = %#v, request %#v, error %v", got, model.request, err)
+	}
+
+	model.request = cmd.GarminAIRequest{}
+	unchanged, err := bot.compactGarminAIConversation(context.Background(), messages[:garminAICompactionMessages], "")
+	if err != nil || len(unchanged) != garminAICompactionMessages || len(model.request.Messages) != 0 {
+		t.Fatalf("exact boundary was compacted: %#v, %v", unchanged, err)
 	}
 }
 
@@ -579,6 +629,16 @@ func (r rewriteDiscordTransport) RoundTrip(request *http.Request) (*http.Respons
 	request.URL.Scheme = "http"
 	request.URL.Host = strings.TrimPrefix(r.target, "http://")
 	return r.base.RoundTrip(request)
+}
+
+type summaryGarminAI struct {
+	summary string
+	request cmd.GarminAIRequest
+}
+
+func (f *summaryGarminAI) Complete(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+	f.request = request
+	return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: f.summary}}, nil
 }
 
 type fakeGarminAI struct{}
