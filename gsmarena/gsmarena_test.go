@@ -46,9 +46,14 @@ func TestLookupCachesIndexAndPhone(t *testing.T) {
 	if phone.ID != 42 || phone.Name != "Test Phone" || phone.Brand != "Test" || phone.Specs[0].Items[0].Values[0] != "Test SoC" {
 		t.Fatalf("unexpected phone: %+v", phone)
 	}
-	phone, err = newClient(database, server.URL, server.Client()).Lookup(context.Background(), "42")
+	client := newClient(database, server.URL, server.Client())
+	phone, err = client.Lookup(context.Background(), "42")
 	if err != nil || phone.ID != 42 {
 		t.Fatalf("cached lookup = %+v, %v", phone, err)
+	}
+	phone, err = client.Lookup(context.Background(), "https://www.GSMArena.com/test_phone-42.php?ref=test")
+	if err != nil || phone.ID != 42 {
+		t.Fatalf("mixed-case URL lookup = %+v, %v", phone, err)
 	}
 	if got := requests.Load(); got != 3 {
 		t.Fatalf("HTTP requests = %d, want 3 before persistent cache hits", got)

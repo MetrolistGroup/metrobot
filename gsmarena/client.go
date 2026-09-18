@@ -106,7 +106,7 @@ func (c *Client) Lookup(ctx context.Context, query string) (Phone, error) {
 	if len([]rune(query)) > 200 {
 		return Phone{}, errors.New("GSMArena phone cannot exceed 200 characters")
 	}
-	if _, err := strconv.ParseInt(query, 10, 64); err == nil || strings.Contains(query, "gsmarena.com/") || phoneIDFromSlug(query) != 0 {
+	if _, err := strconv.ParseInt(query, 10, 64); err == nil || strings.Contains(strings.ToLower(query), "gsmarena.com/") || phoneIDFromSlug(query) != 0 {
 		return c.Phone(ctx, query)
 	}
 	phones, err := c.Search(ctx, query, 25)
