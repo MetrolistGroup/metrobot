@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/MetrolistGroup/metrobot/db"
 )
@@ -81,6 +82,45 @@ func TestLookupRejectsNonGSMArenaURL(t *testing.T) {
 	_, err := client.Lookup(context.Background(), "https://example.com/fake_phone-42.php")
 	if err == nil || !strings.Contains(err.Error(), "host") {
 		t.Fatalf("expected invalid host error, got %v", err)
+	}
+}
+
+func TestSearchSimplifiesPhoneQuestions(t *testing.T) {
+	client := newClient(nil, baseURL, nil)
+	client.index = &quickSearchIndex{Brands: map[int64]string{1: "Samsung", 2: "Xiaomi"}, Records: []quickSearchRecord{
+		{BrandID: 1, ID: 1, Model: "Galaxy A51", Display: "Galaxy A51"},
+		{BrandID: 1, ID: 2, Model: "Galaxy A51 5G", Display: "Galaxy A51 5G"},
+		{BrandID: 2, ID: 3, Model: "Redmi 6A", Display: "Redmi 6A"},
+	}}
+	client.indexAt = time.Now()
+
+	for query, want := range map[string]int64{
+		"what are the specs of the redmi 6a?": 3,
+		"specs of galaxy a51 4g?":             1,
+		"specs of galaxy a51 5g?":             2,
+	} {
+		phones, err := client.Search(context.Background(), query, 5)
+		if err != nil || len(phones) == 0 || phones[0].ID != want {
+			t.Errorf("Search(%q) = %+v, %v; want ID %d", query, phones, err, want)
+		}
+	}
+}
+
+func TestFetchFallsBackToBundledProxy(t *testing.T) {
+	origin := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer origin.Close()
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(response, "proxied")
+	}))
+	defer proxyServer.Close()
+
+	client := newClient(nil, origin.URL, origin.Client())
+	client.proxies = newProxyPool(proxyServer.URL)
+	body, err := client.fetch(context.Background(), origin.URL, "text/plain")
+	if err != nil || string(body) != "proxied" {
+		t.Fatalf("fetch through proxy = %q, %v", body, err)
 	}
 }
 

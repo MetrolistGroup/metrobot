@@ -29,6 +29,7 @@ const (
 type Client struct {
 	db         *db.DB
 	httpClient *http.Client
+	proxies    *proxyPool
 	baseURL    string
 	indexMu    sync.Mutex
 	index      *quickSearchIndex
@@ -57,7 +58,9 @@ type SpecItem struct {
 }
 
 func New(database *db.DB) *Client {
-	return newClient(database, baseURL, nil)
+	client := newClient(database, baseURL, nil)
+	client.proxies = newProxyPool(bundledProxies)
+	return client
 }
 
 func newClient(database *db.DB, root string, httpClient *http.Client) *Client {
@@ -95,7 +98,14 @@ func (c *Client) Search(ctx context.Context, query string, limit int) ([]Phone, 
 	if err != nil {
 		return nil, err
 	}
-	return rankSearch(index, query, limit), nil
+	phones := rankSearch(index, query, limit)
+	if len(phones) == 0 {
+		phones = rankSearch(index, simplifySearch(query, false), limit)
+	}
+	if len(phones) == 0 {
+		phones = rankSearch(index, simplifySearch(query, true), limit)
+	}
+	return phones, nil
 }
 
 func (c *Client) Lookup(ctx context.Context, query string) (Phone, error) {
@@ -235,6 +245,12 @@ func (c *Client) fetch(ctx context.Context, target, accept string) ([]byte, erro
 	request.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	request.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/138.0.0.0 Safari/537.36")
 	response, err := c.httpClient.Do(request)
+	if c.proxies != nil && (err != nil || response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusTooManyRequests) {
+		if response != nil {
+			response.Body.Close()
+		}
+		response, err = c.proxies.do(request, c.httpClient)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -276,6 +292,9 @@ type rankedPhone struct {
 
 func rankSearch(index quickSearchIndex, query string, limit int) []Phone {
 	query = normalizeSearch(query)
+	if query == "" {
+		return nil
+	}
 	ranked := make([]rankedPhone, 0)
 	seen := make(map[int64]int)
 	for _, record := range index.Records {
@@ -361,7 +380,44 @@ func normalizeSlug(value string) string {
 }
 
 func normalizeSearch(value string) string {
-	return strings.ToLower(strings.Join(strings.Fields(value), " "))
+	var normalized strings.Builder
+	space := false
+	for _, char := range strings.ToLower(value) {
+		if unicode.IsLetter(char) || unicode.IsDigit(char) {
+			if space && normalized.Len() > 0 {
+				normalized.WriteByte(' ')
+			}
+			normalized.WriteRune(char)
+			space = false
+		} else {
+			space = true
+		}
+	}
+	return normalized.String()
+}
+
+func simplifySearch(query string, drop4G bool) string {
+	stop := map[string]bool{
+		"a": true, "about": true, "an": true, "are": true, "battery": true, "camera": true,
+		"cameras": true, "can": true, "charging": true, "chipset": true, "details": true,
+		"display": true, "do": true, "does": true, "for": true, "garmin": true, "get": true,
+		"give": true, "gsmarena": true, "has": true, "have": true, "how": true, "info": true,
+		"information": true, "is": true, "its": true, "look": true, "me": true, "memory": true,
+		"metrobot": true, "much": true, "network": true, "of": true, "on": true, "os": true,
+		"please": true, "processor": true, "ram": true, "released": true, "s": true, "screen": true,
+		"search": true, "show": true, "size": true, "soc": true, "software": true, "spec": true,
+		"specification": true, "specifications": true, "specs": true, "storage": true, "tell": true,
+		"the": true, "use": true, "uses": true, "using": true, "what": true, "whats": true,
+		"which": true, "with": true,
+	}
+	fields := strings.Fields(normalizeSearch(query))
+	kept := fields[:0]
+	for _, field := range fields {
+		if !stop[field] && (!drop4G || field != "4g") {
+			kept = append(kept, field)
+		}
+	}
+	return strings.Join(kept, " ")
 }
 
 func detailTarget(root, value string) (string, Phone, error) {

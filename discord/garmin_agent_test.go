@@ -16,6 +16,7 @@ import (
 	"github.com/MetrolistGroup/metrobot/config"
 	"github.com/MetrolistGroup/metrobot/db"
 	"github.com/MetrolistGroup/metrobot/firecrawl"
+	"github.com/MetrolistGroup/metrobot/gsmarena"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -303,11 +304,62 @@ func TestRunGarminAIDirectlyExecutesExplicitWebSearch(t *testing.T) {
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "The latest story is sourced."}}, nil
 	})
 	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		ID: "1", GuildID: "guild", ChannelID: "channel", Content: "garmin, look up the latest story from the guardian", Author: &discordgo.User{ID: "user"},
+		ID: "1", GuildID: "guild", ChannelID: "channel", Content: "look up the latest story from the guardian", Author: &discordgo.User{ID: "user"},
 	}}
 	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "look up the latest story from the guardian"}})
 	if err != nil || calls != 1 || result.Answer != "The latest story is sourced." || result.ToolCalls != 1 {
 		t.Fatalf("web run = %#v, calls %d, error %v", result, calls, err)
+	}
+}
+
+func TestRunGarminAIDirectlyFetchesPhoneSpecs(t *testing.T) {
+	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.SetGSMArenaCache("index", []byte(`{"brands":{"1":"Xiaomi"},"records":[{"brand_id":1,"id":3,"model":"Redmi 6A","display":"Redmi 6A"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SetGSMArenaCache("phone:3", []byte(`{"brand":"Xiaomi","id":3,"name":"Xiaomi Redmi 6A","slug":"xiaomi_redmi_6a-9217","url":"https://www.gsmarena.com/xiaomi_redmi_6a-9217.php","specs":[{"name":"Platform","items":[{"name":"Chipset","values":["Mediatek MT6761 Helio A22"]}]}]}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := 0
+	bot := &Bot{garminMemory: memory, gsmarena: gsmarena.New(database)}
+	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		calls++
+		if !request.DisableReasoning || len(request.Tools) != 0 {
+			t.Fatalf("phone synthesis reasoning = %v, tools = %#v", request.DisableReasoning, request.Tools)
+		}
+		last := request.Messages[len(request.Messages)-1]
+		if last.Role != "tool" || !strings.Contains(last.Content, "Xiaomi Redmi 6A") {
+			t.Fatalf("phone synthesis messages = %#v", request.Messages)
+		}
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "The Redmi 6A uses a Helio A22."}}, nil
+	})
+	message := &discordgo.MessageCreate{Message: &discordgo.Message{
+		ID: "1", GuildID: "guild", ChannelID: "channel", Content: "garmin, what are the specs of the redmi 6a?", Author: &discordgo.User{ID: "user"},
+	}}
+	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "what are the specs of the redmi 6a?"}})
+	if err != nil || calls != 1 || result.Answer != "The Redmi 6A uses a Helio A22." || result.ToolCalls != 1 || result.ThinkingDuration != 0 {
+		t.Fatalf("phone run = %#v, calls %d, error %v", result, calls, err)
+	}
+}
+
+func TestGarminGSMArenaQueryPreservesFollowupSubject(t *testing.T) {
+	messages := []cmd.GarminAIMessage{
+		{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{Function: cmd.GarminAIFunctionCall{Name: "get_gsmarena_phone", Arguments: `{"query":"OnePlus 15"}`}}}},
+		{Role: "tool", Content: `{"source":"GSMArena"}`},
+		{Role: "assistant", Content: "The OnePlus 15 has a 7300 mAh battery."},
+		{Role: "user", Content: "what about its cameras?"},
+	}
+	if got := garminGSMArenaQuery(messages); got != "OnePlus 15 what about its cameras?" {
+		t.Fatalf("follow-up query = %q", got)
 	}
 }
 

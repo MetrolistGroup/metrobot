@@ -148,9 +148,9 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 		tools = withoutGarminTools(tools, "do_not_respond")
 	}
 	repositoryToolRequired := explicitlyTriggered && (garminToolAvailable(tools, "search_github_repositories") || garminToolAvailable(tools, "get_github_repository") || garminToolAvailable(tools, "get_github_commits") || garminToolAvailable(tools, "get_github_file"))
-	webToolRequired := explicitlyTriggered && forceWebSearch && garminToolAvailable(tools, "search_web")
+	webToolRequired := !ambient && forceWebSearch && garminToolAvailable(tools, "search_web")
 	mathToolRequired := explicitlyTriggered && garminToolAvailable(tools, "calculate_math")
-	phoneToolRequired := explicitlyTriggered && phoneToolAvailable
+	phoneToolRequired := !ambient && phoneToolAvailable
 	repositoryToolUsed := false
 	webToolUsed := false
 	calculationUsed := false
@@ -172,6 +172,32 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 				}
 			}
 		}
+	}
+	if phoneToolRequired && !repositoryToolRequired && !webToolRequired && !mathToolRequired {
+		call := cmd.GarminAIToolCall{
+			ID:   "required-gsmarena-lookup",
+			Type: "function",
+			Function: cmd.GarminAIFunctionCall{
+				Name:      "get_gsmarena_phone",
+				Arguments: mustJSON(map[string]string{"query": garminGSMArenaQuery(messages)}),
+			},
+		}
+		conversation = append(conversation, cmd.GarminAIMessage{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{call}})
+		result.ToolCalls++
+		visible, output, _, _ := b.executeGarminAIToolIfVisible(ctx, s, m, call)
+		if !visible {
+			result.Silent = true
+			result.Conversation = conversation
+			return result, nil
+		}
+		phoneToolUsed = true
+		conversation = append(conversation, cmd.GarminAIMessage{Role: "tool", ToolCallID: call.ID, Content: truncateGarminAIToolResult(output)})
+		if garminToolResultError(output) != "" {
+			result.Answer = "GSMArena lookup failed just now."
+			result.Conversation = conversation
+			return result, nil
+		}
+		finalOnly = true
 	}
 	if webToolRequired {
 		call := cmd.GarminAIToolCall{
@@ -234,7 +260,9 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *discordgo.Session, m *
 			Messages:         conversation,
 			Tools:            requestTools,
 		})
-		result.ThinkingDuration += time.Since(started)
+		if !finalOnly {
+			result.ThinkingDuration += time.Since(started)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1294,9 +1322,7 @@ func garminGSMArenaRequested(messages []cmd.GarminAIMessage) bool {
 	if strings.Contains(prompt, "gsmarena") {
 		return true
 	}
-	phone := containsAnyGarminPhrase(prompt,
-		"phone", "smartphone", "iphone", "pixel", "galaxy", "samsung", "oneplus", "xiaomi", "redmi", "poco",
-		"oppo", "vivo", "realme", "motorola", "nokia", "xperia", "nothing phone", "honor", "huawei", "tecno", "infinix")
+	phone := garminGSMArenaPhoneNamed(prompt)
 	specs := containsAnyGarminPhrase(prompt,
 		"specs", "specifications", "chipset", "processor", "soc", "battery", "charging", "display", "screen", "camera",
 		"dimensions", "weight", "ram", "storage", "network bands", "release date")
@@ -1313,6 +1339,33 @@ func garminGSMArenaRequested(messages []cmd.GarminAIMessage) bool {
 		}
 	}
 	return false
+}
+
+func garminGSMArenaPhoneNamed(prompt string) bool {
+	return containsAnyGarminPhrase(strings.ToLower(prompt),
+		"phone", "smartphone", "iphone", "pixel", "galaxy", "samsung", "oneplus", "xiaomi", "redmi", "poco",
+		"oppo", "vivo", "realme", "motorola", "nokia", "xperia", "nothing phone", "honor", "huawei", "tecno", "infinix")
+}
+
+func garminGSMArenaQuery(messages []cmd.GarminAIMessage) string {
+	query := garminUserText(messages)
+	if garminGSMArenaPhoneNamed(query) {
+		return truncateRunes(query, 200)
+	}
+	for index := len(messages) - 2; index >= 0; index-- {
+		for _, call := range messages[index].ToolCalls {
+			if call.Function.Name != "get_gsmarena_phone" {
+				continue
+			}
+			var args struct {
+				Query string `json:"query"`
+			}
+			if json.Unmarshal([]byte(call.Function.Arguments), &args) == nil && strings.TrimSpace(args.Query) != "" {
+				return truncateRunes(args.Query+" "+query, 200)
+			}
+		}
+	}
+	return truncateRunes(query, 200)
 }
 
 func garminMathRequested(prompt string) bool {
