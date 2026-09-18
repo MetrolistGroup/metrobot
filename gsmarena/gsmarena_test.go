@@ -3,6 +3,8 @@ package gsmarena
 import (
 	"context"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -121,6 +123,48 @@ func TestFetchFallsBackToBundledProxy(t *testing.T) {
 	body, err := client.fetch(context.Background(), origin.URL, "text/plain")
 	if err != nil || string(body) != "proxied" {
 		t.Fatalf("fetch through proxy = %q, %v", body, err)
+	}
+}
+
+func TestBundledProxiesIncludeEveryGSmbotEntry(t *testing.T) {
+	if got := len(newProxyPool(bundledProxies).urls); got != 799 {
+		t.Fatalf("bundled proxy count = %d, want 799", got)
+	}
+}
+
+func TestDialSOCKS4(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	serverErr := make(chan error, 1)
+	go func() {
+		connection, err := listener.Accept()
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		defer connection.Close()
+		request := make([]byte, 9)
+		if _, err := io.ReadFull(connection, request); err != nil {
+			serverErr <- err
+			return
+		}
+		if request[0] != 4 || request[1] != 1 || request[2] != 1 || request[3] != 187 {
+			serverErr <- fmt.Errorf("unexpected SOCKS4 request %v", request)
+			return
+		}
+		_, err = connection.Write([]byte{0, 0x5a, 0, 0, 0, 0, 0, 0})
+		serverErr <- err
+	}()
+	connection, err := dialSOCKS4(context.Background(), listener.Addr().String(), "127.0.0.1:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection.Close()
+	if err := <-serverErr; err != nil {
+		t.Fatal(err)
 	}
 }
 
