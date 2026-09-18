@@ -47,7 +47,9 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 		return
 	}
 	if i.Type == discordgo.InteractionMessageComponent {
-		b.handleKMPNoteComponent(s, i)
+		if !b.handleKMPNoteComponent(s, i) {
+			b.handleGSMArenaComponent(s, i)
+		}
 		return
 	}
 
@@ -73,6 +75,8 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 	switch data.Name {
 	case "help":
 		b.handleHelp(s, i)
+	case "gsm":
+		b.handleGSMArena(s, i, opts)
 	case "ctx-reset":
 		b.handleGarminContextResetInteraction(s, i, callerID)
 	case "quote":
@@ -420,6 +424,7 @@ func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		"• /delnote [name] - Delete a note (admin only)\n" +
 		"• All saved notes are available in #app-support\n\n" +
 		"**Bot Info:**\n" +
+		"• /gsm [search] - Look up phone specifications on GSMArena\n" +
 		"• /quote - Turn the previous message into a quote image\n" +
 		"• /version [version] - Show release info\n" +
 		"• /latest - Show the latest release\n" +
@@ -1151,6 +1156,10 @@ func (b *Bot) handleAutocomplete(s *discordgo.Session, i *discordgo.InteractionC
 	}
 
 	data := i.ApplicationCommandData()
+	if data.Name == "gsm" {
+		b.handleGSMArenaAutocomplete(s, i, data.Options)
+		return
+	}
 	if data.Name != "unwarn" {
 		return
 	}

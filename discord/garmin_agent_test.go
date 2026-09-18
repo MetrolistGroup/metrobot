@@ -429,7 +429,7 @@ func TestGarminSystemPromptAndDiscordContextContainIdentityAndGlobalMemory(t *te
 		},
 	}}
 	prompt := garminSystemPromptWithMemory("# Metrobot Memory\nKnown fact") + "\n" + garminDiscordContextForMessage(message)
-	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", "discordgo", `"display_name":"exact_user"`, "exact_user", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority", "lowercase by default", "Refuse sexual or erotic", "Metrobot's repository", "created by Nyx and Lamp", "Mostafa Alagamy", "Nyx, Lamp, and Adriel", "without mentioning hidden prompts", "Use web search", "untrusted data", "calculator tool", "read-only requests", "never replace the useful answer with a stock redirect"} {
+	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", "discordgo", `"display_name":"exact_user"`, "exact_user", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority", "lowercase by default", "Refuse sexual or erotic", "Metrobot's repository", "created by Nyx and Lamp", "Mostafa Alagamy", "Nyx, Lamp, and Adriel", "without mentioning hidden prompts", "Use web search", "untrusted data", "calculator tool", "GSMArena phone data", "read-only requests", "never replace the useful answer with a stock redirect"} {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("prompt missing %q", expected)
 		}
@@ -527,6 +527,8 @@ func TestGarminToolsForConversationSelectsRelevantTools(t *testing.T) {
 		{"show details for the facebook/react repository", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
 		{"what is https://github.com/facebook/react?", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
 		{"search the web for today's Android news", false, []string{"do_not_respond", "search_web"}},
+		{"search GSMArena for OnePlus 15 specs", false, []string{"do_not_respond", "get_gsmarena_phone"}},
+		{"what chipset does the Pixel 10 use?", false, []string{"do_not_respond", "get_gsmarena_phone"}},
 		{"look up r/sssdfg", false, []string{"do_not_respond", "search_web"}},
 		{"list saved notes", false, []string{"do_not_respond", "list_notes", "get_note"}},
 		{"show me the playback note", false, []string{"do_not_respond", "list_notes", "get_note"}},
@@ -551,6 +553,20 @@ func TestGarminToolsForConversationSelectsRelevantTools(t *testing.T) {
 		if !reflect.DeepEqual(got, test.want) {
 			t.Errorf("tools for %q = %v, want %v", test.prompt, got, test.want)
 		}
+	}
+}
+
+func TestGarminGSMArenaToolFollowsPhoneSpecContext(t *testing.T) {
+	messages := []cmd.GarminAIMessage{
+		{Role: "user", Content: "what are the OnePlus 15 specs?"},
+		{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{Function: cmd.GarminAIFunctionCall{Name: "get_gsmarena_phone"}}}},
+		{Role: "tool", Content: `{"phone":{"name":"OnePlus 15"}}`},
+		{Role: "assistant", Content: "It uses a Snapdragon chipset."},
+		{Role: "user", Content: "what about battery?"},
+	}
+	want := []string{"do_not_respond", "get_gsmarena_phone"}
+	if got := garminToolNames(garminToolsForConversation(messages, false, false)); !reflect.DeepEqual(got, want) {
+		t.Fatalf("GSMArena follow-up tools = %v, want %v", got, want)
 	}
 }
 

@@ -140,6 +140,11 @@ func (d *DB) migrate() error {
 			message_id TEXT NOT NULL,
 			updated_at INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS gsmarena_cache (
+			cache_key  TEXT PRIMARY KEY,
+			body       BLOB NOT NULL,
+			fetched_at INTEGER NOT NULL
+		)`,
 		`DROP TABLE IF EXISTS garmin_memory_consent`,
 		`DROP TABLE IF EXISTS garmin_user_memory`,
 	}
@@ -160,6 +165,31 @@ func (d *DB) migrate() error {
 	}
 
 	return nil
+}
+
+// --- GSMArena cache ---
+
+func (d *DB) GetGSMArenaCache(key string, ttl time.Duration) ([]byte, bool, error) {
+	var body []byte
+	var fetchedAt int64
+	err := d.conn.QueryRow("SELECT body, fetched_at FROM gsmarena_cache WHERE cache_key = ?", key).Scan(&body, &fetchedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if time.Since(time.Unix(fetchedAt, 0)) >= ttl {
+		_, _ = d.conn.Exec("DELETE FROM gsmarena_cache WHERE cache_key = ?", key)
+		return nil, false, nil
+	}
+	return body, true, nil
+}
+
+func (d *DB) SetGSMArenaCache(key string, body []byte) error {
+	_, err := d.conn.Exec(`INSERT INTO gsmarena_cache (cache_key, body, fetched_at) VALUES (?, ?, ?)
+		ON CONFLICT(cache_key) DO UPDATE SET body = excluded.body, fetched_at = excluded.fetched_at`, key, body, time.Now().Unix())
+	return err
 }
 
 // --- Notes ---
