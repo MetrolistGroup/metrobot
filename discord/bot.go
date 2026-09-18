@@ -11,6 +11,7 @@ import (
 	"github.com/MetrolistGroup/metrobot/db"
 	"github.com/MetrolistGroup/metrobot/firecrawl"
 	gh "github.com/MetrolistGroup/metrobot/github"
+	"github.com/MetrolistGroup/metrobot/gsmarena"
 	"github.com/bwmarrin/discordgo"
 	"go.uber.org/zap"
 )
@@ -34,6 +35,7 @@ type Bot struct {
 	garminMemory         *cmd.GarminMemory
 	garminGitHub         *gh.AssistantClient
 	garminFirecrawl      *firecrawl.Client
+	gsmarena             *gsmarena.Client
 	garminAIMu           sync.Mutex
 	garminAILastUsed     map[string]time.Time
 	garminAIContexts     map[string]garminAIContext
@@ -75,6 +77,7 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		Admin:                admin,
 		Ping:                 ping,
 		Case:                 cases,
+		gsmarena:             gsmarena.New(database),
 		garminProcessor:      cmd.NewGarminProcessor(),
 		garminAILastUsed:     make(map[string]time.Time),
 		garminAIContexts:     make(map[string]garminAIContext),
@@ -166,6 +169,18 @@ func (b *Bot) registerCommands() error {
 		{
 			Name:        "help",
 			Description: "Show available commands",
+		},
+		{
+			Name:        "gsm",
+			Description: "Look up phone specifications on GSMArena",
+			Options: []*discordgo.ApplicationCommandOption{{
+				Type:         discordgo.ApplicationCommandOptionString,
+				Name:         "search",
+				Description:  "Phone name",
+				Required:     true,
+				Autocomplete: true,
+				MaxLength:    100,
+			}},
 		},
 		{
 			Name:        "ctx-reset",
