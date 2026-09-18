@@ -3,3 +3,4 @@ bot.log
 metrobot
 main
 config.json
+.env
