@@ -87,7 +87,6 @@ func (b *Bot) handleGSMArena(s *discordgo.Session, i *discordgo.InteractionCreat
 		_ = editDeferredResponse(s, i, "I couldn't display those phone specs.")
 		return
 	}
-	_ = s.InteractionResponseDelete(i.Interaction)
 }
 
 func (b *Bot) handleGSMArenaComponent(s *discordgo.Session, i *discordgo.InteractionCreate) bool {
