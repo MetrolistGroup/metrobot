@@ -29,6 +29,7 @@ KMP stands for Kotlin Multiplatform.
 * macOS
 * Windows
 * Android
+* iOS
 
 ## When will Metrolist-KMP be released?
 
