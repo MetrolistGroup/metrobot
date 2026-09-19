@@ -79,7 +79,7 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 		b.handleGSMArena(s, i, opts)
 	case "ctx-reset":
 		b.handleGarminContextResetInteraction(s, i, callerID)
-	case "quote":
+	case "quote", "Clip":
 		b.handleQuoteInteraction(s, i)
 	case "notes":
 		b.handleNotes(s, i)

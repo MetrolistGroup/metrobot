@@ -191,6 +191,10 @@ func (b *Bot) registerCommands() error {
 			Description: "Turn the previous message into a quote image",
 		},
 		{
+			Name: "Clip",
+			Type: discordgo.MessageApplicationCommand,
+		},
+		{
 			Name:        "notes",
 			Description: "List all available notes",
 		},

@@ -81,7 +81,7 @@ var (
 
 func isQuoteTrigger(content string) bool {
 	switch strings.ToLower(strings.TrimSpace(content)) {
-	case "ogc", "garmin clip that", "ok garmin video speichern", "garmin quote":
+	case "ogc", "garmin clip that", "garmin clip this", "ok garmin video speichern", "garmin quote":
 		return true
 	default:
 		return false
@@ -123,15 +123,32 @@ func (b *Bot) handleQuoteInteraction(s *discordgo.Session, i *discordgo.Interact
 		return
 	}
 
-	messages, err := s.ChannelMessages(i.ChannelID, 1, i.ID, "", "")
-	if err != nil || len(messages) == 0 {
-		b.Logger.Error("failed to find message for quote", zap.Error(err))
+	interaction := i.ApplicationCommandData()
+	var target *discordgo.Message
+	if interaction.CommandType == discordgo.MessageApplicationCommand {
+		if interaction.Resolved != nil {
+			target = interaction.Resolved.Messages[interaction.TargetID]
+		}
+	} else {
+		messages, err := s.ChannelMessages(i.ChannelID, 1, i.ID, "", "")
+		if err == nil && len(messages) > 0 {
+			target = messages[0]
+		}
+	}
+	if target == nil {
+		b.Logger.Error("failed to find message for quote")
 		_ = editDeferredResponse(s, i, "I couldn't find a message to quote.")
 		return
 	}
-	data, err := b.makeQuoteImage(s, messages[0])
+	if target.GuildID == "" {
+		target.GuildID = i.GuildID
+	}
+	if target.ChannelID == "" {
+		target.ChannelID = i.ChannelID
+	}
+	data, err := b.makeQuoteImage(s, target)
 	if err != nil {
-		b.Logger.Error("failed to make quote", zap.String("message", messages[0].ID), zap.Error(err))
+		b.Logger.Error("failed to make quote", zap.String("message", target.ID), zap.Error(err))
 		_ = editDeferredResponse(s, i, "I couldn't quote that message.")
 		return
 	}

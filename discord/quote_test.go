@@ -5,10 +5,13 @@ import (
 	"image"
 	"image/color"
 	_ "image/png"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
+	"go.uber.org/zap"
 )
 
 func TestQuoteUsesServerDisplayNames(t *testing.T) {
@@ -87,13 +90,56 @@ func TestQuoteMarkdownStylesAndNewlines(t *testing.T) {
 	}
 }
 
+func TestQuoteMessageCommandClipsSelectedMessage(t *testing.T) {
+	deferred, clipped := false, false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/interactions/interaction/token/callback"):
+			deferred = true
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && (strings.Contains(r.URL.Path, "/embed/avatars/") || strings.Contains(r.URL.Path, "/guilds/guild/members/")):
+			w.WriteHeader(http.StatusNotFound)
+		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/webhooks/app/token/messages/@original"):
+			clipped = strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data;")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"quote"}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	session, err := discordgo.New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client = server.Client()
+	session.Client.Transport = rewriteDiscordTransport{base: session.Client.Transport, target: server.URL}
+	bot := &Bot{Logger: zap.NewNop()}
+	bot.handleQuoteInteraction(session, &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{
+		ID: "interaction", AppID: "app", Token: "token", Type: discordgo.InteractionApplicationCommand,
+		GuildID: "guild", ChannelID: "channel",
+		Data: discordgo.ApplicationCommandInteractionData{
+			Name: "Clip", CommandType: discordgo.MessageApplicationCommand, TargetID: "selected",
+			Resolved: &discordgo.ApplicationCommandInteractionDataResolved{Messages: map[string]*discordgo.Message{
+				"selected": {ID: "selected", Content: "selected message", Author: &discordgo.User{ID: "123456789012345678", Username: "author"}},
+			}},
+		},
+	}})
+
+	if !deferred || !clipped {
+		t.Fatalf("message command deferred=%v, clipped selected message=%v", deferred, clipped)
+	}
+}
+
 func TestQuoteTriggersAndImageOutput(t *testing.T) {
-	for _, trigger := range []string{"ogc", " OGC ", "garmin clip that", "ok garmin video speichern", "garmin quote"} {
+	for _, trigger := range []string{"ogc", " OGC ", "garmin clip that", "garmin clip this", "ok garmin video speichern", "garmin quote"} {
 		if !isQuoteTrigger(trigger) {
 			t.Errorf("isQuoteTrigger(%q) = false", trigger)
 		}
 	}
-	for _, other := range []string{"ogc now", "quote", "garmin clip this"} {
+	for _, other := range []string{"ogc now", "quote", "garmin clip these"} {
 		if isQuoteTrigger(other) {
 			t.Errorf("isQuoteTrigger(%q) = true", other)
 		}
