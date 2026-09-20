@@ -47,7 +47,7 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 		return
 	}
 	if i.Type == discordgo.InteractionMessageComponent {
-		if !b.handleKMPNoteComponent(s, i) {
+		if !b.handleHelpComponent(s, i) && !b.handleKMPNoteComponent(s, i) {
 			b.handleGSMArenaComponent(s, i)
 		}
 		return
@@ -412,52 +412,76 @@ func garminDirectSlur(prompt string) bool {
 
 // --- Slash command handlers ---
 
+const helpComponentPrefix = "help:page:"
+
+var helpPages = []struct {
+	title string
+	body  string
+}{
+	{"Notes", "• `/notes` - List all available notes\n• `/note [name]` - Show a specific note\n• `/note [name] [short_desc] [content]` - Add a note (admin only)\n• `/addnote [name] [short_desc] [content]` - Add a new note (admin only)\n• `/editnote [name] [short_desc] [content]` - Edit a note (admin only)\n• `/renamenote [name] [new_name]` - Rename a note (admin only)\n• `/delnote [name]` - Delete a note (admin only)\n• All saved notes are available in #app-support"},
+	{"Bot info", "• `/gsm [search]` - Look up phone specifications on GSMArena\n• `/quote` - Turn the previous message into a quote image\n• `/version [version]` - Show release info\n• `/latest` - Show the latest release\n• `/actions` - Show GitHub Actions build status\n• `/ping` - Check latency to various services"},
+	{"Moderation", "• `/ban [user] [reason]` - Permanently ban a user\n• `/dban [user] [reason]` - Ban and delete messages\n• `/tban [user] [duration] [reason]` - Temporarily ban a user\n• `/sban [user] [reason]` - Softban a user (admin/moderator)\n• `/kick [user] [reason]` - Kick a user (admin/moderator)\n• `/timeout [user] [duration] [reason]` - Timeout a user (admin/moderator)\n• `/mute [user] [duration] [reason]` - Timeout alias (admin/moderator)\n• `/warn [user] [reason]` - Warn a user\n• `/warnings [user]` - Show warnings for a user\n• `/unwarn [user] [id]` - Remove a warning from a user\n• `/dehoist [user] [dry]` - Dehoist a user, or omit user to rerun the server\n• `/approvenick [user]` - Allow a user's next nickname change without dehoisting\n• `/bulkrole [role] [users]` - Add a lower role to multiple users (Manage Roles required)\n• `/purge [count]` - Delete recent messages\n• `/scanreactions` - Scan recent messages for prohibited reactions"},
+	{"Admin and triggers", "**Admin management (permaadmin only)**\n• `/addadmin [user]` - Add a bot admin\n• `/removeadmin [user]` - Remove a bot admin\n\n**Metrobot AI (admin only)**\n• `/memory view|append|replace|clear` - Manage persistent AI memory\n• `/ctx-reset` or `ok garmin ctx-reset` - Forget earlier AI context in this channel\n\n**Prefix commands**\nModeration actions can also use `!action [user] [args]`, such as `!ban @user spam`.\n\n**Note triggers**\nType `.notename` to display a note, such as `.help` or `.rules`."},
+}
+
+func helpComponents(page int) ([]discordgo.MessageComponent, bool) {
+	if page < 0 || page >= len(helpPages) {
+		return nil, false
+	}
+	previous, next := page-1, page+1
+	if previous < 0 {
+		previous = 0
+	}
+	if next >= len(helpPages) {
+		next = len(helpPages) - 1
+	}
+	return []discordgo.MessageComponent{discordgo.Container{Components: []discordgo.MessageComponent{
+		discordgo.TextDisplay{Content: "# Metrobot Help\n## " + helpPages[page].title + "\n" + helpPages[page].body},
+		discordgo.Separator{},
+		discordgo.TextDisplay{Content: fmt.Sprintf("-# Page %d of %d", page+1, len(helpPages))},
+		discordgo.ActionsRow{Components: []discordgo.MessageComponent{
+			discordgo.Button{Label: "Previous", Style: discordgo.SecondaryButton, CustomID: helpComponentPrefix + strconv.Itoa(previous), Disabled: page == 0},
+			discordgo.Button{Label: "Next", Style: discordgo.SecondaryButton, CustomID: helpComponentPrefix + strconv.Itoa(next), Disabled: page == len(helpPages)-1},
+		}},
+	}}}, true
+}
+
 func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	help := "**Available Commands:**\n\n" +
-		"**Notes:**\n" +
-		"• /notes - List all available notes\n" +
-		"• /note [name] - Show a specific note\n" +
-		"• /note [name] [short_desc] [content] - Add a note (admin only)\n" +
-		"• /addnote [name] [short_desc] [content] - Add a new note (admin only)\n" +
-		"• /editnote [name] [short_desc] [content] - Edit a note (admin only)\n" +
-		"• /renamenote [name] [new_name] - Rename a note (admin only)\n" +
-		"• /delnote [name] - Delete a note (admin only)\n" +
-		"• All saved notes are available in #app-support\n\n" +
-		"**Bot Info:**\n" +
-		"• /gsm [search] - Look up phone specifications on GSMArena\n" +
-		"• /quote - Turn the previous message into a quote image\n" +
-		"• /version [version] - Show release info\n" +
-		"• /latest - Show the latest release\n" +
-		"• /actions - Show GitHub Actions build status\n" +
-		"• /ping - Check latency to various services\n\n" +
-		"**Moderation:**\n" +
-		"• /ban [user] [reason] - Permanently ban a user\n" +
-		"• /dban [user] [reason] - Ban and delete messages\n" +
-		"• /tban [user] [duration] [reason] - Temporarily ban a user\n" +
-		"• /sban [user] [reason] - Softban a user (admin/moderator)\n" +
-		"• /kick [user] [reason] - Kick a user (admin/moderator)\n" +
-		"• /timeout [user] [duration] [reason] - Timeout a user (admin/moderator)\n" +
-		"• /mute [user] [duration] [reason] - Timeout alias (admin/moderator)\n" +
-		"• /warn [user] [reason] - Warn a user\n" +
-		"• /warnings [user] - Show warnings for a user\n" +
-		"• /unwarn [user] [id] - Remove a warning from a user\n" +
-		"• /dehoist [user] [dry] - Dehoist a user, or omit user to rerun the server\n" +
-		"• /approvenick [user] - Allow a user's next nickname change without dehoisting\n" +
-		"• /bulkrole [role] [users] - Add a lower role to multiple users (Manage Roles required)\n" +
-		"• /purge [count] - Delete recent messages\n" +
-		"• /scanreactions - Scan recent messages for prohibited reactions\n\n" +
-		"**Admin Management (permaadmin only):**\n" +
-		"• /addadmin [user] - Add a bot admin\n" +
-		"• /removeadmin [user] - Remove a bot admin\n\n" +
-		"**Metrobot AI (admin only):**\n" +
-		"• /memory view|append|replace|clear - Manage persistent AI memory\n" +
-		"• /ctx-reset or `ok garmin ctx-reset` - Forget earlier AI context in this channel\n\n" +
-		"**Prefix Commands:**\n" +
-		"Moderation actions can also be triggered via message prefix: !action [user] [args]\n" +
-		"Example: !ban @user spam\n\n" +
-		"**Notes Trigger:**\n" +
-		"Type .notename to display a note (e.g., .help, .rules)"
-	respondEphemeral(s, i, help)
+	components, _ := helpComponents(0)
+	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Components:      components,
+			Flags:           discordgo.MessageFlagsEphemeral | discordgo.MessageFlagsIsComponentsV2,
+			AllowedMentions: &discordgo.MessageAllowedMentions{},
+		},
+	}); err != nil {
+		b.Logger.Error("failed to show help", zap.Error(err))
+	}
+}
+
+func (b *Bot) handleHelpComponent(s *discordgo.Session, i *discordgo.InteractionCreate) bool {
+	customID := i.MessageComponentData().CustomID
+	if !strings.HasPrefix(customID, helpComponentPrefix) {
+		return false
+	}
+	page, err := strconv.Atoi(strings.TrimPrefix(customID, helpComponentPrefix))
+	components, ok := helpComponents(page)
+	if err != nil || !ok {
+		respondEphemeral(s, i, "That help page is unavailable.")
+		return true
+	}
+	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseUpdateMessage,
+		Data: &discordgo.InteractionResponseData{
+			Components:      components,
+			Flags:           discordgo.MessageFlagsIsComponentsV2,
+			AllowedMentions: &discordgo.MessageAllowedMentions{},
+		},
+	}); err != nil {
+		b.Logger.Error("failed to change help page", zap.Error(err))
+	}
+	return true
 }
 
 func (b *Bot) handleNotes(s *discordgo.Session, i *discordgo.InteractionCreate) {

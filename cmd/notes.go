@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -58,7 +59,15 @@ func (h *NotesHandler) GetNote(name string) (string, error) {
 		return "", fmt.Errorf("note %q not found", name)
 	}
 
-	return normalizeNoteContent(content), nil
+	content = normalizeNoteContent(content)
+	if name == "donate" {
+		lines := strings.Split(content, "\n")
+		rand.Shuffle(len(lines)-1, func(i, j int) {
+			lines[i+1], lines[j+1] = lines[j+1], lines[i+1]
+		})
+		content = strings.Join(lines, "\n")
+	}
+	return content, nil
 }
 
 func (h *NotesHandler) AddNote(name, shortDesc, content string) error {
