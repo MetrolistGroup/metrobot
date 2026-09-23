@@ -1,0 +1,37 @@
+[
+  {
+    "id": 4581,
+    "slug": "oneplus-15",
+    "label": "OnePlus 15",
+    "name": "OnePlus 15",
+    "content_type": "phone"
+  },
+  {
+    "id": 3689,
+    "slug": "amd-ryzen-z1",
+    "label": "AMD Ryzen Z1",
+    "name": "AMD Ryzen Z1",
+    "content_type": "cpu"
+  },
+  {
+    "id": 1121,
+    "slug": "geforce-mx230",
+    "label": "Nvidia GeForce MX230",
+    "name": "GeForce MX230",
+    "content_type": "gpu"
+  },
+  {
+    "id": 4844,
+    "slug": "apple-macbook-neo",
+    "label": "Apple MacBook Neo",
+    "name": "Apple MacBook Neo",
+    "content_type": "laptop"
+  },
+  {
+    "id": 325,
+    "slug": "qualcomm-snapdragon-425",
+    "label": "Qualcomm Snapdragon 425",
+    "name": "Qualcomm Snapdragon 425",
+    "content_type": "soc"
+  }
+]
