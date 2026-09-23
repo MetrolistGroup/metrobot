@@ -12,6 +12,8 @@ import (
 	"github.com/MetrolistGroup/metrobot/firecrawl"
 	gh "github.com/MetrolistGroup/metrobot/github"
 	"github.com/MetrolistGroup/metrobot/gsmarena"
+	"github.com/MetrolistGroup/metrobot/nanoreview"
+	"github.com/MetrolistGroup/metrobot/technicalcity"
 	"github.com/bwmarrin/discordgo"
 	"go.uber.org/zap"
 )
@@ -36,6 +38,8 @@ type Bot struct {
 	garminGitHub         *gh.AssistantClient
 	garminFirecrawl      *firecrawl.Client
 	gsmarena             *gsmarena.Client
+	nanoreview           *nanoreview.Client
+	technicalCity        *technicalcity.Client
 	garminAIMu           sync.Mutex
 	garminAILastUsed     map[string]time.Time
 	garminAIContexts     map[string]garminAIContext
@@ -78,6 +82,8 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		Ping:                 ping,
 		Case:                 cases,
 		gsmarena:             gsmarena.New(database),
+		nanoreview:           nanoreview.New(database),
+		technicalCity:        technicalcity.New(database),
 		garminProcessor:      cmd.NewGarminProcessor(),
 		garminAILastUsed:     make(map[string]time.Time),
 		garminAIContexts:     make(map[string]garminAIContext),
@@ -181,6 +187,16 @@ func (b *Bot) registerCommands() error {
 				Autocomplete: true,
 				MaxLength:    100,
 			}},
+		},
+		{
+			Name:        "nanoreview",
+			Description: "Look up phones, CPUs, GPUs, laptops and SoCs on NanoReview",
+			Options:     []*discordgo.ApplicationCommandOption{{Type: discordgo.ApplicationCommandOptionString, Name: "search", Description: "Product name", Required: true, Autocomplete: true, MaxLength: 100}},
+		},
+		{
+			Name:        "technicalcity",
+			Description: "Look up CPU and GPU specs on Technical City",
+			Options:     []*discordgo.ApplicationCommandOption{{Type: discordgo.ApplicationCommandOptionString, Name: "search", Description: "CPU or GPU name", Required: true, Autocomplete: true, MaxLength: 100}},
 		},
 		{
 			Name:        "ctx-reset",

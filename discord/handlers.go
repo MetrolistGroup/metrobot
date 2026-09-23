@@ -48,7 +48,9 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 	}
 	if i.Type == discordgo.InteractionMessageComponent {
 		if !b.handleHelpComponent(s, i) && !b.handleKMPNoteComponent(s, i) {
-			b.handleGSMArenaComponent(s, i)
+			if !b.handleGSMArenaComponent(s, i) {
+				b.handleHardwareComponent(s, i)
+			}
 		}
 		return
 	}
@@ -77,6 +79,10 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 		b.handleHelp(s, i)
 	case "gsm":
 		b.handleGSMArena(s, i, opts)
+	case "nanoreview":
+		b.handleHardware(s, i, "nano", opts)
+	case "technicalcity":
+		b.handleHardware(s, i, "tc", opts)
 	case "ctx-reset":
 		b.handleGarminContextResetInteraction(s, i, callerID)
 	case "quote", "Clip":
@@ -419,7 +425,7 @@ var helpPages = []struct {
 	body  string
 }{
 	{"Notes", "• `/notes` - List all available notes\n• `/note [name]` - Show a specific note\n• `/note [name] [short_desc] [content]` - Add a note (admin only)\n• `/addnote [name] [short_desc] [content]` - Add a new note (admin only)\n• `/editnote [name] [short_desc] [content]` - Edit a note (admin only)\n• `/renamenote [name] [new_name]` - Rename a note (admin only)\n• `/delnote [name]` - Delete a note (admin only)\n• All saved notes are available in #app-support"},
-	{"Bot info", "• `/gsm [search]` - Look up phone specifications on GSMArena\n• `/quote` - Turn the previous message into a quote image\n• `/version [version]` - Show release info\n• `/latest` - Show the latest release\n• `/actions` - Show GitHub Actions build status\n• `/ping` - Check latency to various services"},
+	{"Bot info", "• `/gsm [search]` - Look up phone specifications on GSMArena\n• `/nanoreview [search]` - Look up devices on NanoReview\n• `/technicalcity [search]` - Look up CPUs and GPUs on Technical City\n• `/quote` - Turn the previous message into a quote image\n• `/version [version]` - Show release info\n• `/latest` - Show the latest release\n• `/actions` - Show GitHub Actions build status\n• `/ping` - Check latency to various services"},
 	{"Moderation", "• `/ban [user] [reason]` - Permanently ban a user\n• `/dban [user] [reason]` - Ban and delete messages\n• `/tban [user] [duration] [reason]` - Temporarily ban a user\n• `/sban [user] [reason]` - Softban a user (admin/moderator)\n• `/kick [user] [reason]` - Kick a user (admin/moderator)\n• `/timeout [user] [duration] [reason]` - Timeout a user (admin/moderator)\n• `/mute [user] [duration] [reason]` - Timeout alias (admin/moderator)\n• `/warn [user] [reason]` - Warn a user\n• `/warnings [user]` - Show warnings for a user\n• `/unwarn [user] [id]` - Remove a warning from a user\n• `/dehoist [user] [dry]` - Dehoist a user, or omit user to rerun the server\n• `/approvenick [user]` - Allow a user's next nickname change without dehoisting\n• `/bulkrole [role] [users]` - Add a lower role to multiple users (Manage Roles required)\n• `/purge [count]` - Delete recent messages\n• `/scanreactions` - Scan recent messages for prohibited reactions"},
 	{"Admin and triggers", "**Admin management (permaadmin only)**\n• `/addadmin [user]` - Add a bot admin\n• `/removeadmin [user]` - Remove a bot admin\n\n**Metrobot AI (admin only)**\n• `/memory view|append|replace|clear` - Manage persistent AI memory\n• `/ctx-reset` or `ok garmin ctx-reset` - Forget earlier AI context in this channel\n\n**Prefix commands**\nModeration actions can also use `!action [user] [args]`, such as `!ban @user spam`.\n\n**Note triggers**\nType `.notename` to display a note, such as `.help` or `.rules`."},
 }
@@ -1182,6 +1188,14 @@ func (b *Bot) handleAutocomplete(s *discordgo.Session, i *discordgo.InteractionC
 	data := i.ApplicationCommandData()
 	if data.Name == "gsm" {
 		b.handleGSMArenaAutocomplete(s, i, data.Options)
+		return
+	}
+	if data.Name == "nanoreview" || data.Name == "technicalcity" {
+		source := "nano"
+		if data.Name == "technicalcity" {
+			source = "tc"
+		}
+		b.handleHardwareAutocomplete(s, i, source, data.Options)
 		return
 	}
 	if data.Name != "unwarn" {
