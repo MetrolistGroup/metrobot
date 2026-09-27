@@ -3,6 +3,7 @@ package cmd
 import "strings"
 
 var garminAITriggers = []string{"garmin,", "garmin ", "metrobot,", "metro,"}
+var garminModerationTriggers = []string{"ok garmin", "france modération"}
 
 // ExtractGarminPrompt returns the prompt from a supported case-insensitive text trigger.
 func ExtractGarminPrompt(content string) (string, bool) {
@@ -38,21 +39,29 @@ func NewGarminProcessor() *GarminProcessor {
 	}
 }
 
-// ProcessTrigger checks if a message starts with "Ok Garmin" and converts it to command format
+// ProcessTrigger checks if a message starts with a moderation prefix and converts it to command format
 func (gp *GarminProcessor) ProcessTrigger(content string) string {
-	// Case insensitive check for "ok garmin" at the start
+	// Case insensitive check for prefix at the start
 	lower := strings.ToLower(content)
-	if !strings.HasPrefix(lower, "ok garmin") {
+
+	prefix := ""
+
+	for _, trigger := range garminModerationTriggers {
+		if strings.HasPrefix(lower, trigger) {
+			prefix = trigger
+		}
+	}
+	if prefix == "" {
 		return content
 	}
 
-	// Find where "ok garmin" ends
-	garminLen := len("ok garmin")
+	// Find where prefix ends
+	garminLen := len(prefix)
 	if len(content) <= garminLen {
 		return content
 	}
 
-	// Skip past "ok garmin"
+	// Skip past prefix
 	remainder := content[garminLen:]
 
 	// Skip optional comma and whitespace
