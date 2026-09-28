@@ -221,8 +221,12 @@ func TestGarminKillRequiresAuthorizedReplyAndUsesUserTimeout(t *testing.T) {
 	}
 
 	bot := &Bot{Config: &config.Config{DiscordGuildID: "guild"}, Logger: zap.NewNop()}
-	message := func(author string, reply bool) *discordgo.MessageCreate {
-		m := &discordgo.Message{ID: "command", GuildID: "guild", ChannelID: "channel", Content: "ok garmin kill", Author: &discordgo.User{ID: author}}
+	message := func(author string, reply bool, french bool) *discordgo.MessageCreate {
+		content := "ok garmin kill"
+		if french {
+			content = "France Modération guillotine"
+		}
+		m := &discordgo.Message{ID: "command", GuildID: "guild", ChannelID: "channel", Content: content, Author: &discordgo.User{ID: author}}
 
 		switch author {
 		case "moderator":
@@ -236,7 +240,7 @@ func TestGarminKillRequiresAuthorizedReplyAndUsesUserTimeout(t *testing.T) {
 		return &discordgo.MessageCreate{Message: m}
 	}
 
-	bot.onMessageCreate(session, message("staff", true))
+	bot.onMessageCreate(session, message("staff", true, false))
 	if len(requests) != 3 {
 		t.Fatalf("staff reply made %d requests, want timeout, deletion, and response: %v", len(requests), requests)
 	}
@@ -244,7 +248,7 @@ func TestGarminKillRequiresAuthorizedReplyAndUsesUserTimeout(t *testing.T) {
 		t.Errorf("staff timeout duration = %s, want about 30s", remaining)
 	}
 
-	bot.onMessageCreate(session, message("coolpeople", true))
+	bot.onMessageCreate(session, message("coolpeople", true, false))
 	if len(requests) != 6 {
 		t.Fatalf("limited user reply made %d total requests, want 6: %v", len(requests), requests)
 	}
@@ -252,7 +256,7 @@ func TestGarminKillRequiresAuthorizedReplyAndUsesUserTimeout(t *testing.T) {
 		t.Errorf("limited user timeout duration = %s, want about 5s", remaining)
 	}
 
-	bot.onMessageCreate(session, message("moderator", true))
+	bot.onMessageCreate(session, message("moderator", true, false))
 	if len(requests) != 9 {
 		t.Fatalf("moderator reply made %d total requests, want 9: %v", len(requests), requests)
 	}
@@ -260,10 +264,27 @@ func TestGarminKillRequiresAuthorizedReplyAndUsesUserTimeout(t *testing.T) {
 		t.Errorf("moderator timeout duration = %s, want about 30s", remaining)
 	}
 
-	bot.onMessageCreate(session, message("user", true))
-	bot.onMessageCreate(session, message("staff", false))
+	bot.onMessageCreate(session, message("user", true, false))
+	bot.onMessageCreate(session, message("staff", false, false))
 	if len(requests) != 9 {
 		t.Fatalf("unauthorized or non-reply command made requests: %v", requests[9:])
+	}
+	// tests the french variation "France Modération guillotine" with staff permissions
+	// non-reply version
+	bot.onMessageCreate(session, message("staff", false, true))
+	if len(requests) != 9 {
+		t.Fatalf("unauthorized or non-reply command made requests: %v", requests[9:])
+	}
+	if remaining := timeouts[0]; remaining < 25*time.Second || remaining > 35*time.Second {
+		t.Errorf("staff timeout duration = %s, want about 30s", remaining)
+	}
+	// reply version
+	bot.onMessageCreate(session, message("staff", true, true))
+	if len(requests) != 12 {
+		t.Fatalf("unauthorized or non-reply command made requests: %v", requests[12:])
+	}
+	if remaining := timeouts[0]; remaining < 25*time.Second || remaining > 35*time.Second {
+		t.Errorf("staff timeout duration = %s, want about 30s", remaining)
 	}
 }
 

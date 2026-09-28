@@ -10,6 +10,10 @@ func TestProcessTriggerSupportsModeratorCommands(t *testing.T) {
 			t.Errorf("ProcessTrigger(%q) = %q", input, got)
 		}
 	}
+	input := "france modération mute @someone 1m reason"
+	if got := processor.ProcessTrigger(input); got != "!mute @someone 1m reason" {
+		t.Errorf("ProcessTrigger(%q) = %q", input, got)
+	}
 }
 
 func TestExtractGarminPrompt(t *testing.T) {
