@@ -199,6 +199,21 @@ func (b *Bot) registerCommands() error {
 			Options:     []*discordgo.ApplicationCommandOption{{Type: discordgo.ApplicationCommandOptionString, Name: "search", Description: "CPU or GPU name", Required: true, Autocomplete: true, MaxLength: 100}},
 		},
 		{
+			Name:        "gsmcompare",
+			Description: "Compare two phones on GSMArena",
+			Options:     compareOptions("Phone name"),
+		},
+		{
+			Name:        "nanoreviewcompare",
+			Description: "Compare two phones, CPUs, GPUs or SoCs on NanoReview",
+			Options:     compareOptions("Product name"),
+		},
+		{
+			Name:        "technicalcitycompare",
+			Description: "Compare two CPUs or GPUs on Technical City",
+			Options:     compareOptions("CPU or GPU name"),
+		},
+		{
 			Name:        "ctx-reset",
 			Description: "Forget Garmin context before this point in this channel (admin only)",
 		},

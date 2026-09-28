@@ -76,7 +76,7 @@ func hardwareSource(source string) string {
 
 func (b *Bot) handleHardwareAutocomplete(s *discordgo.Session, i *discordgo.InteractionCreate, source string, options []*discordgo.ApplicationCommandInteractionDataOption) {
 	for _, option := range options {
-		if option.Name != "search" || !option.Focused || len([]rune(strings.TrimSpace(option.StringValue()))) < 2 {
+		if (option.Name != "search" && option.Name != "first" && option.Name != "second") || !option.Focused || len([]rune(strings.TrimSpace(option.StringValue()))) < 2 {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -88,6 +88,9 @@ func (b *Bot) handleHardwareAutocomplete(s *discordgo.Session, i *discordgo.Inte
 		}
 		choices := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(devices))
 		for _, d := range devices {
+			if (strings.HasPrefix(i.ApplicationCommandData().Name, "nanoreviewcompare") && strings.HasPrefix(d.Slug, "laptop/")) || len(d.Slug) > 100 {
+				continue
+			}
 			choices = append(choices, &discordgo.ApplicationCommandOptionChoice{Name: truncateRunes(d.Name, 100), Value: d.Slug})
 		}
 		respondAutocomplete(s, i, choices)

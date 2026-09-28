@@ -32,7 +32,7 @@ var gsmarenaPages = []struct {
 func (b *Bot) handleGSMArenaAutocomplete(s *discordgo.Session, i *discordgo.InteractionCreate, options []*discordgo.ApplicationCommandInteractionDataOption) {
 	query := ""
 	for _, option := range options {
-		if option.Name == "search" && option.Focused {
+		if (option.Name == "search" || option.Name == "first" || option.Name == "second") && option.Focused {
 			query = strings.TrimSpace(option.StringValue())
 			break
 		}
