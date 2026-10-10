@@ -8,15 +8,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo/bot"
+	"github.com/disgoorg/disgo/discord"
+	"github.com/disgoorg/disgo/events"
 	"go.uber.org/zap"
 )
 
-func compareOptions(description string) []*discordgo.ApplicationCommandOption {
-	return []*discordgo.ApplicationCommandOption{
-		{Type: discordgo.ApplicationCommandOptionString, Name: "first", Description: "First " + description, Required: true, Autocomplete: true, MaxLength: 100},
-		{Type: discordgo.ApplicationCommandOptionString, Name: "second", Description: "Second " + description, Required: true, Autocomplete: true, MaxLength: 100},
-	}
+func compareOptions(description string) []discord.ApplicationCommandOption {
+	return []discord.ApplicationCommandOption{discord.ApplicationCommandOptionString{Name: "first", Description: "First " + description, Required: true, Autocomplete: true, MaxLength: ptr(100)}, discord.ApplicationCommandOptionString{Name: "second", Description: "Second " + description, Required: true, Autocomplete: true, MaxLength: ptr(100)}}
 }
 
 func (b *Bot) compareLookup(ctx context.Context, source, query string) (hardwareDevice, error) {
@@ -35,7 +34,7 @@ func compareSource(source string) string {
 	return hardwareSource(source)
 }
 
-func (b *Bot) handleCompare(s *discordgo.Session, i *discordgo.InteractionCreate, source string, options map[string]*discordgo.ApplicationCommandInteractionDataOption) {
+func (b *Bot) handleCompare(s *bot.Client, i *events.ApplicationCommandInteractionCreate, source string, options map[string]discord.SlashCommandOption) {
 	if err := deferResponse(s, i, false); err != nil {
 		b.Logger.Error("failed to defer comparison", zap.Error(err))
 		return
@@ -56,8 +55,8 @@ func (b *Bot) handleCompare(s *discordgo.Session, i *discordgo.InteractionCreate
 				return
 			}
 			components := compareComponents(source, first, second, "0")
-			if _, err := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-				Components: components, Flags: discordgo.MessageFlagsIsComponentsV2, AllowedMentions: &discordgo.MessageAllowedMentions{},
+			if _, err := s.Rest.CreateFollowupMessage(i.ApplicationID(), i.Token(), discord.MessageCreate{
+				Components: components, Flags: discord.MessageFlagIsComponentsV2, AllowedMentions: &discord.AllowedMentions{},
 			}); err != nil {
 				b.Logger.Error("failed to send comparison", zap.Error(err))
 				_ = editDeferredResponse(s, i, "I couldn't display that comparison.")
@@ -69,17 +68,17 @@ func (b *Bot) handleCompare(s *discordgo.Session, i *discordgo.InteractionCreate
 	_ = editDeferredResponse(s, i, "I couldn't find both devices on "+compareSource(source)+".")
 }
 
-func (b *Bot) handleCompareComponent(s *discordgo.Session, i *discordgo.InteractionCreate) bool {
-	parts := strings.Split(i.MessageComponentData().CustomID, ":")
+func (b *Bot) handleCompareComponent(s *bot.Client, i *events.ComponentInteractionCreate) bool {
+	parts := strings.Split(i.Data.CustomID(), ":")
 	if len(parts) != 4 || parts[0] != "cmp" || (parts[1] != "gsm" && parts[1] != "nano" && parts[1] != "tc") {
 		return false
 	}
-	values := i.MessageComponentData().Values
+	values := i.StringSelectMenuInteractionData().Values
 	if len(values) != 1 {
 		respondEphemeral(s, i, "That comparison is unavailable.")
 		return true
 	}
-	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{Type: discordgo.InteractionResponseDeferredMessageUpdate}); err != nil {
+	if err := s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{Type: discord.InteractionResponseTypeDeferredUpdateMessage}); err != nil {
 		b.Logger.Error("failed to defer comparison navigation", zap.Error(err))
 		return true
 	}
@@ -91,14 +90,14 @@ func (b *Bot) handleCompareComponent(s *discordgo.Session, i *discordgo.Interact
 		second, err = b.compareLookup(ctx, parts[1], parts[3])
 		if err == nil {
 			components := compareComponents(parts[1], first, second, values[0])
-			if _, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Components: &components, AllowedMentions: &discordgo.MessageAllowedMentions{}}); err != nil {
+			if _, err := s.Rest.UpdateInteractionResponse(i.ApplicationID(), i.Token(), discord.MessageUpdate{Components: &components, AllowedMentions: &discord.AllowedMentions{}}); err != nil {
 				b.Logger.Error("failed to update comparison", zap.Error(err))
 			}
 			return true
 		}
 	}
 	b.Logger.Warn("comparison navigation failed", zap.Error(err))
-	_, _ = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{Content: "That comparison is unavailable.", Flags: discordgo.MessageFlagsEphemeral})
+	_, _ = s.Rest.CreateFollowupMessage(i.ApplicationID(), i.Token(), discord.MessageCreate{Content: "That comparison is unavailable.", Flags: discord.MessageFlagEphemeral})
 	return true
 }
 
@@ -131,7 +130,7 @@ func compareRows(first, second hardwareDevice) []compareRow {
 	return rows
 }
 
-func compareComponents(source string, first, second hardwareDevice, active string) []discordgo.MessageComponent {
+func compareComponents(source string, first, second hardwareDevice, active string) []discord.LayoutComponent {
 	rows := compareRows(first, second)
 	pages := []string{"Overview"}
 	for _, row := range rows {
@@ -185,25 +184,25 @@ func compareComponents(source string, first, second hardwareDevice, active strin
 	if len(lines) > 0 {
 		body = truncateRunes(strings.Join(lines, "\n\n"), 3200)
 	}
-	components := []discordgo.MessageComponent{
-		discordgo.TextDisplay{Content: "# " + truncateRunes(first.Name+" vs "+second.Name, 170) + "\n-# Comparison from " + compareSource(source)},
-		discordgo.TextDisplay{Content: "A: " + truncateRunes(first.Name, 150) + "\nB: " + truncateRunes(second.Name, 150)},
-		discordgo.Separator{}, discordgo.TextDisplay{Content: body},
+	components := []discord.ContainerSubComponent{
+		discord.TextDisplayComponent{Content: "# " + truncateRunes(first.Name+" vs "+second.Name, 170) + "\n-# Comparison from " + compareSource(source)},
+		discord.TextDisplayComponent{Content: "A: " + truncateRunes(first.Name, 150) + "\nB: " + truncateRunes(second.Name, 150)},
+		discord.SeparatorComponent{}, discord.TextDisplayComponent{Content: body},
 	}
 	customID := "cmp:" + source + ":" + first.Slug + ":" + second.Slug
 	// ponytail: long slug pairs cannot fit Discord's 100-character custom ID; add persisted comparison IDs if this becomes common.
 	if len(pages) > 1 && len(customID) <= 100 {
-		options := make([]discordgo.SelectMenuOption, len(pages))
+		options := make([]discord.StringSelectMenuOption, len(pages))
 		for n, page := range pages {
-			options[n] = discordgo.SelectMenuOption{Label: truncateRunes(page, 100), Value: strconv.Itoa(n), Default: n == index}
+			options[n] = discord.StringSelectMenuOption{Label: truncateRunes(page, 100), Value: strconv.Itoa(n), Default: n == index}
 		}
-		components = append(components, discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.SelectMenu{
+		components = append(components, discord.ActionRowComponent{Components: []discord.InteractiveComponent{discord.StringSelectMenuComponent{
 			CustomID: customID, Placeholder: "Choose a specification category", MaxValues: 1, Options: options,
 		}}})
 	}
-	components = append(components, discordgo.ActionsRow{Components: []discordgo.MessageComponent{
-		discordgo.Button{Label: "View A", Style: discordgo.LinkButton, URL: first.URL},
-		discordgo.Button{Label: "View B", Style: discordgo.LinkButton, URL: second.URL},
+	components = append(components, discord.ActionRowComponent{Components: []discord.InteractiveComponent{
+		discord.ButtonComponent{Label: "View A", Style: discord.ButtonStyleLink, URL: first.URL},
+		discord.ButtonComponent{Label: "View B", Style: discord.ButtonStyleLink, URL: second.URL},
 	}})
-	return []discordgo.MessageComponent{discordgo.Container{Components: components}}
+	return []discord.LayoutComponent{discord.ContainerComponent{Components: components}}
 }

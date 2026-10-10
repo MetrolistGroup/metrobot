@@ -14,12 +14,19 @@ import (
 	"github.com/MetrolistGroup/metrobot/gsmarena"
 	"github.com/MetrolistGroup/metrobot/nanoreview"
 	"github.com/MetrolistGroup/metrobot/technicalcity"
-	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo"
+	"github.com/disgoorg/disgo/bot"
+	"github.com/disgoorg/disgo/cache"
+	"github.com/disgoorg/disgo/discord"
+	"github.com/disgoorg/disgo/gateway"
+	"github.com/disgoorg/disgo/rest"
+	"github.com/disgoorg/omit"
+	"github.com/disgoorg/snowflake/v2"
 	"go.uber.org/zap"
 )
 
 type Bot struct {
-	Session    *discordgo.Session
+	Client     *bot.Client
 	Config     *config.Config
 	DB         *db.DB
 	Logger     *zap.Logger
@@ -53,6 +60,11 @@ type Bot struct {
 	messageLogCache      map[string][]cachedLogMessage
 	youtubeWebhookMu     sync.Mutex
 	TimedBanRestorer     func()
+	ready                chan struct{}
+	readyOnce            sync.Once
+	stopOnce             sync.Once
+	lifecycle            context.Context
+	cancelLifecycle      context.CancelFunc
 }
 
 func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
@@ -60,16 +72,25 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 	moderation *cmd.ModerationHandler, warn *cmd.WarnHandler, admin *cmd.AdminHandler, ping *cmd.PingHandler,
 	cases *cmd.CaseHandler,
 ) (*Bot, error) {
-	session, err := discordgo.New("Bot " + cfg.DiscordToken)
-	if err != nil {
-		return nil, fmt.Errorf("creating discord session: %w", err)
+	if snowflakeID(cfg.DiscordGuildID) == 0 {
+		return nil, fmt.Errorf("invalid Discord guild ID")
 	}
-
-	session.Identify.Intents = discordgo.IntentsGuilds | discordgo.IntentsGuildMessages | discordgo.IntentsGuildMembers | discordgo.IntentsGuildBans | discordgo.IntentsGuildMessageReactions | discordgo.IntentsMessageContent
-	session.State.MaxMessageCount = messageLogCachePerChannel
+	session, err := disgo.New(cfg.DiscordToken,
+		bot.WithGatewayConfigOpts(
+			gateway.WithIntents(gateway.IntentGuilds|gateway.IntentGuildMessages|gateway.IntentGuildMembers|gateway.IntentGuildModeration|gateway.IntentGuildMessageReactions|gateway.IntentMessageContent),
+			gateway.WithEnableRawEvents(true),
+		),
+		// Message content is kept only in the bounded, filtered audit cache.
+		bot.WithCacheConfigOpts(cache.WithCaches(cache.FlagGuilds|cache.FlagChannels|cache.FlagRoles|cache.FlagMembers|cache.FlagEmojis)),
+		bot.WithMemberChunkingFilter(bot.MemberChunkingFilterAll),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("creating Discord client: %w", err)
+	}
+	lifecycle, cancelLifecycle := context.WithCancel(context.Background())
 
 	bot := &Bot{
-		Session:              session,
+		Client:               session,
 		Config:               cfg,
 		DB:                   database,
 		Logger:               logger.With(zap.String("platform", "discord")),
@@ -92,6 +113,9 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		garminAIRequests:     make(map[string]map[string]context.CancelFunc),
 		garminAIAmbientBusy:  make(map[string]uint64),
 		messageLogCache:      make(map[string][]cachedLogMessage),
+		ready:                make(chan struct{}),
+		lifecycle:            lifecycle,
+		cancelLifecycle:      cancelLifecycle,
 	}
 	if len(cfg.OpenRouterAPIKeys) > 0 {
 		bot.garminAI = cmd.NewOpenRouterClient(cfg.OpenRouterAPIKeys, cfg.OpenRouterModel)
@@ -106,6 +130,8 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 			memory, err = cmd.NewGarminMemory("/data/" + cmd.GarminMemoryFile)
 		}
 		if err != nil {
+			cancelLifecycle()
+			session.Close(context.Background())
 			return nil, fmt.Errorf("initializing Metrobot memory: %w", err)
 		}
 		bot.garminMemory = memory
@@ -122,595 +148,447 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		cases.CaseLogger = caseLogger
 	}
 
-	session.AddHandler(bot.onInteractionCreate)
-	session.AddHandler(bot.onMessageCreate)
-	session.AddHandler(bot.onGuildTagEvent)
-	session.AddHandler(bot.onGuildMemberAdd)
-	session.AddHandler(bot.onGuildMemberUpdate)
-	session.AddHandler(bot.onGuildMemberUpdateLog)
-	session.AddHandler(bot.onGuildMemberRemoveLog)
-	session.AddHandler(bot.onGuildBanAddLog)
-	session.AddHandler(bot.onGuildBanRemoveLog)
-	session.AddHandler(bot.onGuildRoleCreateLog)
-	session.AddHandler(bot.onGuildRoleUpdateLog)
-	session.AddHandler(bot.onGuildRoleDeleteLog)
-	session.AddHandler(bot.onChannelUpdateLog)
-	session.AddHandler(bot.onReactionAddLog)
-	session.AddHandler(bot.onReactionRemoveLog)
-	session.AddHandler(bot.handleReactionAdd)
-	session.AddHandler(bot.handleReactionRemove)
-	session.AddHandler(bot.onMessageUpdateLog)
-	session.AddHandler(bot.onMessageDeleteLog)
-	session.AddHandler(bot.onMessageDeleteBulkLog)
-	session.AddHandler(bot.handleMessageDelete)
+	bot.installListeners()
 
 	return bot, nil
 }
 
 func (b *Bot) Start() error {
-	if err := b.Session.Open(); err != nil {
-		return fmt.Errorf("opening discord connection: %w", err)
+	ctx, cancel := context.WithTimeout(b.lifecycle, 30*time.Second)
+	defer cancel()
+	if err := b.Client.OpenGateway(ctx); err != nil {
+		b.Stop()
+		return fmt.Errorf("opening Discord connection: %w", err)
 	}
-
-	b.Logger.Info("discord bot connected",
-		zap.String("user", b.Session.State.User.Username),
-		zap.String("guild", b.Config.DiscordGuildID),
-	)
-
+	select {
+	case <-b.ready:
+	case <-ctx.Done():
+		b.Stop()
+		return fmt.Errorf("waiting for Discord READY: %w", ctx.Err())
+	}
+	user, _ := b.Client.Caches.SelfUser()
+	b.Logger.Info("discord bot connected", zap.String("user", user.Username), zap.String("guild", b.Config.DiscordGuildID))
 	if err := b.registerCommands(); err != nil {
+		b.Stop()
 		return fmt.Errorf("registering slash commands: %w", err)
 	}
-
 	return nil
 }
 
 func (b *Bot) Stop() {
-	b.Logger.Info("shutting down discord bot")
-	b.Session.Close()
+	b.stopOnce.Do(func() {
+		b.Logger.Info("shutting down discord bot")
+		b.cancelLifecycle()
+		b.garminAIMu.Lock()
+		for _, requests := range b.garminAIRequests {
+			for _, cancel := range requests {
+				cancel()
+			}
+		}
+		b.garminAIMu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		b.Client.Close(ctx)
+	})
 }
 
 func (b *Bot) registerCommands() error {
-	manageRolesPermission := int64(discordgo.PermissionManageRoles)
-	commands := []*discordgo.ApplicationCommand{
-		{
-			Name:        "help",
-			Description: "Show available commands",
+	manageRolesPermission := discord.PermissionManageRoles
+	commands := []discord.ApplicationCommandCreate{discord.SlashCommandCreate{
+		Name:        "help",
+		Description: "Show available commands",
+	}, discord.SlashCommandCreate{
+		Name:        "gsm",
+		Description: "Look up phone specifications on GSMArena",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionString{
+			Name:         "search",
+			Description:  "Phone name",
+			Required:     true,
+			Autocomplete: true,
+			MaxLength:    ptr(100),
+		}},
+	}, discord.SlashCommandCreate{
+		Name:        "nanoreview",
+		Description: "Look up phones, CPUs, GPUs, laptops and SoCs on NanoReview",
+		Options:     []discord.ApplicationCommandOption{discord.ApplicationCommandOptionString{Name: "search", Description: "Product name", Required: true, Autocomplete: true, MaxLength: ptr(100)}},
+	}, discord.SlashCommandCreate{
+		Name:        "technicalcity",
+		Description: "Look up CPU and GPU specs on Technical City",
+		Options:     []discord.ApplicationCommandOption{discord.ApplicationCommandOptionString{Name: "search", Description: "CPU or GPU name", Required: true, Autocomplete: true, MaxLength: ptr(100)}},
+	}, discord.SlashCommandCreate{
+		Name:        "gsmcompare",
+		Description: "Compare two phones on GSMArena",
+		Options:     compareOptions("Phone name"),
+	}, discord.SlashCommandCreate{
+		Name:        "nanoreviewcompare",
+		Description: "Compare two phones, CPUs, GPUs or SoCs on NanoReview",
+		Options:     compareOptions("Product name"),
+	}, discord.SlashCommandCreate{
+		Name:        "technicalcitycompare",
+		Description: "Compare two CPUs or GPUs on Technical City",
+		Options:     compareOptions("CPU or GPU name"),
+	}, discord.SlashCommandCreate{
+		Name:        "ctx-reset",
+		Description: "Forget Garmin context before this point in this channel (admin only)",
+	}, discord.SlashCommandCreate{
+		Name:        "quote",
+		Description: "Turn the previous message into a quote image",
+	}, discord.MessageCommandCreate{
+		Name: "Clip",
+	}, discord.SlashCommandCreate{
+		Name:        "notes",
+		Description: "List all available notes",
+	}, discord.SlashCommandCreate{
+		Name:        "note",
+		Description: "Show a note, or add one with a description and content",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionString{
+			Name:        "name",
+			Description: "Note name without spaces",
+			Required:    true,
+		}, discord.ApplicationCommandOptionString{
+			Name:        "short_desc",
+			Description: "Short description (required when adding)",
+			Required:    false,
+			MaxLength:   ptr(160),
+		}, discord.ApplicationCommandOptionString{
+			Name:        "content",
+			Description: "Multi-line content (required when adding)",
+			Required:    false,
+		}, discord.ApplicationCommandOptionBool{
+			Name:        "stay",
+			Description: "Keep message permanently (admin only)",
+			Required:    false,
 		},
-		{
-			Name:        "gsm",
-			Description: "Look up phone specifications on GSMArena",
-			Options: []*discordgo.ApplicationCommandOption{{
-				Type:         discordgo.ApplicationCommandOptionString,
-				Name:         "search",
-				Description:  "Phone name",
-				Required:     true,
-				Autocomplete: true,
-				MaxLength:    100,
-			}},
 		},
-		{
-			Name:        "nanoreview",
-			Description: "Look up phones, CPUs, GPUs, laptops and SoCs on NanoReview",
-			Options:     []*discordgo.ApplicationCommandOption{{Type: discordgo.ApplicationCommandOptionString, Name: "search", Description: "Product name", Required: true, Autocomplete: true, MaxLength: 100}},
+	}, discord.SlashCommandCreate{
+		Name:        "addnote",
+		Description: "Add a new note (admin only)",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionString{
+			Name:        "name",
+			Description: "Note name",
+			Required:    true,
+		}, discord.ApplicationCommandOptionString{
+			Name:        "short_desc",
+			Description: "Short description",
+			Required:    true,
+			MaxLength:   ptr(160),
+		}, discord.ApplicationCommandOptionString{
+			Name:        "content",
+			Description: "Multi-line note content",
+			Required:    true,
 		},
-		{
-			Name:        "technicalcity",
-			Description: "Look up CPU and GPU specs on Technical City",
-			Options:     []*discordgo.ApplicationCommandOption{{Type: discordgo.ApplicationCommandOptionString, Name: "search", Description: "CPU or GPU name", Required: true, Autocomplete: true, MaxLength: 100}},
 		},
-		{
-			Name:        "gsmcompare",
-			Description: "Compare two phones on GSMArena",
-			Options:     compareOptions("Phone name"),
+	}, discord.SlashCommandCreate{
+		Name:        "editnote",
+		Description: "Edit an existing note (admin only)",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionString{
+			Name:        "name",
+			Description: "Note name",
+			Required:    true,
+		}, discord.ApplicationCommandOptionString{
+			Name:        "short_desc",
+			Description: "New short description",
+			Required:    true,
+			MaxLength:   ptr(160),
+		}, discord.ApplicationCommandOptionString{
+			Name:        "content",
+			Description: "New multi-line content",
+			Required:    true,
 		},
-		{
-			Name:        "nanoreviewcompare",
-			Description: "Compare two phones, CPUs, GPUs or SoCs on NanoReview",
-			Options:     compareOptions("Product name"),
 		},
-		{
-			Name:        "technicalcitycompare",
-			Description: "Compare two CPUs or GPUs on Technical City",
-			Options:     compareOptions("CPU or GPU name"),
+	}, discord.SlashCommandCreate{
+		Name:        "renamenote",
+		Description: "Rename an existing note (admin only)",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionString{
+			Name:        "name",
+			Description: "Current note name",
+			Required:    true,
+		}, discord.ApplicationCommandOptionString{
+			Name:        "new_name",
+			Description: "New note name without spaces",
+			Required:    true,
 		},
-		{
-			Name:        "ctx-reset",
-			Description: "Forget Garmin context before this point in this channel (admin only)",
 		},
-		{
-			Name:        "quote",
-			Description: "Turn the previous message into a quote image",
+	}, discord.SlashCommandCreate{
+		Name:        "delnote",
+		Description: "Delete a note (admin only)",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionString{
+			Name:        "name",
+			Description: "Note name",
+			Required:    true,
 		},
-		{
-			Name: "Clip",
-			Type: discordgo.MessageApplicationCommand,
 		},
-		{
-			Name:        "notes",
-			Description: "List all available notes",
-		},
-		{
-			Name:        "note",
-			Description: "Show a note, or add one with a description and content",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "name",
-					Description: "Note name without spaces",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "short_desc",
-					Description: "Short description (required when adding)",
-					Required:    false,
-					MaxLength:   160,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "content",
-					Description: "Multi-line content (required when adding)",
-					Required:    false,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionBoolean,
-					Name:        "stay",
-					Description: "Keep message permanently (admin only)",
-					Required:    false,
-				},
-			},
-		},
-		{
-			Name:        "addnote",
-			Description: "Add a new note (admin only)",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "name",
-					Description: "Note name",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "short_desc",
-					Description: "Short description",
-					Required:    true,
-					MaxLength:   160,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "content",
-					Description: "Multi-line note content",
-					Required:    true,
-				},
-			},
-		},
-		{
-			Name:        "editnote",
-			Description: "Edit an existing note (admin only)",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "name",
-					Description: "Note name",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "short_desc",
-					Description: "New short description",
-					Required:    true,
-					MaxLength:   160,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "content",
-					Description: "New multi-line content",
-					Required:    true,
-				},
-			},
-		},
-		{
-			Name:        "renamenote",
-			Description: "Rename an existing note (admin only)",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "name",
-					Description: "Current note name",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "new_name",
-					Description: "New note name without spaces",
-					Required:    true,
-				},
-			},
-		},
-		{
-			Name:        "delnote",
-			Description: "Delete a note (admin only)",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "name",
-					Description: "Note name",
-					Required:    true,
-				},
-			},
-		},
-		{
+	}, discord.SlashCommandCreate{
+		Name:        "version",
+		Description: "Show release info",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionString{
 			Name:        "version",
-			Description: "Show release info",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "version",
-					Description: "Version tag (default: latest)",
-					Required:    false,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionBoolean,
-					Name:        "stay",
-					Description: "Keep message permanently (admin only)",
-					Required:    false,
-				},
+			Description: "Version tag (default: latest)",
+			Required:    false,
+		}, discord.ApplicationCommandOptionBool{
+			Name:        "stay",
+			Description: "Keep message permanently (admin only)",
+			Required:    false,
+		},
+		},
+	}, discord.SlashCommandCreate{
+		Name:        "latest",
+		Description: "Show the latest release",
+	}, discord.SlashCommandCreate{
+		Name:        "actions",
+		Description: "Show GitHub Actions build status",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionBool{
+			Name:        "stay",
+			Description: "Keep message permanently (admin only)",
+			Required:    false,
+		},
+		},
+	}, discord.SlashCommandCreate{
+		Name:        "ban",
+		Description: "Permanently ban a user (admin only)",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
+			Name:        "user",
+			Description: "User to ban",
+			Required:    true,
+		}, discord.ApplicationCommandOptionString{
+			Name:        "reason",
+			Description: "Ban reason",
+			Required:    true,
+		},
+		},
+	}, discord.SlashCommandCreate{
+		Name:        "dban",
+		Description: "Ban a user and delete their messages (admin only)",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
+			Name:        "user",
+			Description: "User to ban",
+			Required:    true,
+		}, discord.ApplicationCommandOptionString{
+			Name:        "reason",
+			Description: "Ban reason",
+			Required:    true,
+		},
+		},
+	}, discord.SlashCommandCreate{
+		Name:        "tban",
+		Description: "Temporarily ban a user (admin only)",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
+			Name:        "user",
+			Description: "User to ban",
+			Required:    true,
+		}, discord.ApplicationCommandOptionString{
+			Name:        "duration",
+			Description: "Ban duration (e.g. 1h, 2d, 1mon)",
+			Required:    true,
+		}, discord.ApplicationCommandOptionString{
+			Name:        "reason",
+			Description: "Ban reason",
+			Required:    true,
+		},
+		},
+	}, discord.SlashCommandCreate{
+		Name:        "sban",
+		Description: "Softban a user (admin/moderator)",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
+			Name:        "user",
+			Description: "User to softban",
+			Required:    true,
+		}, discord.ApplicationCommandOptionString{
+			Name:        "reason",
+			Description: "Softban reason",
+			Required:    true,
+		},
+		},
+	}, discord.SlashCommandCreate{
+		Name:        "kick",
+		Description: "Kick a user (admin/moderator)",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
+			Name:        "user",
+			Description: "User to kick",
+			Required:    true,
+		}, discord.ApplicationCommandOptionString{
+			Name:        "reason",
+			Description: "Kick reason",
+			Required:    true,
+		},
+		},
+	}, discord.SlashCommandCreate{
+		Name:        "mute",
+		Description: "Temporarily mute a user (admin/moderator)",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
+			Name:        "user",
+			Description: "User to mute",
+			Required:    true,
+		}, discord.ApplicationCommandOptionString{
+			Name:        "duration",
+			Description: "Mute duration (e.g. 10m, 1h, 7d)",
+			Required:    true,
+		}, discord.ApplicationCommandOptionString{
+			Name:        "reason",
+			Description: "Mute reason",
+			Required:    true,
+		},
+		},
+	}, discord.SlashCommandCreate{
+		Name:        "timeout",
+		Description: "Timeout a user (admin/moderator)",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
+			Name:        "user",
+			Description: "User to timeout",
+			Required:    true,
+		}, discord.ApplicationCommandOptionString{
+			Name:        "duration",
+			Description: "Timeout duration (e.g. 10m, 1h, 7d)",
+			Required:    true,
+		}, discord.ApplicationCommandOptionString{
+			Name:        "reason",
+			Description: "Timeout reason",
+			Required:    true,
+		},
+		},
+	}, discord.SlashCommandCreate{
+		Name:        "warn",
+		Description: "Warn a user (admin only)",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
+			Name:        "user",
+			Description: "User to warn",
+			Required:    true,
+		}, discord.ApplicationCommandOptionString{
+			Name:        "reason",
+			Description: "Warning reason",
+			Required:    true,
+		},
+		},
+	}, discord.SlashCommandCreate{
+		Name:        "warnings",
+		Description: "Show warnings for a user",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
+			Name:        "user",
+			Description: "User to check",
+			Required:    true,
+		},
+		},
+	}, discord.SlashCommandCreate{
+		Name:        "unwarn",
+		Description: "Remove a warning from a user (admin only)",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
+			Name:        "user",
+			Description: "User to unwarn",
+			Required:    true,
+		}, discord.ApplicationCommandOptionInt{
+			Name:         "id",
+			Description:  "Warning ID (starts at 1)",
+			Required:     true,
+			Autocomplete: true,
+		},
+		},
+	}, discord.SlashCommandCreate{
+		Name:        "dehoist",
+		Description: "Dehoist a user or rerun dehoisting across the server (admin only)",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
+			Name:        "user",
+			Description: "User to dehoist (omit to rerun all untouched server names)",
+			Required:    false,
+		}, discord.ApplicationCommandOptionBool{
+			Name:        "dry",
+			Description: "Dry run - show what would change without applying",
+			Required:    false,
+		},
+		},
+	}, discord.SlashCommandCreate{
+		Name:        "approvenick",
+		Description: "Allow a user's next nickname change without dehoisting (admin only)",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
+			Name:        "user",
+			Description: "User whose next nickname change should be allowed",
+			Required:    true,
+		},
+		},
+	}, discord.SlashCommandCreate{
+		Name:                     "bulkrole",
+		Description:              "Add one role to multiple users",
+		DefaultMemberPermissions: omit.New(&manageRolesPermission),
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionRole{
+			Name:        "role",
+			Description: "Role to add",
+			Required:    true,
+		}, discord.ApplicationCommandOptionString{
+			Name:        "users",
+			Description: "Space- or comma-separated usernames, mentions, or IDs",
+			Required:    true,
+		},
+		},
+	}, discord.SlashCommandCreate{
+		Name:        "addadmin",
+		Description: "Add a bot admin (permaadmin only)",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
+			Name:        "user",
+			Description: "User to make admin",
+			Required:    true,
+		},
+		},
+	}, discord.SlashCommandCreate{
+		Name:        "removeadmin",
+		Description: "Remove a bot admin (permaadmin only)",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
+			Name:        "user",
+			Description: "User to remove as admin",
+			Required:    true,
+		},
+		},
+	}, discord.SlashCommandCreate{
+		Name:        "memory",
+		Description: "Manage Metrobot AI memory",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionSubCommand{
+			Name:        "view",
+			Description: "View Metrobot's memory",
+		}, discord.ApplicationCommandOptionSubCommand{
+			Name:        "append",
+			Description: "Append Markdown to Metrobot's memory",
+			Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionString{
+				Name:        "content",
+				Description: "Markdown to remember",
+				Required:    true,
 			},
-		},
-		{
-			Name:        "latest",
-			Description: "Show the latest release",
-		},
-		{
-			Name:        "actions",
-			Description: "Show GitHub Actions build status",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionBoolean,
-					Name:        "stay",
-					Description: "Keep message permanently (admin only)",
-					Required:    false,
-				},
 			},
-		},
-		{
-			Name:        "ban",
-			Description: "Permanently ban a user (admin only)",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionUser,
-					Name:        "user",
-					Description: "User to ban",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "reason",
-					Description: "Ban reason",
-					Required:    true,
-				},
+		}, discord.ApplicationCommandOptionSubCommand{
+			Name:        "replace",
+			Description: "Replace Metrobot's memory",
+			Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionString{
+				Name:        "content",
+				Description: "Complete replacement Markdown",
+				Required:    true,
 			},
-		},
-		{
-			Name:        "dban",
-			Description: "Ban a user and delete their messages (admin only)",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionUser,
-					Name:        "user",
-					Description: "User to ban",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "reason",
-					Description: "Ban reason",
-					Required:    true,
-				},
 			},
+		}, discord.ApplicationCommandOptionSubCommand{
+			Name:        "clear",
+			Description: "Clear Metrobot's memory",
 		},
-		{
-			Name:        "tban",
-			Description: "Temporarily ban a user (admin only)",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionUser,
-					Name:        "user",
-					Description: "User to ban",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "duration",
-					Description: "Ban duration (e.g. 1h, 2d, 1mon)",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "reason",
-					Description: "Ban reason",
-					Required:    true,
-				},
-			},
 		},
-		{
-			Name:        "sban",
-			Description: "Softban a user (admin/moderator)",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionUser,
-					Name:        "user",
-					Description: "User to softban",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "reason",
-					Description: "Softban reason",
-					Required:    true,
-				},
-			},
+	}, discord.SlashCommandCreate{
+		Name:        "ping",
+		Description: "Check latency to various services",
+	}, discord.SlashCommandCreate{
+		Name:        "purge",
+		Description: "Delete recent messages from the current channel (admin only)",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionInt{
+			Name:        "count",
+			Description: "Number of messages to delete (alternative to replying)",
+			Required:    false,
+			MinValue:    ptr(1),
+			MaxValue:    ptr(100),
 		},
-		{
-			Name:        "kick",
-			Description: "Kick a user (admin/moderator)",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionUser,
-					Name:        "user",
-					Description: "User to kick",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "reason",
-					Description: "Kick reason",
-					Required:    true,
-				},
-			},
 		},
-		{
-			Name:        "mute",
-			Description: "Temporarily mute a user (admin/moderator)",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionUser,
-					Name:        "user",
-					Description: "User to mute",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "duration",
-					Description: "Mute duration (e.g. 10m, 1h, 7d)",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "reason",
-					Description: "Mute reason",
-					Required:    true,
-				},
-			},
-		},
-		{
-			Name:        "timeout",
-			Description: "Timeout a user (admin/moderator)",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionUser,
-					Name:        "user",
-					Description: "User to timeout",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "duration",
-					Description: "Timeout duration (e.g. 10m, 1h, 7d)",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "reason",
-					Description: "Timeout reason",
-					Required:    true,
-				},
-			},
-		},
-		{
-			Name:        "warn",
-			Description: "Warn a user (admin only)",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionUser,
-					Name:        "user",
-					Description: "User to warn",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "reason",
-					Description: "Warning reason",
-					Required:    true,
-				},
-			},
-		},
-		{
-			Name:        "warnings",
-			Description: "Show warnings for a user",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionUser,
-					Name:        "user",
-					Description: "User to check",
-					Required:    true,
-				},
-			},
-		},
-		{
-			Name:        "unwarn",
-			Description: "Remove a warning from a user (admin only)",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionUser,
-					Name:        "user",
-					Description: "User to unwarn",
-					Required:    true,
-				},
-				{
-					Type:         discordgo.ApplicationCommandOptionInteger,
-					Name:         "id",
-					Description:  "Warning ID (starts at 1)",
-					Required:     true,
-					Autocomplete: true,
-				},
-			},
-		},
-		{
-			Name:        "dehoist",
-			Description: "Dehoist a user or rerun dehoisting across the server (admin only)",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionUser,
-					Name:        "user",
-					Description: "User to dehoist (omit to rerun all untouched server names)",
-					Required:    false,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionBoolean,
-					Name:        "dry",
-					Description: "Dry run - show what would change without applying",
-					Required:    false,
-				},
-			},
-		},
-		{
-			Name:        "approvenick",
-			Description: "Allow a user's next nickname change without dehoisting (admin only)",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionUser,
-					Name:        "user",
-					Description: "User whose next nickname change should be allowed",
-					Required:    true,
-				},
-			},
-		},
-		{
-			Name:                     "bulkrole",
-			Description:              "Add one role to multiple users",
-			DefaultMemberPermissions: &manageRolesPermission,
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionRole,
-					Name:        "role",
-					Description: "Role to add",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "users",
-					Description: "Space- or comma-separated usernames, mentions, or IDs",
-					Required:    true,
-				},
-			},
-		},
-		{
-			Name:        "addadmin",
-			Description: "Add a bot admin (permaadmin only)",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionUser,
-					Name:        "user",
-					Description: "User to make admin",
-					Required:    true,
-				},
-			},
-		},
-		{
-			Name:        "removeadmin",
-			Description: "Remove a bot admin (permaadmin only)",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionUser,
-					Name:        "user",
-					Description: "User to remove as admin",
-					Required:    true,
-				},
-			},
-		},
-		{
-			Name:        "memory",
-			Description: "Manage Metrobot AI memory",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionSubCommand,
-					Name:        "view",
-					Description: "View Metrobot's memory",
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionSubCommand,
-					Name:        "append",
-					Description: "Append Markdown to Metrobot's memory",
-					Options: []*discordgo.ApplicationCommandOption{
-						{
-							Type:        discordgo.ApplicationCommandOptionString,
-							Name:        "content",
-							Description: "Markdown to remember",
-							Required:    true,
-						},
-					},
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionSubCommand,
-					Name:        "replace",
-					Description: "Replace Metrobot's memory",
-					Options: []*discordgo.ApplicationCommandOption{
-						{
-							Type:        discordgo.ApplicationCommandOptionString,
-							Name:        "content",
-							Description: "Complete replacement Markdown",
-							Required:    true,
-						},
-					},
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionSubCommand,
-					Name:        "clear",
-					Description: "Clear Metrobot's memory",
-				},
-			},
-		},
-		{
-			Name:        "ping",
-			Description: "Check latency to various services",
-		},
-		{
-			Name:        "purge",
-			Description: "Delete recent messages from the current channel (admin only)",
-			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionInteger,
-					Name:        "count",
-					Description: "Number of messages to delete (alternative to replying)",
-					Required:    false,
-					MinValue:    func() *float64 { v := float64(1); return &v }(),
-					MaxValue:    100,
-				},
-			},
-		},
-		{
-			Name:        "scanreactions",
-			Description: "Scan the last 100 channel messages for prohibited reactions (admin only)",
-		},
-		{
-			Name:        "refreshstarboard",
-			Description: "Refresh all starboard entries by rechecking star counts (admin only)",
-		},
+	}, discord.SlashCommandCreate{
+		Name:        "scanreactions",
+		Description: "Scan the last 100 channel messages for prohibited reactions (admin only)",
+	}, discord.SlashCommandCreate{
+		Name:        "refreshstarboard",
+		Description: "Refresh all starboard entries by rechecking star counts (admin only)",
+	},
 	}
 
-	if _, err := b.Session.ApplicationCommandBulkOverwrite(b.Session.State.User.ID, b.Config.DiscordGuildID, commands); err != nil {
+	if _, err := b.Client.Rest.SetGuildCommands(b.Client.ApplicationID, snowflakeID(b.Config.DiscordGuildID), commands); err != nil {
 		return fmt.Errorf("registering slash commands: %w", err)
 	}
 
@@ -719,7 +597,7 @@ func (b *Bot) registerCommands() error {
 }
 
 type DiscordBanner struct {
-	session *discordgo.Session
+	session *bot.Client
 	guildID string
 	logger  *zap.Logger
 }
@@ -728,23 +606,23 @@ func (d *DiscordBanner) Platform() string { return "discord" }
 func (d *DiscordBanner) ChatID() string   { return d.guildID }
 
 func (d *DiscordBanner) Ban(userID, reason string) error {
-	return d.session.GuildBanCreateWithReason(d.guildID, userID, reason, 0)
+	return d.session.Rest.AddBan(snowflakeID(d.guildID), snowflakeID(userID), 0, rest.WithReason(reason))
 }
 
 func (d *DiscordBanner) BanAndDeleteMessages(userID, reason string) error {
-	return d.session.GuildBanCreateWithReason(d.guildID, userID, reason, 7)
+	return d.session.Rest.AddBan(snowflakeID(d.guildID), snowflakeID(userID), 7*24*time.Hour, rest.WithReason(reason))
 }
 
 func (d *DiscordBanner) Unban(userID string) error {
-	return d.session.GuildBanDelete(d.guildID, userID)
+	return d.session.Rest.DeleteBan(snowflakeID(d.guildID), snowflakeID(userID))
 }
 
 func (d *DiscordBanner) Kick(userID, reason string) error {
-	return d.session.GuildMemberDeleteWithReason(d.guildID, userID, reason)
+	return d.session.Rest.RemoveMember(snowflakeID(d.guildID), snowflakeID(userID), rest.WithReason(reason))
 }
 
 func (d *DiscordBanner) DeleteMessages(userID string) error {
-	channels, err := d.session.GuildChannels(d.guildID)
+	channels, err := d.session.Rest.GetGuildChannels(snowflakeID(d.guildID))
 	if err != nil {
 		return err
 	}
@@ -758,7 +636,7 @@ func (d *DiscordBanner) DeleteMessages(userID string) error {
 	semaphore := make(chan struct{}, 5) // Limit to 5 concurrent channels
 
 	for _, ch := range channels {
-		if ch.Type != discordgo.ChannelTypeGuildText {
+		if ch.Type() != discord.ChannelTypeGuildText {
 			continue
 		}
 
@@ -776,7 +654,7 @@ func (d *DiscordBanner) DeleteMessages(userID string) error {
 				}
 				mu.Unlock()
 			}
-		}(ch.ID)
+		}(ch.ID().String())
 	}
 
 	wg.Wait()
@@ -799,19 +677,19 @@ func (d *DiscordBanner) deleteUserMessagesInChannel(channelID, userID string) er
 	maxMessages := 1000 // Limit to prevent excessive API calls
 
 	for messageCount < maxMessages {
-		msgs, err := d.session.ChannelMessages(channelID, 100, beforeID, "", "")
+		msgs, err := d.session.Rest.GetMessages(snowflakeID(channelID), 0, snowflakeID(beforeID), 0, 100)
 		if err != nil || len(msgs) == 0 {
 			break
 		}
 
-		var toDelete []string
+		var toDelete []snowflake.ID
 		for _, msg := range msgs {
 			// Stop if we've reached messages older than 7 days
-			if msg.ID < cutoffID {
+			if msg.ID.String() < cutoffID {
 				return nil
 			}
 
-			if msg.Author.ID == userID {
+			if msg.Author.ID.String() == userID {
 				toDelete = append(toDelete, msg.ID)
 			}
 			messageCount++
@@ -819,17 +697,17 @@ func (d *DiscordBanner) deleteUserMessagesInChannel(channelID, userID string) er
 
 		if len(toDelete) > 1 {
 			// Bulk delete for messages less than 14 days old
-			if err := d.session.ChannelMessagesBulkDelete(channelID, toDelete); err != nil {
+			if err := d.session.Rest.BulkDeleteMessages(snowflakeID(channelID), toDelete); err != nil {
 				// Fall back to individual deletion if bulk fails
 				for _, id := range toDelete {
-					d.session.ChannelMessageDelete(channelID, id)
+					d.session.Rest.DeleteMessage(snowflakeID(channelID), id)
 				}
 			}
 		} else if len(toDelete) == 1 {
-			d.session.ChannelMessageDelete(channelID, toDelete[0])
+			d.session.Rest.DeleteMessage(snowflakeID(channelID), toDelete[0])
 		}
 
-		beforeID = msgs[len(msgs)-1].ID
+		beforeID = msgs[len(msgs)-1].ID.String()
 		if len(msgs) < 100 {
 			break
 		}
@@ -840,15 +718,15 @@ func (d *DiscordBanner) deleteUserMessagesInChannel(channelID, userID string) er
 
 func (d *DiscordBanner) Restrict(userID string, untilDate int64) error {
 	timeoutUntil := time.Unix(untilDate, 0)
-	return d.session.GuildMemberTimeout(d.guildID, userID, &timeoutUntil)
+	return updateTimeout(d.session, snowflakeID(d.guildID), snowflakeID(userID), &timeoutUntil)
 }
 
 func (d *DiscordBanner) Unrestrict(userID string) error {
-	return d.session.GuildMemberTimeout(d.guildID, userID, nil)
+	return updateTimeout(d.session, snowflakeID(d.guildID), snowflakeID(userID), nil)
 }
 
 func (d *DiscordBanner) SetNickname(userID, nickname string) error {
-	return d.session.GuildMemberNickname(d.guildID, userID, nickname)
+	return updateNickname(d.session, snowflakeID(d.guildID), snowflakeID(userID), nickname)
 }
 
 func (d *DiscordBanner) DMUser(userID, message string) error {
@@ -856,25 +734,25 @@ func (d *DiscordBanner) DMUser(userID, message string) error {
 }
 
 func (d *DiscordBanner) GetDisplayName(userID string) (string, error) {
-	member, err := d.session.GuildMember(d.guildID, userID)
+	member, err := d.session.Rest.GetMember(snowflakeID(d.guildID), snowflakeID(userID))
 	if err != nil {
 		// If the user is not found (left the guild, etc.), treat it as
 		// "no display name" instead of a hard error so moderation flows
 		// like dehoist can continue gracefully.
-		if restErr, ok := err.(*discordgo.RESTError); ok && restErr.Response != nil && restErr.Response.StatusCode == 404 {
+		if restErr, ok := err.(*rest.Error); ok && restErr.Response != nil && restErr.Response.StatusCode == 404 {
 			return "", nil
 		}
 		return "", err
 	}
 
 	// 1) Server-specific display name (nickname)
-	if member.Nick != "" {
-		return member.Nick, nil
+	if value(member.Nick) != "" {
+		return value(member.Nick), nil
 	}
 
 	// 2) Global display name
-	if member.User.GlobalName != "" {
-		return member.User.GlobalName, nil
+	if value(member.User.GlobalName) != "" {
+		return value(member.User.GlobalName), nil
 	}
 
 	// 3) Fallback: username (when no display names are set)
@@ -882,9 +760,9 @@ func (d *DiscordBanner) GetDisplayName(userID string) (string, error) {
 }
 
 func (d *DiscordBanner) GetUsername(userID string) (string, error) {
-	member, err := d.session.GuildMember(d.guildID, userID)
+	member, err := d.session.Rest.GetMember(snowflakeID(d.guildID), snowflakeID(userID))
 	if err != nil {
-		if restErr, ok := err.(*discordgo.RESTError); ok && restErr.Response != nil && restErr.Response.StatusCode == 404 {
+		if restErr, ok := err.(*rest.Error); ok && restErr.Response != nil && restErr.Response.StatusCode == 404 {
 			return "", nil
 		}
 		return "", err
@@ -898,7 +776,7 @@ func (d *DiscordBanner) GetAllMembers() ([]cmd.MemberInfo, error) {
 	var afterID string
 
 	for {
-		members, err := d.session.GuildMembers(d.guildID, afterID, 1000)
+		members, err := d.session.Rest.GetMembers(snowflakeID(d.guildID), 1000, snowflakeID(afterID))
 		if err != nil {
 			return nil, err
 		}
@@ -907,26 +785,26 @@ func (d *DiscordBanner) GetAllMembers() ([]cmd.MemberInfo, error) {
 		}
 
 		for _, m := range members {
-			originalName := m.User.GlobalName
+			originalName := value(m.User.GlobalName)
 			if originalName == "" {
 				originalName = m.User.Username
 			}
 			displayName := originalName
-			if m.Nick != "" {
-				displayName = m.Nick
+			if value(m.Nick) != "" {
+				displayName = value(m.Nick)
 			}
 
 			all = append(all, cmd.MemberInfo{
-				UserID:       m.User.ID,
+				UserID:       m.User.ID.String(),
 				Username:     m.User.Username,
 				DisplayName:  displayName,
 				OriginalName: originalName,
-				Nickname:     m.Nick,
+				Nickname:     value(m.Nick),
 				IsBot:        m.User.Bot,
 			})
 		}
 
-		afterID = members[len(members)-1].User.ID
+		afterID = members[len(members)-1].User.ID.String()
 		if len(members) < 1000 {
 			break
 		}
@@ -937,7 +815,7 @@ func (d *DiscordBanner) GetAllMembers() ([]cmd.MemberInfo, error) {
 
 func (b *Bot) newBanner() *DiscordBanner {
 	return &DiscordBanner{
-		session: b.Session,
+		session: b.Client,
 		guildID: b.Config.DiscordGuildID,
 		logger:  b.Logger,
 	}

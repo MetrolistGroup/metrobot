@@ -6,7 +6,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo/bot"
+	"github.com/disgoorg/disgo/discord"
+	"github.com/disgoorg/disgo/rest"
 	"go.uber.org/zap"
 )
 
@@ -51,85 +53,71 @@ func isYouTubeHost(host string) bool {
 	return host == "youtu.be" || host == "youtube.com" || strings.HasSuffix(host, ".youtube.com")
 }
 
-func (b *Bot) repostCleanYouTubeLinks(s *discordgo.Session, m *discordgo.MessageCreate) bool {
+func (b *Bot) repostCleanYouTubeLinks(s *bot.Client, m *discord.Message) bool {
 	cleaned, changed := cleanYouTubeSourceIndicators(m.Content)
 	if !changed || len(m.Attachments) > 0 {
 		return false
 	}
 
-	webhook, threadID, err := b.youtubeCleanerWebhook(s, m.ChannelID)
+	webhook, threadID, err := b.youtubeCleanerWebhook(s, m.ChannelID.String())
 	if err != nil {
-		b.Logger.Error("failed to get YouTube cleaner webhook", zap.String("channel", m.ChannelID), zap.Error(err))
+		b.Logger.Error("failed to get YouTube cleaner webhook", zap.String("channel", m.ChannelID.String()), zap.Error(err))
 		return false
 	}
 
-	username, avatarURL := m.Author.DisplayName(), m.Author.AvatarURL("")
+	username, avatarURL := m.Author.EffectiveName(), m.Author.EffectiveAvatarURL()
 	if m.Member != nil {
 		member := *m.Member
-		member.GuildID, member.User = m.GuildID, m.Author
-		username, avatarURL = member.DisplayName(), member.AvatarURL("")
+		member.GuildID, member.User = value(m.GuildID), m.Author
+		username, avatarURL = member.EffectiveName(), member.EffectiveAvatarURL()
 	}
-	params := &discordgo.WebhookParams{
+	params := &discord.WebhookMessageCreate{
 		Content:         cleaned,
 		Username:        username,
 		AvatarURL:       avatarURL,
-		AllowedMentions: &discordgo.MessageAllowedMentions{},
-		Flags:           m.Flags & discordgo.MessageFlagsSuppressEmbeds,
+		AllowedMentions: &discord.AllowedMentions{},
+		Flags:           m.Flags & discord.MessageFlagSuppressEmbeds,
 	}
 
-	var posted *discordgo.Message
-	if threadID == "" {
-		posted, err = s.WebhookExecute(webhook.ID, webhook.Token, true, params)
-	} else {
-		posted, err = s.WebhookThreadExecute(webhook.ID, webhook.Token, true, threadID, params)
-	}
+	posted, err := s.Rest.CreateWebhookMessage(webhook.ID(), webhook.Token, *params, rest.CreateWebhookMessageParams{Wait: true, ThreadID: snowflakeID(threadID)})
 	if err != nil {
-		b.Logger.Error("failed to repost cleaned YouTube link", zap.String("message", m.ID), zap.Error(err))
+		b.Logger.Error("failed to repost cleaned YouTube link", zap.String("message", m.ID.String()), zap.Error(err))
 		return false
 	}
-	if err := s.ChannelMessageDelete(m.ChannelID, m.ID); err != nil {
+	if err := s.Rest.DeleteMessage(m.ChannelID, m.ID); err != nil {
 		if posted != nil {
-			_ = s.WebhookMessageDelete(webhook.ID, webhook.Token, posted.ID)
+			_ = s.Rest.DeleteWebhookMessage(webhook.ID(), webhook.Token, posted.ID, snowflakeID(threadID))
 		}
-		b.Logger.Error("failed to delete YouTube source link", zap.String("message", m.ID), zap.Error(err))
+		b.Logger.Error("failed to delete YouTube source link", zap.String("message", m.ID.String()), zap.Error(err))
 		return false
 	}
 	return true
 }
 
-func (b *Bot) youtubeCleanerWebhook(s *discordgo.Session, channelID string) (*discordgo.Webhook, string, error) {
-	channel, err := s.State.Channel(channelID)
-	if err != nil {
-		channel, err = s.Channel(channelID)
-	}
+func (b *Bot) youtubeCleanerWebhook(s *bot.Client, channelID string) (*discord.IncomingWebhook, string, error) {
+	channel, err := getDiscordChannel(s, channelID)
 	if err != nil {
 		return nil, "", err
 	}
-
 	threadID := ""
-	if channel.IsThread() {
-		threadID, channelID = channelID, channel.ParentID
+	if isThread(channel) {
+		threadID, channelID = channelID, snowflakeString(channel.ParentID())
 		if channelID == "" {
 			return nil, "", fmt.Errorf("thread %s has no parent channel", threadID)
 		}
 	}
-
 	b.youtubeWebhookMu.Lock()
 	defer b.youtubeWebhookMu.Unlock()
-	webhooks, err := s.ChannelWebhooks(channelID)
+	webhooks, err := s.Rest.GetWebhooks(snowflakeID(channelID))
 	if err != nil {
 		return nil, "", err
 	}
-	botID := ""
-	if s.State.User != nil {
-		botID = s.State.User.ID
-	}
 	for _, webhook := range webhooks {
-		if webhook.Name == youtubeCleanerWebhookName && webhook.Type == discordgo.WebhookTypeIncoming && webhook.Token != "" &&
-			(botID == "" || webhook.User != nil && webhook.User.ID == botID) {
-			return webhook, threadID, nil
+		incoming, ok := webhook.(discord.IncomingWebhook)
+		if ok && incoming.Name() == youtubeCleanerWebhookName && incoming.Token != "" && (s.ID() == 0 || incoming.User.ID == s.ID()) {
+			return &incoming, threadID, nil
 		}
 	}
-	webhook, err := s.WebhookCreate(channelID, youtubeCleanerWebhookName, "")
+	webhook, err := s.Rest.CreateWebhook(snowflakeID(channelID), discord.WebhookCreate{Name: youtubeCleanerWebhookName})
 	return webhook, threadID, err
 }

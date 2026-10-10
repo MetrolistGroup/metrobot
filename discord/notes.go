@@ -4,7 +4,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo/bot"
+	"github.com/disgoorg/disgo/discord"
+	"github.com/disgoorg/disgo/events"
 	"go.uber.org/zap"
 )
 
@@ -39,56 +41,56 @@ func noteFAQItems(content string) []noteFAQItem {
 	return items
 }
 
-func kmpNoteComponents(content string, selected int) ([]discordgo.MessageComponent, bool) {
+func kmpNoteComponents(content string, selected int) ([]discord.LayoutComponent, bool) {
 	items := noteFAQItems(content)
 	if len(items) == 0 || len(items) > 25 || selected < -1 || selected >= len(items) {
 		return nil, false
 	}
-	options := make([]discordgo.SelectMenuOption, len(items))
+	options := make([]discord.StringSelectMenuOption, len(items))
 	for index, item := range items {
 		description := strings.NewReplacer("*", "", "`", "").Replace(strings.Join(strings.Fields(item.answer), " "))
-		options[index] = discordgo.SelectMenuOption{
+		options[index] = discord.StringSelectMenuOption{
 			Label:       truncateRunes(item.question, 100),
 			Value:       strconv.Itoa(index),
 			Description: truncateRunes(description, 100),
 			Default:     index == selected,
 		}
 	}
-	body := []discordgo.MessageComponent{
-		discordgo.TextDisplay{Content: "# Metrolist-KMP FAQ\nChoose a question below."},
+	body := []discord.ContainerSubComponent{
+		discord.TextDisplayComponent{Content: "# Metrolist-KMP FAQ\nChoose a question below."},
 	}
 	if selected >= 0 && selected < len(items) {
 		body = append(body,
-			discordgo.Separator{},
-			discordgo.TextDisplay{Content: "## " + items[selected].question + "\n" + items[selected].answer},
+			discord.SeparatorComponent{},
+			discord.TextDisplayComponent{Content: "## " + items[selected].question + "\n" + items[selected].answer},
 		)
 	}
-	body = append(body, discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.SelectMenu{
+	body = append(body, discord.ActionRowComponent{Components: []discord.InteractiveComponent{discord.StringSelectMenuComponent{
 		CustomID:    kmpNoteSelectCustomID,
 		Placeholder: "Choose a question",
 		MaxValues:   1,
 		Options:     options,
 	}}})
-	return []discordgo.MessageComponent{discordgo.Container{Components: body}}, true
+	return []discord.LayoutComponent{discord.ContainerComponent{Components: body}}, true
 }
 
-func (b *Bot) sendKMPNoteReply(s *discordgo.Session, channelID, messageID, content string) *discordgo.Message {
+func (b *Bot) sendKMPNoteReply(s *bot.Client, channelID, messageID, content string) *discord.Message {
 	components, ok := kmpNoteComponents(content, -1)
 	if !ok {
 		return nil
 	}
-	message := &discordgo.MessageSend{
-		Components:      components,
-		Flags:           discordgo.MessageFlagsIsComponentsV2,
-		AllowedMentions: &discordgo.MessageAllowedMentions{},
-		Reference:       &discordgo.MessageReference{MessageID: messageID},
+	message := &discord.MessageCreate{
+		Components:       components,
+		Flags:            discord.MessageFlagIsComponentsV2,
+		AllowedMentions:  &discord.AllowedMentions{},
+		MessageReference: &discord.MessageReference{MessageID: snowflakePtr(messageID)},
 	}
-	reply, err := s.ChannelMessageSendComplex(channelID, message)
+	reply, err := s.Rest.CreateMessage(snowflakeID(channelID), *message)
 	if err == nil {
 		return reply
 	}
-	message.Reference = nil
-	reply, err = s.ChannelMessageSendComplex(channelID, message)
+	message.MessageReference = nil
+	reply, err = s.Rest.CreateMessage(snowflakeID(channelID), *message)
 	if err != nil {
 		b.Logger.Error("failed to send KMP note", zap.Error(err))
 		return nil
@@ -96,21 +98,21 @@ func (b *Bot) sendKMPNoteReply(s *discordgo.Session, channelID, messageID, conte
 	return reply
 }
 
-func (b *Bot) respondKMPNote(s *discordgo.Session, i *discordgo.InteractionCreate, content string, ephemeral bool) bool {
+func (b *Bot) respondKMPNote(s *bot.Client, i *events.ApplicationCommandInteractionCreate, content string, ephemeral bool) bool {
 	components, ok := kmpNoteComponents(content, -1)
 	if !ok {
 		return false
 	}
-	flags := discordgo.MessageFlagsIsComponentsV2
+	flags := discord.MessageFlagIsComponentsV2
 	if ephemeral {
-		flags |= discordgo.MessageFlagsEphemeral
+		flags |= discord.MessageFlagEphemeral
 	}
-	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
+	if err := s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{
+		Type: discord.InteractionResponseTypeCreateMessage,
+		Data: discord.MessageCreate{
 			Components:      components,
 			Flags:           flags,
-			AllowedMentions: &discordgo.MessageAllowedMentions{},
+			AllowedMentions: &discord.AllowedMentions{},
 		},
 	}); err != nil {
 		b.Logger.Error("failed to respond with KMP note", zap.Error(err))
@@ -118,9 +120,9 @@ func (b *Bot) respondKMPNote(s *discordgo.Session, i *discordgo.InteractionCreat
 	return true
 }
 
-func (b *Bot) handleKMPNoteComponent(s *discordgo.Session, i *discordgo.InteractionCreate) bool {
-	data := i.MessageComponentData()
-	if data.CustomID != kmpNoteSelectCustomID {
+func (b *Bot) handleKMPNoteComponent(s *bot.Client, i *events.ComponentInteractionCreate) bool {
+	data := i.StringSelectMenuInteractionData()
+	if data.CustomID() != kmpNoteSelectCustomID {
 		return false
 	}
 	if len(data.Values) != 1 {
@@ -143,12 +145,12 @@ func (b *Bot) handleKMPNoteComponent(s *discordgo.Session, i *discordgo.Interact
 		respondEphemeral(s, i, "That KMP question is unavailable.")
 		return true
 	}
-	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: &discordgo.InteractionResponseData{
+	if err := s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{
+		Type: discord.InteractionResponseTypeUpdateMessage,
+		Data: discord.MessageCreate{
 			Components:      components,
-			Flags:           discordgo.MessageFlagsIsComponentsV2,
-			AllowedMentions: &discordgo.MessageAllowedMentions{},
+			Flags:           discord.MessageFlagIsComponentsV2,
+			AllowedMentions: &discord.AllowedMentions{},
 		},
 	}); err != nil {
 		b.Logger.Error("failed to update KMP note", zap.Error(err))

@@ -5,19 +5,20 @@ import (
 	"time"
 
 	"github.com/MetrolistGroup/metrobot/db"
-	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo/bot"
+	"github.com/disgoorg/disgo/discord"
 	"go.uber.org/zap"
 )
 
 // DiscordCaseLogger implements the CaseLogger interface for logging cases to Discord
 type DiscordCaseLogger struct {
-	session   *discordgo.Session
+	session   *bot.Client
 	channelID string
 	logger    *zap.Logger
 }
 
 // NewDiscordCaseLogger creates a new Discord case logger
-func NewDiscordCaseLogger(session *discordgo.Session, channelID string, logger *zap.Logger) *DiscordCaseLogger {
+func NewDiscordCaseLogger(session *bot.Client, channelID string, logger *zap.Logger) *DiscordCaseLogger {
 	return &DiscordCaseLogger{
 		session:   session,
 		channelID: channelID,
@@ -32,40 +33,40 @@ func (d *DiscordCaseLogger) LogCaseToDiscord(c *db.Case, targetName, moderatorNa
 	}
 
 	// Build the embed
-	embed := &discordgo.MessageEmbed{
+	embed := &discord.Embed{
 		Title:       fmt.Sprintf("Case #%d", c.CaseNumber),
 		Color:       getCaseColor(c.ActionType),
-		Timestamp:   time.Unix(c.Timestamp, 0).Format(time.RFC3339),
+		Timestamp:   ptr(time.Unix(c.Timestamp, 0)),
 		Description: fmt.Sprintf("**%s** action performed", capitalize(c.ActionType)),
-		Fields: []*discordgo.MessageEmbedField{
+		Fields: []discord.EmbedField{
 			{
 				Name:   "Platform",
 				Value:  capitalize(c.Platform),
-				Inline: true,
+				Inline: ptr(true),
 			},
 			{
 				Name:   "Target",
 				Value:  fmt.Sprintf("%s (%s)", targetName, c.TargetID),
-				Inline: true,
+				Inline: ptr(true),
 			},
 			{
 				Name:   "Moderator",
 				Value:  moderatorName,
-				Inline: true,
+				Inline: ptr(true),
 			},
 		},
 	}
 
 	// Add reason field if provided
 	if c.Reason != "" {
-		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+		embed.Fields = append(embed.Fields, discord.EmbedField{
 			Name:  "Reason",
 			Value: c.Reason,
 		})
 	}
 
 	// Send the embed
-	_, err := d.session.ChannelMessageSendEmbed(d.channelID, embed)
+	_, err := d.session.Rest.CreateMessage(snowflakeID(d.channelID), discord.MessageCreate{Embeds: []discord.Embed{*embed}})
 	if err != nil {
 		d.logger.Error("failed to log case to Discord", zap.Error(err), zap.Int64("case_number", c.CaseNumber))
 		return err

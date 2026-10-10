@@ -5,19 +5,20 @@ import (
 	"strings"
 
 	"github.com/MetrolistGroup/metrobot/util"
-	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo/bot"
+	"github.com/disgoorg/disgo/discord"
 	"go.uber.org/zap"
 )
 
 // executePrefixCommand executes a prefix command
 // args contains the full argument string (reason, or duration+reason for tban/mute)
 // targetID is the resolved target user ID
-func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, action, args, targetID string) {
+func (b *Bot) executePrefixCommand(s *bot.Client, channelID, callerID, action, args, targetID string) {
 	banner := b.newBanner()
 	parts := strings.Fields(args)
 	failed := func(err error) {
 		b.Logger.Error(action+" failed", zap.Error(err))
-		_, _ = s.ChannelMessageSendComplex(channelID, noPingMessage("Couldn't execute "+action+". Check my permissions and role hierarchy."))
+		_, _ = s.Rest.CreateMessage(snowflakeID(channelID), *noPingMessage("Couldn't execute " + action + ". Check my permissions and role hierarchy."))
 	}
 
 	switch action {
@@ -27,7 +28,7 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 			failed(err)
 			return
 		}
-		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))
+		s.Rest.CreateMessage(snowflakeID(channelID), *noPingMessage(resp))
 
 	case "dban":
 		resp, _, err := b.Moderation.DBan(banner, callerID, targetID, args, b.Config)
@@ -35,7 +36,7 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 			failed(err)
 			return
 		}
-		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))
+		s.Rest.CreateMessage(snowflakeID(channelID), *noPingMessage(resp))
 
 	case "tban":
 		if len(parts) < 2 {
@@ -43,7 +44,7 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 		}
 		dur, err := util.ParseDuration(parts[0])
 		if err != nil {
-			s.ChannelMessageSend(channelID, fmt.Sprintf("Invalid duration: %s", err))
+			s.Rest.CreateMessage(snowflakeID(channelID), discord.MessageCreate{Content: fmt.Sprintf("Invalid duration: %s", err)})
 			return
 		}
 		var reason string
@@ -55,7 +56,7 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 			failed(err)
 			return
 		}
-		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))
+		s.Rest.CreateMessage(snowflakeID(channelID), *noPingMessage(resp))
 
 	case "sban":
 		resp, _, err := b.Moderation.SBan(banner, callerID, targetID, args, b.Config)
@@ -63,7 +64,7 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 			failed(err)
 			return
 		}
-		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))
+		s.Rest.CreateMessage(snowflakeID(channelID), *noPingMessage(resp))
 
 	case "kick":
 		resp, _, err := b.Moderation.Kick(banner, callerID, targetID, args, b.Config)
@@ -71,7 +72,7 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 			failed(err)
 			return
 		}
-		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))
+		s.Rest.CreateMessage(snowflakeID(channelID), *noPingMessage(resp))
 
 	case "mute", "timeout":
 		if len(parts) < 2 {
@@ -79,7 +80,7 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 		}
 		dur, err := util.ParseDuration(parts[0])
 		if err != nil {
-			s.ChannelMessageSend(channelID, fmt.Sprintf("Invalid duration: %s", err))
+			s.Rest.CreateMessage(snowflakeID(channelID), discord.MessageCreate{Content: fmt.Sprintf("Invalid duration: %s", err)})
 			return
 		}
 		var reason string
@@ -91,7 +92,7 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 			failed(err)
 			return
 		}
-		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))
+		s.Rest.CreateMessage(snowflakeID(channelID), *noPingMessage(resp))
 
 	case "warn":
 		resp, extras, _, err := b.Warn.Warn(banner, callerID, targetID, args, b.Config)
@@ -99,9 +100,9 @@ func (b *Bot) executePrefixCommand(s *discordgo.Session, channelID, callerID, ac
 			failed(err)
 			return
 		}
-		s.ChannelMessageSendComplex(channelID, noPingMessage(resp))
+		s.Rest.CreateMessage(snowflakeID(channelID), *noPingMessage(resp))
 		for _, extra := range extras {
-			s.ChannelMessageSendComplex(channelID, noPingMessage(extra))
+			s.Rest.CreateMessage(snowflakeID(channelID), *noPingMessage(extra))
 		}
 	}
 }

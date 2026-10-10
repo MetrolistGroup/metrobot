@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/MetrolistGroup/metrobot/gsmarena"
-	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo/bot"
+	"github.com/disgoorg/disgo/discord"
+	"github.com/disgoorg/disgo/events"
 	"go.uber.org/zap"
 )
 
@@ -29,11 +31,11 @@ var gsmarenaPages = []struct {
 	{name: "Other", sections: []string{"Launch", "Sound", "Comms", "Features", "Misc", "Tests", "Our Tests", "EU LABEL"}},
 }
 
-func (b *Bot) handleGSMArenaAutocomplete(s *discordgo.Session, i *discordgo.InteractionCreate, options []*discordgo.ApplicationCommandInteractionDataOption) {
+func (b *Bot) handleGSMArenaAutocomplete(s *bot.Client, i *events.AutocompleteInteractionCreate, options map[string]discord.AutocompleteOption) {
 	query := ""
 	for _, option := range options {
 		if (option.Name == "search" || option.Name == "first" || option.Name == "second") && option.Focused {
-			query = strings.TrimSpace(option.StringValue())
+			query = strings.TrimSpace(option.String())
 			break
 		}
 	}
@@ -49,10 +51,10 @@ func (b *Bot) handleGSMArenaAutocomplete(s *discordgo.Session, i *discordgo.Inte
 		respondAutocomplete(s, i, nil)
 		return
 	}
-	choices := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(phones))
+	choices := make([]discord.AutocompleteChoice, 0, len(phones))
 	for _, phone := range phones {
 		name := strings.TrimSpace(phone.Brand + " " + phone.Name)
-		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{
+		choices = append(choices, discord.AutocompleteChoiceString{
 			Name:  truncateRunes(name, 100),
 			Value: strconv.FormatInt(phone.ID, 10),
 		})
@@ -60,7 +62,7 @@ func (b *Bot) handleGSMArenaAutocomplete(s *discordgo.Session, i *discordgo.Inte
 	respondAutocomplete(s, i, choices)
 }
 
-func (b *Bot) handleGSMArena(s *discordgo.Session, i *discordgo.InteractionCreate, options map[string]*discordgo.ApplicationCommandInteractionDataOption) {
+func (b *Bot) handleGSMArena(s *bot.Client, i *events.ApplicationCommandInteractionCreate, options map[string]discord.SlashCommandOption) {
 	if b.gsmarena == nil {
 		respondEphemeral(s, i, "GSMArena lookup is unavailable right now.")
 		return
@@ -78,10 +80,10 @@ func (b *Bot) handleGSMArena(s *discordgo.Session, i *discordgo.InteractionCreat
 		return
 	}
 	components := gsmarenaComponents(phone, "Overview")
-	if _, err := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+	if _, err := s.Rest.CreateFollowupMessage(i.ApplicationID(), i.Token(), discord.MessageCreate{
 		Components:      components,
-		Flags:           discordgo.MessageFlagsIsComponentsV2,
-		AllowedMentions: &discordgo.MessageAllowedMentions{},
+		Flags:           discord.MessageFlagIsComponentsV2,
+		AllowedMentions: &discord.AllowedMentions{},
 	}); err != nil {
 		b.Logger.Error("failed to send GSMArena response", zap.Error(err))
 		_ = editDeferredResponse(s, i, "I couldn't display those phone specs.")
@@ -89,36 +91,36 @@ func (b *Bot) handleGSMArena(s *discordgo.Session, i *discordgo.InteractionCreat
 	}
 }
 
-func (b *Bot) handleGSMArenaComponent(s *discordgo.Session, i *discordgo.InteractionCreate) bool {
-	data := i.MessageComponentData()
-	if !strings.HasPrefix(data.CustomID, gsmarenaComponentPrefix) {
+func (b *Bot) handleGSMArenaComponent(s *bot.Client, i *events.ComponentInteractionCreate) bool {
+	data := i.StringSelectMenuInteractionData()
+	if !strings.HasPrefix(data.CustomID(), gsmarenaComponentPrefix) {
 		return false
 	}
 	if len(data.Values) != 1 || b.gsmarena == nil {
 		respondEphemeral(s, i, "Those phone specs are unavailable.")
 		return true
 	}
-	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{Type: discordgo.InteractionResponseDeferredMessageUpdate}); err != nil {
+	if err := s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{Type: discord.InteractionResponseTypeDeferredUpdateMessage}); err != nil {
 		b.Logger.Error("failed to defer GSMArena component", zap.Error(err))
 		return true
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	phone, err := b.gsmarena.Phone(ctx, strings.TrimPrefix(data.CustomID, gsmarenaComponentPrefix))
+	phone, err := b.gsmarena.Phone(ctx, strings.TrimPrefix(data.CustomID(), gsmarenaComponentPrefix))
 	if err != nil {
 		b.Logger.Warn("GSMArena component lookup failed", zap.Error(err))
-		_, _ = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{Content: "Those phone specs are unavailable.", Flags: discordgo.MessageFlagsEphemeral})
+		_, _ = s.Rest.CreateFollowupMessage(i.ApplicationID(), i.Token(), discord.MessageCreate{Content: "Those phone specs are unavailable.", Flags: discord.MessageFlagEphemeral})
 		return true
 	}
 	components := gsmarenaComponents(phone, data.Values[0])
-	mentions := &discordgo.MessageAllowedMentions{}
-	if _, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Components: &components, AllowedMentions: mentions}); err != nil {
+	mentions := &discord.AllowedMentions{}
+	if _, err := s.Rest.UpdateInteractionResponse(i.ApplicationID(), i.Token(), discord.MessageUpdate{Components: &components, AllowedMentions: mentions}); err != nil {
 		b.Logger.Error("failed to update GSMArena component", zap.Error(err))
 	}
 	return true
 }
 
-func gsmarenaComponents(phone gsmarena.Phone, active string) []discordgo.MessageComponent {
+func gsmarenaComponents(phone gsmarena.Phone, active string) []discord.LayoutComponent {
 	page := gsmarenaPages[0]
 	for _, candidate := range gsmarenaPages {
 		if candidate.name == active {
@@ -126,33 +128,33 @@ func gsmarenaComponents(phone gsmarena.Phone, active string) []discordgo.Message
 			break
 		}
 	}
-	header := []discordgo.MessageComponent{discordgo.TextDisplay{Content: "# " + phone.Name + "\n-# Specifications from GSMArena"}}
+	header := []discord.ContainerSubComponent{discord.TextDisplayComponent{Content: "# " + phone.Name + "\n-# Specifications from GSMArena"}}
 	if phone.Image != "" {
-		header = []discordgo.MessageComponent{discordgo.Section{
-			Components: header,
-			Accessory:  discordgo.Thumbnail{Media: discordgo.UnfurledMediaItem{URL: phone.Image}},
+		header = []discord.ContainerSubComponent{discord.SectionComponent{
+			Components: []discord.SectionSubComponent{header[0].(discord.TextDisplayComponent)},
+			Accessory:  discord.ThumbnailComponent{Media: discord.UnfurledMediaItem{URL: phone.Image}},
 		}}
 	}
 	body := gsmarenaOverview(phone)
 	if page.name != "Overview" {
 		body = gsmarenaSpecPage(phone, page.sections)
 	}
-	container := discordgo.Container{Components: append(header,
-		discordgo.Separator{},
-		discordgo.TextDisplay{Content: body},
-		discordgo.Separator{},
+	container := discord.ContainerComponent{Components: append(header,
+		discord.SeparatorComponent{},
+		discord.TextDisplayComponent{Content: body},
+		discord.SeparatorComponent{},
 		gsmarenaPageSelect(phone.ID, page.name),
-		discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.Button{Label: "View on GSMArena", Style: discordgo.LinkButton, URL: phone.URL}}},
+		discord.ActionRowComponent{Components: []discord.InteractiveComponent{discord.ButtonComponent{Label: "View on GSMArena", Style: discord.ButtonStyleLink, URL: phone.URL}}},
 	)}
-	return []discordgo.MessageComponent{container}
+	return []discord.LayoutComponent{container}
 }
 
-func gsmarenaPageSelect(phoneID int64, active string) discordgo.ActionsRow {
-	options := make([]discordgo.SelectMenuOption, len(gsmarenaPages))
+func gsmarenaPageSelect(phoneID int64, active string) discord.ActionRowComponent {
+	options := make([]discord.StringSelectMenuOption, len(gsmarenaPages))
 	for index, page := range gsmarenaPages {
-		options[index] = discordgo.SelectMenuOption{Label: page.name, Value: page.name, Default: page.name == active}
+		options[index] = discord.StringSelectMenuOption{Label: page.name, Value: page.name, Default: page.name == active}
 	}
-	return discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.SelectMenu{
+	return discord.ActionRowComponent{Components: []discord.InteractiveComponent{discord.StringSelectMenuComponent{
 		CustomID:    gsmarenaComponentPrefix + strconv.FormatInt(phoneID, 10),
 		Placeholder: "Choose a specification category",
 		MaxValues:   1,

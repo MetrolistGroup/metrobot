@@ -17,7 +17,8 @@ import (
 	"github.com/MetrolistGroup/metrobot/db"
 	"github.com/MetrolistGroup/metrobot/firecrawl"
 	"github.com/MetrolistGroup/metrobot/gsmarena"
-	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo/discord"
+	"github.com/disgoorg/snowflake/v2"
 )
 
 type garminAITestFunc func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error)
@@ -119,7 +120,7 @@ func TestRunGarminAIAmbientModeCanReplyReactOrStaySilent(t *testing.T) {
 			ID: "silent", Type: "function", Function: cmd.GarminAIFunctionCall{Name: "do_not_respond", Arguments: `{}`},
 		}}}}, nil
 	})
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "user"}, Content: "maybe never mind"}}
+	message := &discord.Message{GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Author: discord.User{ID: snowflakeID("100000000000000056")}, Content: "maybe never mind"}
 	bot.rememberGarminAIContext("previous", message, []cmd.GarminAIMessage{{Role: "user", Content: "hello"}, {Role: "assistant", Content: "hey"}})
 	ambientToken := bot.tryBeginGarminAIAmbient(message)
 	defer bot.endGarminAIAmbient(message, ambientToken)
@@ -140,7 +141,9 @@ func TestRunGarminAIAutomaticallyLoadsRelevantSkills(t *testing.T) {
 		heading string
 	}{
 		{name: "support", prompt: "metrolist playback keeps stopping", skill: "support", heading: "# Metrolist Support Triage"},
+
 		{name: "project", prompt: "what is the latest Metrolist release?", skill: "metrolist", heading: "# Metrolist Project Reference"},
+
 		{name: "casual", prompt: "let's play 20 questions"},
 	}
 	for _, test := range tests {
@@ -162,9 +165,9 @@ func TestRunGarminAIAutomaticallyLoadsRelevantSkills(t *testing.T) {
 				}
 				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "answer"}}, nil
 			})
-			message := &discordgo.MessageCreate{Message: &discordgo.Message{
-				ID: "1", GuildID: "guild", ChannelID: "channel", Content: "garmin, " + test.prompt, Author: &discordgo.User{ID: "user"},
-			}}
+			message := &discord.Message{
+				ID: snowflakeID("1"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Content: "garmin, " + test.prompt, Author: discord.User{ID: snowflakeID("100000000000000056")},
+			}
 			result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: test.prompt}})
 			wantSkills := 0
 			if test.skill != "" {
@@ -187,21 +190,21 @@ func TestRunGarminAIDoesNotAttachBacklogImages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := discordgo.New("Bot test")
+	session, err := newTestClient(t)
+
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.State.GuildAdd(&discordgo.Guild{ID: "guild", Roles: []*discordgo.Role{{ID: "everyone", Name: "@everyone"}}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := session.State.ChannelAdd(&discordgo.Channel{ID: "channel", GuildID: "guild", Name: "chat"}); err != nil {
-		t.Fatal(err)
-	}
-	session.Client = &http.Client{Transport: garminRoundTripFunc(func(*http.Request) (*http.Response, error) {
-		body := `[{"id":"199","channel_id":"channel","content":"","author":{"id":"someone","username":"someone"},"attachments":[{"filename":"old.png","content_type":"image/png","url":"https://cdn.example/old.png"}]}]`
+	cacheTestGuild(session, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: snowflakeID("100000000000000012")}, Roles: []discord.Role{{ID: snowflakeID("100000000000000010"), Name: "@everyone"}}}})
+	session.Caches.AddChannel(testChannel(t, map[string]any{"id": "100000000000000005", "guild_id": "100000000000000012", "name": "chat"}))
+	session.Rest = testREST(&http.Client{Transport: garminRoundTripFunc(func(*http.Request) (*http.Response,
+		error) {
+		body := `[{"id":"199","channel_id":"100000000000000005","content":"","author":{"id":"100000000000000047","username":"someone"},"attachments":[{"filename":"old.png","content_type":"image/png","url":"https://cdn.example/old.png"}]}]`
+
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
-	})}
-	bot := &Bot{Config: &config.Config{DiscordGuildID: "guild"}, garminMemory: memory}
+	})})
+
+	bot := &Bot{Config: &config.Config{DiscordGuildID: "100000000000000012"}, garminMemory: memory}
 	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		if !strings.Contains(request.Context, "old.png") {
 			t.Fatal("backlog attachment metadata was not supplied")
@@ -213,9 +216,9 @@ func TestRunGarminAIDoesNotAttachBacklogImages(t *testing.T) {
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "hey"}}, nil
 	})
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		ID: "200", GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "123456789012345678", Username: "user"}, Member: &discordgo.Member{Roles: []string{"everyone"}}, Content: "garmin, hey",
-	}}
+	message := &discord.Message{
+		ID: snowflakeID("200"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Author: discord.User{ID: snowflakeID("123456789012345678"), Username: "user"}, Member: &discord.Member{RoleIDs: []snowflake.ID{snowflakeID("100000000000000010")}}, Content: "garmin, hey",
+	}
 	if _, err := bot.runGarminAI(context.Background(), session, message, []cmd.GarminAIMessage{garminAIUserMessage(message, "hey")}); err != nil {
 		t.Fatal(err)
 	}
@@ -238,9 +241,9 @@ func TestRunGarminAIStopsRepositoryToolLoop(t *testing.T) {
 			ID: "repo", Type: "function", Function: cmd.GarminAIFunctionCall{Name: "get_github_commits", Arguments: `{"repository":"MetrolistGroup/Metrolist"}`},
 		}}}}, nil
 	})
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		ID: "1", GuildID: "guild", ChannelID: "channel", Content: "garmin, what changes were last made in that repo", Author: &discordgo.User{ID: "user"},
-	}}
+	message := &discord.Message{
+		ID: snowflakeID("1"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Content: "garmin, what changes were last made in that repo", Author: discord.User{ID: snowflakeID("100000000000000056")},
+	}
 	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "what changes were last made in that repo"}})
 	if err != nil || calls != 1 || result.Answer != "github lookup failed just now." || result.ToolCalls != 1 {
 		t.Fatalf("repository run = %#v, calls %d, error %v", result, calls, err)
@@ -259,9 +262,9 @@ func TestRunGarminAIMakesWebSearchAvailableForAnswers(t *testing.T) {
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "a useful short answer."}}, nil
 	})
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		ID: "1", GuildID: "guild", ChannelID: "channel", Content: "garmin, who coined the term quark?", Author: &discordgo.User{ID: "user"},
-	}}
+	message := &discord.Message{
+		ID: snowflakeID("1"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Content: "garmin, who coined the term quark?", Author: discord.User{ID: snowflakeID("100000000000000056")},
+	}
 	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "who coined the term quark?"}})
 	if err != nil || result.Answer != "a useful short answer." {
 		t.Fatalf("general answer = %#v, error %v", result, err)
@@ -303,9 +306,9 @@ func TestRunGarminAIDirectlyExecutesExplicitWebSearch(t *testing.T) {
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "The latest story is sourced."}}, nil
 	})
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		ID: "1", GuildID: "guild", ChannelID: "channel", Content: "look up the latest story from the guardian", Author: &discordgo.User{ID: "user"},
-	}}
+	message := &discord.Message{
+		ID: snowflakeID("1"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Content: "look up the latest story from the guardian", Author: discord.User{ID: snowflakeID("100000000000000056")},
+	}
 	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "look up the latest story from the guardian"}})
 	if err != nil || calls != 1 || result.Answer != "The latest story is sourced." || result.ToolCalls != 1 {
 		t.Fatalf("web run = %#v, calls %d, error %v", result, calls, err)
@@ -342,9 +345,9 @@ func TestRunGarminAIDirectlyFetchesPhoneSpecs(t *testing.T) {
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "The Redmi 6A uses a Helio A22."}}, nil
 	})
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		ID: "1", GuildID: "guild", ChannelID: "channel", Content: "garmin, what are the specs of the redmi 6a?", Author: &discordgo.User{ID: "user"},
-	}}
+	message := &discord.Message{
+		ID: snowflakeID("1"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Content: "garmin, what are the specs of the redmi 6a?", Author: discord.User{ID: snowflakeID("100000000000000056")},
+	}
 	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "what are the specs of the redmi 6a?"}})
 	if err != nil || calls != 1 || result.Answer != "The Redmi 6A uses a Helio A22." || result.ToolCalls != 1 || result.ThinkingDuration != 0 {
 		t.Fatalf("phone run = %#v, calls %d, error %v", result, calls, err)
@@ -352,12 +355,7 @@ func TestRunGarminAIDirectlyFetchesPhoneSpecs(t *testing.T) {
 }
 
 func TestGarminGSMArenaQueryPreservesFollowupSubject(t *testing.T) {
-	messages := []cmd.GarminAIMessage{
-		{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{Function: cmd.GarminAIFunctionCall{Name: "get_gsmarena_phone", Arguments: `{"query":"OnePlus 15"}`}}}},
-		{Role: "tool", Content: `{"source":"GSMArena"}`},
-		{Role: "assistant", Content: "The OnePlus 15 has a 7300 mAh battery."},
-		{Role: "user", Content: "what about its cameras?"},
-	}
+	messages := []cmd.GarminAIMessage{{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{Function: cmd.GarminAIFunctionCall{Name: "get_gsmarena_phone", Arguments: `{"query":"OnePlus 15"}`}}}}, {Role: "tool", Content: `{"source":"GSMArena"}`}, {Role: "assistant", Content: "The OnePlus 15 has a 7300 mAh battery."}, {Role: "user", Content: "what about its cameras?"}}
 	if got := garminGSMArenaQuery(messages); got != "OnePlus 15 what about its cameras?" {
 		t.Fatalf("follow-up query = %q", got)
 	}
@@ -381,9 +379,9 @@ func TestRunGarminAIStopsAfterWebSearchFailure(t *testing.T) {
 		calls++
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "invented result"}}, nil
 	})
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		ID: "1", GuildID: "guild", ChannelID: "channel", Content: "garmin, look up today's news", Author: &discordgo.User{ID: "user"},
-	}}
+	message := &discord.Message{
+		ID: snowflakeID("1"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Content: "garmin, look up today's news", Author: discord.User{ID: snowflakeID("100000000000000056")},
+	}
 	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "look up today's news"}})
 	if err != nil || calls != 0 || result.Answer != "web search failed just now." || result.ToolCalls != 1 {
 		t.Fatalf("web failure = %#v, calls %d, error %v", result, calls, err)
@@ -401,9 +399,9 @@ func TestRunGarminAIExecutesTextualGitHubSearchAlias(t *testing.T) {
 		calls++
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "got it. searching github for metrolist forks now. ```json\n{\n  \"tool\": \"github_search\",\n  \"query\": \"MetrolistGroup Metrolist forks\"\n}\n```"}}, nil
 	})
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		ID: "1", GuildID: "guild", ChannelID: "channel", Content: "i mean its forks or something, just do a github search", Author: &discordgo.User{ID: "user"},
-	}}
+	message := &discord.Message{
+		ID: snowflakeID("1"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Content: "i mean its forks or something, just do a github search", Author: discord.User{ID: snowflakeID("100000000000000056")},
+	}
 	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: message.Content}})
 	if err != nil || calls != 1 || result.ToolCalls != 1 || result.Answer != "github lookup failed just now." {
 		t.Fatalf("textual search = %#v, calls %d, error %v", result, calls, err)
@@ -432,9 +430,9 @@ func TestRunGarminAIUsesCalculatorBeforeAnswering(t *testing.T) {
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "3³ is 27."}}, nil
 	})
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		ID: "1", GuildID: "guild", ChannelID: "channel", Content: "garmin, what's ³3", Author: &discordgo.User{ID: "user"},
-	}}
+	message := &discord.Message{
+		ID: snowflakeID("1"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Content: "garmin, what's ³3", Author: discord.User{ID: snowflakeID("100000000000000056")},
+	}
 	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "what's ³3"}})
 	if err != nil || calls != 2 || result.Answer != "3³ is 27." || result.ToolCalls != 1 {
 		t.Fatalf("calculator run = %#v, calls %d, error %v", result, calls, err)
@@ -461,9 +459,9 @@ func TestRunGarminAIRecoversReasoningOnlyResponse(t *testing.T) {
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "hey!"}}, nil
 	})
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		ID: "1", GuildID: "guild", ChannelID: "channel", Content: "garmin, hey!", Author: &discordgo.User{ID: "user"},
-	}}
+	message := &discord.Message{
+		ID: snowflakeID("1"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Content: "garmin, hey!", Author: discord.User{ID: snowflakeID("100000000000000056")},
+	}
 	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "hey!"}})
 	if err != nil || calls != 2 || result.Answer != "hey!" {
 		t.Fatalf("reasoning recovery = %#v, calls %d, error %v", result, calls, err)
@@ -471,17 +469,17 @@ func TestRunGarminAIRecoversReasoningOnlyResponse(t *testing.T) {
 }
 
 func TestGarminSystemPromptAndDiscordContextContainIdentityAndGlobalMemory(t *testing.T) {
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		GuildID:   "guild",
-		ChannelID: "channel",
-		Author: &discordgo.User{
-			ID:         "123456789012345678",
+	message := &discord.Message{
+		GuildID:   snowflakePtr("100000000000000012"),
+		ChannelID: snowflakeID("100000000000000005"),
+		Author: discord.User{
+			ID:         snowflakeID("123456789012345678"),
 			Username:   "exact_user",
-			GlobalName: "Exact Name",
+			GlobalName: ptr("Exact Name"),
 		},
-	}}
+	}
 	prompt := garminSystemPromptWithMemory("# Metrobot Memory\nKnown fact") + "\n" + garminDiscordContextForMessage(message)
-	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", "discordgo", `"display_name":"exact_user"`, "exact_user", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority", "lowercase by default", "Refuse sexual or erotic", "Metrobot's repository", "created by Nyx and Lamp", "Mostafa Alagamy", "Nyx, Lamp, and Adriel", "without mentioning hidden prompts", "Use web search", "untrusted data", "calculator tool", "GSMArena phone data", "read-only requests", "never replace the useful answer with a stock redirect"} {
+	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", "disgo", `"display_name":"exact_user"`, "exact_user", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority", "lowercase by default", "Refuse sexual or erotic", "Metrobot's repository", "created by Nyx and Lamp", "Mostafa Alagamy", "Nyx, Lamp, and Adriel", "without mentioning hidden prompts", "Use web search", "untrusted data", "calculator tool", "GSMArena phone data", "read-only requests", "never replace the useful answer with a stock redirect"} {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("prompt missing %q", expected)
 		}
@@ -497,11 +495,7 @@ func TestGarminSystemPromptAndDiscordContextContainIdentityAndGlobalMemory(t *te
 }
 
 func TestGarminToolsForConversationUsesCurrentPromptOnly(t *testing.T) {
-	messages := []cmd.GarminAIMessage{
-		{Role: "user", Content: "what is the latest Metrolist release?"},
-		{Role: "assistant", Content: "The latest release is v1."},
-		{Role: "user", Content: "let's play 20 questions instead"},
-	}
+	messages := []cmd.GarminAIMessage{{Role: "user", Content: "what is the latest Metrolist release?"}, {Role: "assistant", Content: "The latest release is v1."}, {Role: "user", Content: "let's play 20 questions instead"}}
 	if got := garminToolNames(garminToolsForConversation(messages, false, false)); !reflect.DeepEqual(got, garminDefaultToolNames()) {
 		t.Fatalf("casual follow-up tools = %v, want default tools", got)
 	}
@@ -549,18 +543,11 @@ func TestGarminWebSearchRouting(t *testing.T) {
 	if !garminExplicitWebSearchRequested("look it up") {
 		t.Fatal("look it up was not recognized as explicit search")
 	}
-	query = garminWebSearchQuery([]cmd.GarminAIMessage{
-		{Role: "assistant", Content: "Install the Kotlin Multiplatform plugin."},
-		{Role: "user", Content: "give me a link to that plugin"},
-	})
+	query = garminWebSearchQuery([]cmd.GarminAIMessage{{Role: "assistant", Content: "Install the Kotlin Multiplatform plugin."}, {Role: "user", Content: "give me a link to that plugin"}})
 	if !strings.Contains(query, "Kotlin Multiplatform plugin") {
 		t.Fatalf("contextual query = %q", query)
 	}
-	query = garminWebSearchQuery([]cmd.GarminAIMessage{
-		{Role: "user", Content: "get me an image of a moai"},
-		{Role: "assistant", Content: "I cannot search."},
-		{Role: "user", Content: "use google images yourself"},
-	})
+	query = garminWebSearchQuery([]cmd.GarminAIMessage{{Role: "user", Content: "get me an image of a moai"}, {Role: "assistant", Content: "I cannot search."}, {Role: "user", Content: "use google images yourself"}})
 	if !strings.Contains(query, "image of a moai") {
 		t.Fatalf("generic follow-up query = %q", query)
 	}
@@ -573,31 +560,57 @@ func TestGarminToolsForConversationSelectsRelevantTools(t *testing.T) {
 		want   []string
 	}{
 		{"what is the latest Metrolist release?", false, []string{"do_not_respond", "get_metrolist_status", "search_metrolist_issues", "load_skill"}},
+
 		{"what is Nyx's GitHub username?", false, []string{"do_not_respond", "get_github_user", "get_discord_profile", "search_discord_members"}},
+
 		{"search GitHub repos for a Kotlin music client", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
+
 		{"search GitHub for Android music clients", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
+
 		{"show details for the facebook/react repository", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
+
 		{"what is https://github.com/facebook/react?", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
+
 		{"search the web for today's Android news", false, []string{"do_not_respond", "search_web"}},
+
 		{"search GSMArena for OnePlus 15 specs", false, []string{"do_not_respond", "get_gsmarena_phone"}},
+
 		{"what chipset does the Pixel 10 use?", false, []string{"do_not_respond", "get_gsmarena_phone"}},
+
 		{"look up r/sssdfg", false, []string{"do_not_respond", "search_web"}},
+
 		{"list saved notes", false, []string{"do_not_respond", "list_notes", "get_note"}},
+
 		{"show me the playback note", false, []string{"do_not_respond", "list_notes", "get_note"}},
+
 		{"playback keeps stopping", false, []string{"do_not_respond", "list_notes", "get_note"}},
+
 		{"remember that releases happen on Fridays", true, []string{"do_not_respond", "remember"}},
+
 		{"remember that releases happen on Fridays", false, []string{"do_not_respond"}},
+
 		{"remember my pronouns are they/them", false, []string{"do_not_respond", "get_discord_profile", "search_discord_members"}},
+
 		{"what roles are on <@123456789012345678>'s user profile?", false, []string{"do_not_respond", "get_discord_profile", "search_discord_members"}},
+
 		{"what was posted in sneak-peeks?", false, []string{"do_not_respond", "read_community_channel"}},
+
 		{"show me the latest minky picture", false, []string{"do_not_respond", "read_community_channel"}},
+
 		{"react to this with thumb", false, []string{"react_to_message", "do_not_respond"}},
+
 		{"print i love :glup:", false, []string{"list_discord_emojis", "view_discord_emoji", "do_not_respond"}},
+
 		{"can you give me a link to that plugin", false, []string{"do_not_respond", "search_web"}},
+
 		{"can you get me an image of a moai", false, []string{"do_not_respond", "search_web"}},
+
 		{"give me a tenor link for a moai meme", false, []string{"do_not_respond", "search_web"}},
+
 		{"what changes were last made in that repo?", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
+
 		{"what's 3³?", false, []string{"do_not_respond", "calculate_math"}},
+
 		{"what is 3-1?", false, []string{"do_not_respond", "calculate_math"}},
 	}
 	for _, test := range tests {
@@ -609,13 +622,7 @@ func TestGarminToolsForConversationSelectsRelevantTools(t *testing.T) {
 }
 
 func TestGarminGSMArenaToolFollowsPhoneSpecContext(t *testing.T) {
-	messages := []cmd.GarminAIMessage{
-		{Role: "user", Content: "what are the OnePlus 15 specs?"},
-		{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{Function: cmd.GarminAIFunctionCall{Name: "get_gsmarena_phone"}}}},
-		{Role: "tool", Content: `{"phone":{"name":"OnePlus 15"}}`},
-		{Role: "assistant", Content: "It uses a Snapdragon chipset."},
-		{Role: "user", Content: "what about battery?"},
-	}
+	messages := []cmd.GarminAIMessage{{Role: "user", Content: "what are the OnePlus 15 specs?"}, {Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{Function: cmd.GarminAIFunctionCall{Name: "get_gsmarena_phone"}}}}, {Role: "tool", Content: `{"phone":{"name":"OnePlus 15"}}`}, {Role: "assistant", Content: "It uses a Snapdragon chipset."}, {Role: "user", Content: "what about battery?"}}
 	want := []string{"do_not_respond", "get_gsmarena_phone"}
 	if got := garminToolNames(garminToolsForConversation(messages, false, false)); !reflect.DeepEqual(got, want) {
 		t.Fatalf("GSMArena follow-up tools = %v, want %v", got, want)
@@ -623,22 +630,24 @@ func TestGarminGSMArenaToolFollowsPhoneSpecContext(t *testing.T) {
 }
 
 func TestReadGarminChannelBacklogIncludesImagesAndHonorsCutoff(t *testing.T) {
-	session, err := discordgo.New("Bot test")
+	session, err := newTestClient(t)
+
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.State.GuildAdd(&discordgo.Guild{ID: "guild", Roles: []*discordgo.Role{{ID: "pronouns", Name: "she/her"}}}); err != nil {
-		t.Fatal(err)
-	}
-	session.Client = &http.Client{Transport: garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+	cacheTestGuild(session, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: snowflakeID("100000000000000012")}, Roles: []discord.Role{{ID: snowflakeID("100000000000000036"), Name: "she/her"}}}})
+	session.Rest = testREST(&http.Client{Transport: garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if request.URL.Query().Get("limit") != "20" || request.URL.Query().Get("before") != "200" {
-			t.Fatalf("backlog query = %s", request.URL.RawQuery)
+			t.Fatalf("backlog query = %s",
+				request.URL.RawQuery)
 		}
-		body := `[{"id":"199","channel_id":"channel","content":"new context","author":{"id":"user","username":"user"},"member":{"nick":"Server User","roles":["pronouns"]},"attachments":[{"id":"image","filename":"context.png","content_type":"image/png","url":"https://cdn.example/context.png"}]},{"id":"149","channel_id":"channel","content":"old secret","author":{"id":"old","username":"old"}}]`
+		body := `[{"id":"199","channel_id":"100000000000000005","content":"new context","author":{"id":"100000000000000056","username":"user"},"member":{"nick":"Server User","roles":["100000000000000036"]},"attachments":[{"id":"100000000000000016","filename":"context.png","content_type":"image/png","url":"https://cdn.example/context.png"}]},{"id":"149","channel_id":"100000000000000005","content":"old secret","author":{"id":"100000000000000028","username":"old"}}]`
+
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
-	})}
-	bot := &Bot{Config: &config.Config{DiscordGuildID: "guild"}, garminContextCutoffs: map[string]string{"channel": "150"}}
-	output, err := bot.readGarminChannelMessages(session, "channel", "200", "", 20)
+	})})
+
+	bot := &Bot{Config: &config.Config{DiscordGuildID: "100000000000000012"}, garminContextCutoffs: map[string]string{"100000000000000005": "150"}}
+	output, err := bot.readGarminChannelMessages(session, "100000000000000005", "200", "", 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -688,11 +697,11 @@ func garminToolNames(tools []cmd.GarminAITool) []string {
 }
 
 func TestGarminSystemPromptUsesNicknameWithoutMemberUser(t *testing.T) {
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		GuildID: "guild", ChannelID: "channel",
-		Author: &discordgo.User{ID: "123456789012345678", Username: "n7e3", GlobalName: "Nyx"},
-		Member: &discordgo.Member{Nick: "Nyxie"},
-	}}
+	message := &discord.Message{
+		GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"),
+		Author: discord.User{ID: snowflakeID("123456789012345678"), Username: "n7e3", GlobalName: ptr("Nyx")},
+		Member: &discord.Member{Nick: ptr("Nyxie")},
+	}
 	prompt := garminDiscordContextForMessage(message)
 	if !strings.Contains(prompt, `"display_name":"Nyxie"`) {
 		t.Fatalf("prompt did not use nickname: %s", prompt)
@@ -700,12 +709,12 @@ func TestGarminSystemPromptUsesNicknameWithoutMemberUser(t *testing.T) {
 }
 
 func TestGarminDiscordContextIncludesRepliedMessage(t *testing.T) {
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		Author: &discordgo.User{ID: "speaker", Username: "speaker"},
-		ReferencedMessage: &discordgo.Message{
-			ID: "reply", Content: "the thing we were discussing", Author: &discordgo.User{ID: "bot", Username: "metrobot"},
+	message := &discord.Message{
+		Author: discord.User{ID: snowflakeID("100000000000000048"), Username: "speaker"},
+		ReferencedMessage: &discord.Message{
+			ID: snowflakeID("100000000000000038"), Content: "the thing we were discussing", Author: discord.User{ID: snowflakeID("100000000000000002"), Username: "metrobot"},
 		},
-	}}
+	}
 	context := garminDiscordContextForMessage(message)
 	if !strings.Contains(context, "the thing we were discussing") {
 		t.Fatalf("reply context missing message content: %s", context)
@@ -713,31 +722,22 @@ func TestGarminDiscordContextIncludesRepliedMessage(t *testing.T) {
 }
 
 func TestGarminDiscordContextIncludesChannelRolesAndPronouns(t *testing.T) {
-	state := discordgo.NewState()
-	if err := state.GuildAdd(&discordgo.Guild{
-		ID:    "guild",
-		Roles: []*discordgo.Role{{ID: "role-pronouns", Name: "they/them"}, {ID: "role-team", Name: "team"}},
-		Members: []*discordgo.Member{{
-			User: &discordgo.User{ID: "876543210987654321", Username: "history_user"}, Nick: "History User", Roles: []string{"role-team"},
+	state := mustTestClient(t)
+	cacheTestGuild(state, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: snowflakeID("100000000000000012")},
+		Roles: []discord.Role{{ID: snowflakeID("100000000000000042"), Name: "they/them"}, {ID: snowflakeID("100000000000000043"), Name: "team"}}},
+		Members: []discord.Member{{
+			User: discord.User{ID: snowflakeID("876543210987654321"), Username: "history_user"}, Nick: ptr("History User"), RoleIDs: []snowflake.ID{snowflakeID("100000000000000043")},
 		}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ChannelAdd(&discordgo.Channel{
-		ID: garminGeneralID, GuildID: "guild", Name: "general", Topic: "community chat",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	session := &discordgo.Session{State: state}
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		GuildID: "guild", ChannelID: garminGeneralID,
-		Author: &discordgo.User{ID: "123456789012345678", Username: "speaker"},
-		Member: &discordgo.Member{Roles: []string{"role-pronouns", "role-team"}},
-	}}
-	context := (&Bot{}).garminDiscordContextForConversation(session, message, []cmd.GarminAIMessage{
-		{Role: "assistant", Name: garminAIConversationSummaryName, Content: "earlier conversation" + garminAIConversationParticipantsPrefix + "discord_876543210987654321"},
-		{Role: "user", Name: "discord_123456789012345678", Content: "current message"},
 	})
+	state.Caches.AddChannel(testChannel(t, map[string]any{"id": garminGeneralID, "guild_id": "100000000000000012", "name": "general", "topic": "community chat"}))
+
+	session := state
+	message := &discord.Message{
+		GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID(garminGeneralID),
+		Author: discord.User{ID: snowflakeID("123456789012345678"), Username: "speaker"},
+		Member: &discord.Member{RoleIDs: []snowflake.ID{snowflakeID("100000000000000042"), snowflakeID("100000000000000043")}},
+	}
+	context := (&Bot{}).garminDiscordContextForConversation(session, message, []cmd.GarminAIMessage{{Role: "assistant", Name: garminAIConversationSummaryName, Content: "earlier conversation" + garminAIConversationParticipantsPrefix + "discord_876543210987654321"}, {Role: "user", Name: "discord_123456789012345678", Content: "current message"}})
 	for _, expected := range []string{`"name":"general"`, `"name":"they/them"`, `"pronouns":["they/them"]`, `"tracked_conversation_users"`, `"discord_876543210987654321"`, `"display_name":"History User"`, "brief, direct, useful", "continued bot chat", "#bots"} {
 		if !strings.Contains(context, expected) {
 			t.Errorf("context missing %q: %s", expected, context)
@@ -781,12 +781,12 @@ func TestGarminSkillsLoad(t *testing.T) {
 }
 
 func TestDiscordMemberToolResultKeepsNameFieldsSeparate(t *testing.T) {
-	member := &discordgo.Member{
-		Nick: "Server Name",
-		User: &discordgo.User{
-			ID:         "123456789012345678",
+	member := &discord.Member{
+		Nick: ptr("Server Name"),
+		User: discord.User{
+			ID:         snowflakeID("123456789012345678"),
 			Username:   "login_name",
-			GlobalName: "Global Name",
+			GlobalName: ptr("Global Name"),
 		},
 	}
 	result := discordMemberToolResult(member)
@@ -869,7 +869,7 @@ func TestListNotesToolIncludesDescriptions(t *testing.T) {
 		t.Fatal(err)
 	}
 	bot := &Bot{DB: database}
-	output, _, _ := bot.executeGarminAITool(context.Background(), nil, &discordgo.MessageCreate{}, cmd.GarminAIToolCall{Function: cmd.GarminAIFunctionCall{
+	output, _, _ := bot.executeGarminAITool(context.Background(), nil, &discord.Message{}, cmd.GarminAIToolCall{Function: cmd.GarminAIFunctionCall{
 		Name: "list_notes", Arguments: `{}`,
 	}})
 	if !strings.Contains(output, `"name":"playback"`) || !strings.Contains(output, `"short_desc":"Playback stops unexpectedly"`) {
@@ -897,10 +897,10 @@ func TestRememberToolRequiresOwner(t *testing.T) {
 		Arguments: `{"content":"durable fact"}`,
 	}}
 
-	request := func(userID, content string) *discordgo.MessageCreate {
-		return &discordgo.MessageCreate{Message: &discordgo.Message{Author: &discordgo.User{ID: userID}, Content: content}}
+	request := func(userID, content string) *discord.Message {
+		return &discord.Message{Author: discord.User{ID: snowflakeID(userID)}, Content: content}
 	}
-	output, _, updated := bot.executeGarminAITool(context.Background(), nil, request("user", "garmin, remember that durable fact"), call)
+	output, _, updated := bot.executeGarminAITool(context.Background(), nil, request("100000000000000056", "garmin, remember that durable fact"), call)
 	if updated || !strings.Contains(output, "only Nyx and Lamp") {
 		t.Fatalf("non-owner remember = (%q, %v)", output, updated)
 	}

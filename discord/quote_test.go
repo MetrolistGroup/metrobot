@@ -10,35 +10,29 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo/discord"
 	"go.uber.org/zap"
 )
 
 func TestQuoteUsesServerDisplayNames(t *testing.T) {
-	session, err := discordgo.New("Bot token")
+	session, err := newTestClient(t)
+
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.State.GuildAdd(&discordgo.Guild{ID: "guild"}); err != nil {
-		t.Fatal(err)
+	cacheTestGuild(session, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: snowflakeID("100000000000000012")}}})
+
+	author := &discord.User{ID: snowflakeID("123456789012345678"), Username: "author-account", GlobalName: ptr("Author Global")}
+	mentioned := &discord.User{ID: snowflakeID("234567890123456789"), Username: "mentioned-account", GlobalName: ptr("Mention Global")}
+	replied := &discord.User{ID: snowflakeID("345678901234567890"), Username: "replied-account", GlobalName: ptr("Replied Global")}
+	for _, member := range []*discord.Member{{GuildID: snowflakeID("100000000000000012"), Nick: ptr("Author Server"), User: *author}, {GuildID: snowflakeID("100000000000000012"), Nick: ptr("Mention Server"), User: *mentioned}, {GuildID: snowflakeID("100000000000000012"), Nick: ptr("Replied Server"), User: *replied}} {
+		session.Caches.AddMember(*member)
+
 	}
-	author := &discordgo.User{ID: "123456789012345678", Username: "author-account", GlobalName: "Author Global"}
-	mentioned := &discordgo.User{ID: "234567890123456789", Username: "mentioned-account", GlobalName: "Mention Global"}
-	replied := &discordgo.User{ID: "345678901234567890", Username: "replied-account", GlobalName: "Replied Global"}
-	for _, member := range []*discordgo.Member{
-		{GuildID: "guild", Nick: "Author Server", User: author},
-		{GuildID: "guild", Nick: "Mention Server", User: mentioned},
-		{GuildID: "guild", Nick: "Replied Server", User: replied},
-	} {
-		if err := session.State.MemberAdd(member); err != nil {
-			t.Fatal(err)
-		}
-	}
-	message := &discordgo.Message{
-		GuildID: "guild", Author: author, Mentions: []*discordgo.User{mentioned},
-		Content:           "hello <@234567890123456789> and <@!234567890123456789>",
-		MessageReference:  &discordgo.MessageReference{MessageID: "reply"},
-		ReferencedMessage: &discordgo.Message{ID: "reply", Author: replied},
+	message := &discord.Message{
+		GuildID: snowflakePtr("100000000000000012"), Author: *author, Mentions: []discord.User{*mentioned},
+		Content: "hello <@234567890123456789> and <@!234567890123456789>", MessageReference: &discord.MessageReference{MessageID: snowflakePtr("100000000000000038")},
+		ReferencedMessage: &discord.Message{ID: snowflakeID("100000000000000038"), Author: *replied},
 	}
 
 	if name, _ := quoteAuthor(session, message); name != "Author Server" {
@@ -51,8 +45,8 @@ func TestQuoteUsesServerDisplayNames(t *testing.T) {
 		t.Fatalf("quote reply name = %q", got)
 	}
 
-	outsider := &discordgo.User{ID: "456789012345678901", Username: "account-name", GlobalName: "Global Name"}
-	name, _ := quoteAuthor(session, &discordgo.Message{GuildID: "guild", Author: outsider})
+	outsider := &discord.User{ID: snowflakeID("456789012345678901"), Username: "account-name", GlobalName: ptr("Global Name")}
+	name, _ := quoteAuthor(session, &discord.Message{GuildID: snowflakePtr("100000000000000012"), Author: *outsider})
 	if name != "account-name" {
 		t.Fatalf("quote fallback author = %q", name)
 	}
@@ -94,15 +88,15 @@ func TestQuoteMessageCommandClipsSelectedMessage(t *testing.T) {
 	deferred, clipped := false, false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/interactions/interaction/token/callback"):
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/interactions/100000000000000017/token/callback"):
 			deferred = true
 			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodGet && (strings.Contains(r.URL.Path, "/embed/avatars/") || strings.Contains(r.URL.Path, "/guilds/guild/members/")):
+		case r.Method == http.MethodGet && (strings.Contains(r.URL.Path, "/embed/avatars/") || strings.Contains(r.URL.Path, "/guilds/100000000000000012/members/")):
 			w.WriteHeader(http.StatusNotFound)
-		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/webhooks/app/token/messages/@original"):
+		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/webhooks/100000000000000001/token/messages/@original"):
 			clipped = strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data;")
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"id":"quote"}`))
+			_, _ = w.Write([]byte(`{"id":"100000000000000037"}`))
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -110,23 +104,22 @@ func TestQuoteMessageCommandClipsSelectedMessage(t *testing.T) {
 	}))
 	defer server.Close()
 
-	session, err := discordgo.New("Bot token")
+	session, err := newTestClient(t)
+
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.Client = server.Client()
-	session.Client.Transport = rewriteDiscordTransport{base: session.Client.Transport, target: server.URL}
+	session.Rest = testREST(server.Client())
+	session.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: session.Rest.HTTPClient().Transport, target: server.URL}
 	bot := &Bot{Logger: zap.NewNop()}
-	bot.handleQuoteInteraction(session, &discordgo.InteractionCreate{Interaction: &discordgo.Interaction{
-		ID: "interaction", AppID: "app", Token: "token", Type: discordgo.InteractionApplicationCommand,
-		GuildID: "guild", ChannelID: "channel",
-		Data: discordgo.ApplicationCommandInteractionData{
-			Name: "Clip", CommandType: discordgo.MessageApplicationCommand, TargetID: "selected",
-			Resolved: &discordgo.ApplicationCommandInteractionDataResolved{Messages: map[string]*discordgo.Message{
-				"selected": {ID: "selected", Content: "selected message", Author: &discordgo.User{ID: "123456789012345678", Username: "author"}},
-			}},
-		},
-	}})
+	interaction := testCommandInteraction(t, session, `{
+		"id":"100000000000000017","application_id":"100000000000000001","token":"token","type":2,
+		"guild_id":"100000000000000012","channel":{"id":"100000000000000005","type":0},
+		"data":{"name":"Clip","type":3,"target_id":"100000000000000045","resolved":{"messages":{
+			"100000000000000045":{"id":"100000000000000045","content":"selected message","author":{"id":"123456789012345678","username":"author"}}
+		}}}
+	}`)
+	bot.handleQuoteInteraction(session, interaction)
 
 	if !deferred || !clipped {
 		t.Fatalf("message command deferred=%v, clipped selected message=%v", deferred, clipped)

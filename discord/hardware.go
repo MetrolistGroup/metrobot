@@ -9,7 +9,9 @@ import (
 	"github.com/MetrolistGroup/metrobot/gsmarena"
 	"github.com/MetrolistGroup/metrobot/nanoreview"
 	"github.com/MetrolistGroup/metrobot/technicalcity"
-	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo/bot"
+	"github.com/disgoorg/disgo/discord"
+	"github.com/disgoorg/disgo/events"
 	"go.uber.org/zap"
 )
 
@@ -74,24 +76,24 @@ func hardwareSource(source string) string {
 	return "Technical City"
 }
 
-func (b *Bot) handleHardwareAutocomplete(s *discordgo.Session, i *discordgo.InteractionCreate, source string, options []*discordgo.ApplicationCommandInteractionDataOption) {
+func (b *Bot) handleHardwareAutocomplete(s *bot.Client, i *events.AutocompleteInteractionCreate, source string, options map[string]discord.AutocompleteOption) {
 	for _, option := range options {
-		if (option.Name != "search" && option.Name != "first" && option.Name != "second") || !option.Focused || len([]rune(strings.TrimSpace(option.StringValue()))) < 2 {
+		if (option.Name != "search" && option.Name != "first" && option.Name != "second") || !option.Focused || len([]rune(strings.TrimSpace(option.String()))) < 2 {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		devices, err := b.hardwareSearch(ctx, source, option.StringValue())
+		devices, err := b.hardwareSearch(ctx, source, option.String())
 		if err != nil {
 			b.Logger.Debug("hardware autocomplete failed", zap.String("source", source), zap.Error(err))
 			break
 		}
-		choices := make([]*discordgo.ApplicationCommandOptionChoice, 0, len(devices))
+		choices := make([]discord.AutocompleteChoice, 0, len(devices))
 		for _, d := range devices {
-			if (strings.HasPrefix(i.ApplicationCommandData().Name, "nanoreviewcompare") && strings.HasPrefix(d.Slug, "laptop/")) || len(d.Slug) > 100 {
+			if (strings.HasPrefix(i.Data.CommandName, "nanoreviewcompare") && strings.HasPrefix(d.Slug, "laptop/")) || len(d.Slug) > 100 {
 				continue
 			}
-			choices = append(choices, &discordgo.ApplicationCommandOptionChoice{Name: truncateRunes(d.Name, 100), Value: d.Slug})
+			choices = append(choices, discord.AutocompleteChoiceString{Name: truncateRunes(d.Name, 100), Value: d.Slug})
 		}
 		respondAutocomplete(s, i, choices)
 		return
@@ -99,7 +101,7 @@ func (b *Bot) handleHardwareAutocomplete(s *discordgo.Session, i *discordgo.Inte
 	respondAutocomplete(s, i, nil)
 }
 
-func (b *Bot) handleHardware(s *discordgo.Session, i *discordgo.InteractionCreate, source string, options map[string]*discordgo.ApplicationCommandInteractionDataOption) {
+func (b *Bot) handleHardware(s *bot.Client, i *events.ApplicationCommandInteractionCreate, source string, options map[string]discord.SlashCommandOption) {
 	if err := deferResponse(s, i, false); err != nil {
 		b.Logger.Error("failed to defer hardware response", zap.Error(err))
 		return
@@ -114,18 +116,18 @@ func (b *Bot) handleHardware(s *discordgo.Session, i *discordgo.InteractionCreat
 		_ = editDeferredResponse(s, i, "I couldn't find that device on "+hardwareSource(source)+".")
 		return
 	}
-	if _, err := s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
-		Components: hardwareComponents(source, device, "Overview"), Flags: discordgo.MessageFlagsIsComponentsV2,
-		AllowedMentions: &discordgo.MessageAllowedMentions{},
+	if _, err := s.Rest.CreateFollowupMessage(i.ApplicationID(), i.Token(), discord.MessageCreate{
+		Components: hardwareComponents(source, device, "Overview"), Flags: discord.MessageFlagIsComponentsV2,
+		AllowedMentions: &discord.AllowedMentions{},
 	}); err != nil {
 		b.Logger.Error("failed to send hardware response", zap.Error(err))
 		_ = editDeferredResponse(s, i, "I couldn't display those specifications.")
 	}
 }
 
-func (b *Bot) handleHardwareComponent(s *discordgo.Session, i *discordgo.InteractionCreate) bool {
-	data := i.MessageComponentData()
-	parts := strings.SplitN(data.CustomID, ":", 3)
+func (b *Bot) handleHardwareComponent(s *bot.Client, i *events.ComponentInteractionCreate) bool {
+	data := i.StringSelectMenuInteractionData()
+	parts := strings.SplitN(data.CustomID(), ":", 3)
 	if len(parts) != 3 || parts[0] != "hw" || (parts[1] != "nano" && parts[1] != "tc") {
 		return false
 	}
@@ -133,7 +135,7 @@ func (b *Bot) handleHardwareComponent(s *discordgo.Session, i *discordgo.Interac
 		respondEphemeral(s, i, "Those specifications are unavailable.")
 		return true
 	}
-	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{Type: discordgo.InteractionResponseDeferredMessageUpdate}); err != nil {
+	if err := s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{Type: discord.InteractionResponseTypeDeferredUpdateMessage}); err != nil {
 		b.Logger.Error("failed to defer hardware component", zap.Error(err))
 		return true
 	}
@@ -142,17 +144,17 @@ func (b *Bot) handleHardwareComponent(s *discordgo.Session, i *discordgo.Interac
 	device, err := b.hardwareLookup(ctx, parts[1], parts[2], true)
 	if err != nil {
 		b.Logger.Warn("hardware component lookup failed", zap.Error(err))
-		_, _ = s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{Content: "Those specifications are unavailable.", Flags: discordgo.MessageFlagsEphemeral})
+		_, _ = s.Rest.CreateFollowupMessage(i.ApplicationID(), i.Token(), discord.MessageCreate{Content: "Those specifications are unavailable.", Flags: discord.MessageFlagEphemeral})
 		return true
 	}
 	components := hardwareComponents(parts[1], device, data.Values[0])
-	if _, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Components: &components, AllowedMentions: &discordgo.MessageAllowedMentions{}}); err != nil {
+	if _, err := s.Rest.UpdateInteractionResponse(i.ApplicationID(), i.Token(), discord.MessageUpdate{Components: &components, AllowedMentions: &discord.AllowedMentions{}}); err != nil {
 		b.Logger.Error("failed to update hardware component", zap.Error(err))
 	}
 	return true
 }
 
-func hardwareComponents(source string, device hardwareDevice, active string) []discordgo.MessageComponent {
+func hardwareComponents(source string, device hardwareDevice, active string) []discord.LayoutComponent {
 	pages := []string{"Overview"}
 	for _, section := range device.Specs {
 		if section.Name != "" && len(section.Items) > 0 && !containsHardwarePage(pages, section.Name) {
@@ -189,22 +191,22 @@ func hardwareComponents(source string, device hardwareDevice, active string) []d
 			body = truncateRunes(strings.Join(lines, "\n"), 3900)
 		}
 	}
-	header := []discordgo.MessageComponent{discordgo.TextDisplay{Content: "# " + truncateRunes(device.Name, 180) + "\n-# Specifications from " + hardwareSource(source)}}
+	header := []discord.ContainerSubComponent{discord.TextDisplayComponent{Content: "# " + truncateRunes(device.Name, 180) + "\n-# Specifications from " + hardwareSource(source)}}
 	if device.Image != "" {
-		header = []discordgo.MessageComponent{discordgo.Section{Components: header, Accessory: discordgo.Thumbnail{Media: discordgo.UnfurledMediaItem{URL: device.Image}}}}
+		header = []discord.ContainerSubComponent{discord.SectionComponent{Components: []discord.SectionSubComponent{header[0].(discord.TextDisplayComponent)}, Accessory: discord.ThumbnailComponent{Media: discord.UnfurledMediaItem{URL: device.Image}}}}
 	}
-	components := append(header, discordgo.Separator{}, discordgo.TextDisplay{Content: body})
+	components := append(header, discord.SeparatorComponent{}, discord.TextDisplayComponent{Content: body})
 	if len(pages) > 1 && len("hw:"+source+":"+device.Slug) <= 100 {
-		options := make([]discordgo.SelectMenuOption, 0, len(pages))
+		options := make([]discord.StringSelectMenuOption, 0, len(pages))
 		for index, page := range pages {
-			options = append(options, discordgo.SelectMenuOption{Label: truncateRunes(page, 100), Value: fmt.Sprint(index), Default: index == activeIndex})
+			options = append(options, discord.StringSelectMenuOption{Label: truncateRunes(page, 100), Value: fmt.Sprint(index), Default: index == activeIndex})
 		}
-		components = append(components, discordgo.Separator{}, discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.SelectMenu{
+		components = append(components, discord.SeparatorComponent{}, discord.ActionRowComponent{Components: []discord.InteractiveComponent{discord.StringSelectMenuComponent{
 			CustomID: "hw:" + source + ":" + device.Slug, Placeholder: "Choose a specification category", MaxValues: 1, Options: options,
 		}}})
 	}
-	components = append(components, discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.Button{Label: "View on " + hardwareSource(source), Style: discordgo.LinkButton, URL: device.URL}}})
-	return []discordgo.MessageComponent{discordgo.Container{Components: components}}
+	components = append(components, discord.ActionRowComponent{Components: []discord.InteractiveComponent{discord.ButtonComponent{Label: "View on " + hardwareSource(source), Style: discord.ButtonStyleLink, URL: device.URL}}})
+	return []discord.LayoutComponent{discord.ContainerComponent{Components: components}}
 }
 
 func containsHardwarePage(pages []string, page string) bool {

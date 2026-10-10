@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/MetrolistGroup/metrobot/db"
-	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo/bot"
+	"github.com/disgoorg/disgo/discord"
+	"github.com/disgoorg/disgo/events"
 	"go.uber.org/zap"
 )
 
@@ -55,8 +57,8 @@ func prohibitedReactionReason(emojiName string) (string, bool) {
 	}
 }
 
-func isSessionUser(s *discordgo.Session, userID string) bool {
-	return s.State != nil && s.State.User != nil && userID == s.State.User.ID
+func isSessionUser(s *bot.Client, userID string) bool {
+	return s.Caches != nil && s.ID() != 0 && userID == s.ID().String()
 }
 
 func (b *Bot) reactionBoards() []reactionBoard {
@@ -87,44 +89,44 @@ func (b *Bot) boardThreshold() int {
 }
 
 // handleReactionAdd handles reaction add events for starboard and sobboard.
-func (b *Bot) handleReactionAdd(s *discordgo.Session, r *discordgo.MessageReactionAdd) {
+func (b *Bot) handleReactionAdd(s *bot.Client, r *events.MessageReactionAdd) {
 	if b.handleProhibitedReaction(s, r) {
 		return
 	}
-	if b.Config.StarboardChannelID == "" || r.GuildID != b.Config.DiscordGuildID {
+	if b.Config.StarboardChannelID == "" || snowflakeString(r.GuildID) != b.Config.DiscordGuildID {
 		return
 	}
 
-	board, ok := b.reactionBoard(r.Emoji.Name)
+	board, ok := b.reactionBoard(value(r.Emoji.Name))
 	if !ok {
 		return
 	}
-	if r.ChannelID == b.Config.StarboardChannelID {
-		b.handleBoardMessageReaction(s, r.MessageID, board)
+	if r.ChannelID.String() == b.Config.StarboardChannelID {
+		b.handleBoardMessageReaction(s, r.MessageID.String(), board)
 		return
 	}
-	if b.ignoreBoardChannel(s, r.ChannelID) {
+	if b.ignoreBoardChannel(s, r.ChannelID.String()) {
 		return
 	}
-	b.handleOriginalMessageReaction(s, r.ChannelID, r.MessageID, r.GuildID, board)
+	b.handleOriginalMessageReaction(s, r.ChannelID.String(), r.MessageID.String(), snowflakeString(r.GuildID), board)
 }
 
-func (b *Bot) handleProhibitedReaction(s *discordgo.Session, r *discordgo.MessageReactionAdd) bool {
-	reason, prohibited := prohibitedReactionReason(r.Emoji.Name)
-	if r.GuildID != b.Config.DiscordGuildID || r.UserID == "" || !prohibited {
+func (b *Bot) handleProhibitedReaction(s *bot.Client, r *events.MessageReactionAdd) bool {
+	reason, prohibited := prohibitedReactionReason(value(r.Emoji.Name))
+	if snowflakeString(r.GuildID) != b.Config.DiscordGuildID || r.UserID == 0 || !prohibited {
 		return false
 	}
-	if isSessionUser(s, r.UserID) {
+	if isSessionUser(s, r.UserID.String()) {
 		return true
 	}
 
-	b.removeAndWarnProhibitedReaction(s, r.ChannelID, r.MessageID, r.UserID, r.Emoji.APIName(), reason)
+	b.removeAndWarnProhibitedReaction(s, r.ChannelID.String(), r.MessageID.String(), r.UserID.String(), r.Emoji.Reaction(), reason)
 	return true
 }
 
-func (b *Bot) removeAndWarnProhibitedReaction(s *discordgo.Session, channelID, messageID, userID, emojiAPIName, reason string) (bool, bool, bool) {
+func (b *Bot) removeAndWarnProhibitedReaction(s *bot.Client, channelID, messageID, userID, emojiAPIName, reason string) (bool, bool, bool) {
 	removed := true
-	if err := s.MessageReactionRemove(channelID, messageID, emojiAPIName, userID); err != nil {
+	if err := s.Rest.RemoveUserReaction(snowflakeID(channelID), snowflakeID(messageID), emojiAPIName, snowflakeID(userID)); err != nil {
 		removed = false
 		b.Logger.Warn("failed to remove prohibited reaction",
 			zap.Error(err),
@@ -149,10 +151,10 @@ func (b *Bot) removeAndWarnProhibitedReaction(s *discordgo.Session, channelID, m
 	return removed, warned, false
 }
 
-func (b *Bot) scanProhibitedReactions(s *discordgo.Session, channelID string) (prohibitedReactionScanResult, error) {
+func (b *Bot) scanProhibitedReactions(s *bot.Client, channelID string) (prohibitedReactionScanResult, error) {
 	var result prohibitedReactionScanResult
 
-	messages, err := s.ChannelMessages(channelID, 100, "", "", "")
+	messages, err := s.Rest.GetMessages(snowflakeID(channelID), 0, 0, 0, 100)
 	if err != nil {
 		return result, err
 	}
@@ -160,7 +162,7 @@ func (b *Bot) scanProhibitedReactions(s *discordgo.Session, channelID string) (p
 
 	for _, msg := range messages {
 		for _, reaction := range msg.Reactions {
-			if reaction == nil || reaction.Emoji == nil {
+			if reaction.Emoji.Name == "" && reaction.Emoji.ID == 0 {
 				continue
 			}
 
@@ -171,12 +173,12 @@ func (b *Bot) scanProhibitedReactions(s *discordgo.Session, channelID string) (p
 
 			afterID := ""
 			for {
-				users, err := s.MessageReactions(channelID, msg.ID, reaction.Emoji.APIName(), 100, "", afterID)
+				users, err := s.Rest.GetReactions(snowflakeID(channelID), msg.ID, reaction.Emoji.Reaction(), discord.MessageReactionTypeNormal, int(snowflakeID(afterID)), 100)
 				if err != nil {
 					result.FetchFailures++
 					b.Logger.Error("failed to fetch prohibited reaction users",
 						zap.Error(err),
-						zap.String("messageID", msg.ID),
+						zap.String("messageID", msg.ID.String()),
 						zap.String("emoji", reaction.Emoji.Name))
 					break
 				}
@@ -185,12 +187,12 @@ func (b *Bot) scanProhibitedReactions(s *discordgo.Session, channelID string) (p
 				}
 
 				for _, user := range users {
-					if user == nil || user.ID == "" || isSessionUser(s, user.ID) {
+					if user.ID == 0 || isSessionUser(s, user.ID.String()) {
 						continue
 					}
 
 					result.ReactionsFound++
-					removed, warned, skipped := b.removeAndWarnProhibitedReaction(s, channelID, msg.ID, user.ID, reaction.Emoji.APIName(), reason)
+					removed, warned, skipped := b.removeAndWarnProhibitedReaction(s, channelID, msg.ID.String(), user.ID.String(), reaction.Emoji.Reaction(), reason)
 					if removed {
 						result.ReactionsRemoved++
 					} else {
@@ -208,7 +210,7 @@ func (b *Bot) scanProhibitedReactions(s *discordgo.Session, channelID string) (p
 				if len(users) < 100 {
 					break
 				}
-				afterID = users[len(users)-1].ID
+				afterID = users[len(users)-1].ID.String()
 			}
 		}
 	}
@@ -216,7 +218,7 @@ func (b *Bot) scanProhibitedReactions(s *discordgo.Session, channelID string) (p
 	return result, nil
 }
 
-func (b *Bot) ignoreBoardChannel(s *discordgo.Session, channelID string) bool {
+func (b *Bot) ignoreBoardChannel(s *bot.Client, channelID string) bool {
 	ignored, err := boardChannelIgnored(s, channelID)
 	if err != nil {
 		b.Logger.Warn("board reaction ignored - failed to resolve channel category",
@@ -226,33 +228,47 @@ func (b *Bot) ignoreBoardChannel(s *discordgo.Session, channelID string) bool {
 	return ignored
 }
 
-func boardChannelIgnored(s *discordgo.Session, channelID string) (bool, error) {
+func boardChannelIgnored(s *bot.Client, channelID string) (bool, error) {
 	channel, err := getDiscordChannel(s, channelID)
 	if err != nil {
 		return false, err
 	}
-	categoryID := channel.ParentID
-	if channel.IsThread() {
-		parent, err := getDiscordChannel(s, channel.ParentID)
+	categoryID := snowflakeString(channel.ParentID())
+	if isThread(channel) {
+		parent, err := getDiscordChannel(s, snowflakeString(channel.ParentID()))
 		if err != nil {
 			return false, err
 		}
-		categoryID = parent.ParentID
+		categoryID = snowflakeString(parent.ParentID())
 	}
 	_, ignored := ignoredBoardCategories[categoryID]
 	return ignored, nil
 }
 
-func getDiscordChannel(s *discordgo.Session, channelID string) (*discordgo.Channel, error) {
-	if s.State != nil {
-		if channel, err := s.State.Channel(channelID); err == nil {
+func getDiscordChannel(s *bot.Client, channelID string) (discord.GuildChannel, error) {
+	if s == nil {
+		return nil, fmt.Errorf("Discord client is unavailable")
+	}
+	if s.Caches != nil {
+		if channel, ok := s.Caches.Channel(snowflakeID(channelID)); ok {
 			return channel, nil
 		}
 	}
-	return s.Channel(channelID)
+	if s.Rest == nil {
+		return nil, fmt.Errorf("Discord channel is unavailable")
+	}
+	channel, err := s.Rest.GetChannel(snowflakeID(channelID))
+	if err != nil {
+		return nil, err
+	}
+	guildChannel, ok := channel.(discord.GuildChannel)
+	if !ok {
+		return nil, fmt.Errorf("channel %s is not a guild channel", channelID)
+	}
+	return guildChannel, nil
 }
 
-func (b *Bot) handleBoardMessageReaction(s *discordgo.Session, boardMessageID string, board reactionBoard) {
+func (b *Bot) handleBoardMessageReaction(s *bot.Client, boardMessageID string, board reactionBoard) {
 	entry, err := b.DB.GetBoardEntryByStarboardMsgID(board.name, boardMessageID)
 	if err != nil {
 		b.Logger.Error("failed to find board entry", zap.Error(err), zap.String("board", board.name))
@@ -262,7 +278,7 @@ func (b *Bot) handleBoardMessageReaction(s *discordgo.Session, boardMessageID st
 		return
 	}
 
-	msg, err := s.ChannelMessage(entry.ChannelID, entry.OriginalMsgID)
+	msg, err := s.Rest.GetMessage(snowflakeID(entry.ChannelID), snowflakeID(entry.OriginalMsgID))
 	if err != nil {
 		b.Logger.Error("failed to get original board message", zap.Error(err), zap.String("board", board.name))
 		return
@@ -271,13 +287,13 @@ func (b *Bot) handleBoardMessageReaction(s *discordgo.Session, boardMessageID st
 	b.syncBoardEntry(s, board, entry, msg, count)
 }
 
-func (b *Bot) handleOriginalMessageReaction(s *discordgo.Session, channelID, messageID, guildID string, board reactionBoard) {
-	msg, err := s.ChannelMessage(channelID, messageID)
+func (b *Bot) handleOriginalMessageReaction(s *bot.Client, channelID, messageID, guildID string, board reactionBoard) {
+	msg, err := s.Rest.GetMessage(snowflakeID(channelID), snowflakeID(messageID))
 	if err != nil {
 		b.Logger.Error("failed to get message for board", zap.Error(err), zap.String("board", board.name))
 		return
 	}
-	if msg.Author == nil {
+	if msg.Author.ID == 0 || msg.Author.Bot || msg.WebhookID != nil {
 		return
 	}
 
@@ -305,7 +321,7 @@ func (b *Bot) handleOriginalMessageReaction(s *discordgo.Session, channelID, mes
 		messageID,
 		channelID,
 		guildID,
-		msg.Author.ID,
+		msg.Author.ID.String(),
 		msg.Content,
 		count,
 		time.Now().Unix(),
@@ -327,31 +343,31 @@ func (b *Bot) handleOriginalMessageReaction(s *discordgo.Session, channelID, mes
 }
 
 // handleReactionRemove handles reaction remove events for starboard and sobboard.
-func (b *Bot) handleReactionRemove(s *discordgo.Session, r *discordgo.MessageReactionRemove) {
-	if b.Config.StarboardChannelID == "" || r.GuildID != b.Config.DiscordGuildID {
+func (b *Bot) handleReactionRemove(s *bot.Client, r *events.MessageReactionRemove) {
+	if b.Config.StarboardChannelID == "" || snowflakeString(r.GuildID) != b.Config.DiscordGuildID {
 		return
 	}
-	board, ok := b.reactionBoard(r.Emoji.Name)
+	board, ok := b.reactionBoard(value(r.Emoji.Name))
 	if !ok {
 		return
 	}
-	if r.ChannelID == b.Config.StarboardChannelID {
-		b.handleBoardMessageReaction(s, r.MessageID, board)
+	if r.ChannelID.String() == b.Config.StarboardChannelID {
+		b.handleBoardMessageReaction(s, r.MessageID.String(), board)
 		return
 	}
-	if b.ignoreBoardChannel(s, r.ChannelID) {
+	if b.ignoreBoardChannel(s, r.ChannelID.String()) {
 		return
 	}
-	b.handleOriginalMessageReactionRemove(s, r.ChannelID, r.MessageID, board)
+	b.handleOriginalMessageReactionRemove(s, r.ChannelID.String(), r.MessageID.String(), board)
 }
 
-func (b *Bot) handleOriginalMessageReactionRemove(s *discordgo.Session, channelID, messageID string, board reactionBoard) {
+func (b *Bot) handleOriginalMessageReactionRemove(s *bot.Client, channelID, messageID string, board reactionBoard) {
 	entry, err := b.DB.GetBoardEntry(board.name, messageID)
 	if err != nil || entry == nil {
 		return
 	}
 
-	msg, err := s.ChannelMessage(channelID, messageID)
+	msg, err := s.Rest.GetMessage(snowflakeID(channelID), snowflakeID(messageID))
 	if err != nil {
 		count := entry.StarCount - 1
 		if count < 0 {
@@ -364,10 +380,10 @@ func (b *Bot) handleOriginalMessageReactionRemove(s *discordgo.Session, channelI
 	b.syncBoardEntry(s, board, entry, msg, count)
 }
 
-func (b *Bot) syncBoardEntry(s *discordgo.Session, board reactionBoard, entry *db.BoardEntry, msg *discordgo.Message, count int) {
+func (b *Bot) syncBoardEntry(s *bot.Client, board reactionBoard, entry *db.BoardEntry, msg *discord.Message, count int) {
 	if count < b.boardThreshold() {
 		if entry.StarboardMsgID != nil {
-			if err := s.ChannelMessageDelete(b.Config.StarboardChannelID, *entry.StarboardMsgID); err != nil {
+			if err := s.Rest.DeleteMessage(snowflakeID(b.Config.StarboardChannelID), snowflakeID(*entry.StarboardMsgID)); err != nil {
 				b.Logger.Warn("failed to delete board message", zap.Error(err), zap.String("board", board.name))
 			}
 		}
@@ -387,35 +403,35 @@ func (b *Bot) syncBoardEntry(s *discordgo.Session, board reactionBoard, entry *d
 }
 
 // handleMessageDelete cleans both boards when an original message is deleted.
-func (b *Bot) handleMessageDelete(s *discordgo.Session, m *discordgo.MessageDelete) {
+func (b *Bot) handleMessageDelete(s *bot.Client, m *events.MessageDelete) {
 	if b.Config.StarboardChannelID == "" {
 		return
 	}
 	for _, board := range b.reactionBoards() {
-		entry, err := b.DB.GetBoardEntry(board.name, m.ID)
+		entry, err := b.DB.GetBoardEntry(board.name, m.MessageID.String())
 		if err != nil || entry == nil {
 			continue
 		}
 		if entry.StarboardMsgID != nil {
-			s.ChannelMessageDelete(b.Config.StarboardChannelID, *entry.StarboardMsgID)
+			s.Rest.DeleteMessage(snowflakeID(b.Config.StarboardChannelID), snowflakeID(*entry.StarboardMsgID))
 		}
-		b.DB.DeleteBoardEntry(board.name, m.ID)
+		b.DB.DeleteBoardEntry(board.name, m.MessageID.String())
 	}
 }
 
-func countReactions(reactions []*discordgo.MessageReactions, emoji string) int {
+func countReactions(reactions []discord.MessageReaction, emoji string) int {
 	for _, reaction := range reactions {
-		if reaction == nil || reaction.Emoji == nil {
+		if reaction.Emoji.Name == "" && reaction.Emoji.ID == 0 {
 			continue
 		}
-		if reaction.Emoji.Name == emoji || reaction.Emoji.ID != "" && reaction.Emoji.ID == emoji {
+		if reaction.Emoji.Name == emoji || reaction.Emoji.ID != 0 && reaction.Emoji.ID.String() == emoji {
 			return reaction.Count
 		}
 	}
 	return 0
 }
 
-func (b *Bot) countTotalBoardReactions(s *discordgo.Session, originalMsg *discordgo.Message, boardMessageID *string, board reactionBoard) int {
+func (b *Bot) countTotalBoardReactions(s *bot.Client, originalMsg *discord.Message, boardMessageID *string, board reactionBoard) int {
 	count := 0
 	if originalMsg != nil {
 		count = countReactions(originalMsg.Reactions, board.emoji)
@@ -424,7 +440,7 @@ func (b *Bot) countTotalBoardReactions(s *discordgo.Session, originalMsg *discor
 		return count
 	}
 
-	boardMessage, err := s.ChannelMessage(b.Config.StarboardChannelID, *boardMessageID)
+	boardMessage, err := s.Rest.GetMessage(snowflakeID(b.Config.StarboardChannelID), snowflakeID(*boardMessageID))
 	if err != nil {
 		b.Logger.Warn("failed to get board message for reaction count", zap.Error(err), zap.String("board", board.name))
 		return count
@@ -432,42 +448,42 @@ func (b *Bot) countTotalBoardReactions(s *discordgo.Session, originalMsg *discor
 	return count + countReactions(boardMessage.Reactions, board.emoji)
 }
 
-func (b *Bot) postToBoard(s *discordgo.Session, msg *discordgo.Message, count int, board reactionBoard) (string, error) {
-	guildID := msg.GuildID
+func (b *Bot) postToBoard(s *bot.Client, msg *discord.Message, count int, board reactionBoard) (string, error) {
+	guildID := snowflakeString(msg.GuildID)
 	if guildID == "" {
 		guildID = b.Config.DiscordGuildID
 	}
-	embed := &discordgo.MessageEmbed{
-		Author: &discordgo.MessageEmbedAuthor{
+	embed := &discord.Embed{
+		Author: &discord.EmbedAuthor{
 			Name:    msg.Author.Username,
-			IconURL: msg.Author.AvatarURL(""),
+			IconURL: msg.Author.EffectiveAvatarURL(),
 		},
 		Description: boardDescription(msg, guildID),
 		Color:       0xFFD700,
-		Timestamp:   msg.Timestamp.Format(time.RFC3339),
-		Footer: &discordgo.MessageEmbedFooter{
-			Text: fmt.Sprintf("#%s", msg.ChannelID),
+		Timestamp:   ptr(msg.CreatedAt),
+		Footer: &discord.EmbedFooter{
+			Text: fmt.Sprintf("#%s", msg.ChannelID.String()),
 		},
 	}
 	for _, attachment := range msg.Attachments {
-		if isImage(attachment.ContentType) {
-			embed.Image = &discordgo.MessageEmbedImage{URL: attachment.URL}
+		if isImage(value(attachment.ContentType)) {
+			embed.Image = &discord.EmbedResource{URL: attachment.URL}
 			break
 		}
 	}
 
-	messageURL := discordMessageURL(guildID, msg.ChannelID, msg.ID)
-	posted, err := s.ChannelMessageSendComplex(b.Config.StarboardChannelID, &discordgo.MessageSend{
+	messageURL := discordMessageURL(guildID, msg.ChannelID.String(), msg.ID.String())
+	posted, err := s.Rest.CreateMessage(snowflakeID(b.Config.StarboardChannelID), discord.MessageCreate{
 		Content: fmt.Sprintf("%s %d | <%s>", board.emoji, count, messageURL),
-		Embeds:  []*discordgo.MessageEmbed{embed},
+		Embeds:  []discord.Embed{*embed},
 	})
 	if err != nil {
 		return "", err
 	}
-	return posted.ID, nil
+	return posted.ID.String(), nil
 }
 
-func boardDescription(msg *discordgo.Message, guildID string) string {
+func boardDescription(msg *discord.Message, guildID string) string {
 	description := msg.Content
 	if description == "" && len(msg.Embeds) > 0 {
 		description = "*[Message contains embeds]*"
@@ -478,25 +494,25 @@ func boardDescription(msg *discordgo.Message, guildID string) string {
 
 	replyText := "*[Replied message unavailable]*"
 	replyAuthor := "a message"
-	channelID := msg.ChannelID
-	if msg.MessageReference.ChannelID != "" {
-		channelID = msg.MessageReference.ChannelID
+	channelID := msg.ChannelID.String()
+	if snowflakeString(msg.MessageReference.ChannelID) != "" {
+		channelID = snowflakeString(msg.MessageReference.ChannelID)
 	}
-	messageID := msg.MessageReference.MessageID
+	messageID := snowflakeString(msg.MessageReference.MessageID)
 	if reply := msg.ReferencedMessage; reply != nil {
 		if reply.Content != "" {
 			replyText = reply.Content
 		} else if len(reply.Attachments) > 0 || len(reply.Embeds) > 0 {
 			replyText = "*[Message contains attachments or embeds]*"
 		}
-		if reply.Author != nil {
+		if reply.Author.ID != 0 {
 			replyAuthor = "@" + reply.Author.Username
 		}
-		if reply.ChannelID != "" {
-			channelID = reply.ChannelID
+		if reply.ChannelID != 0 {
+			channelID = reply.ChannelID.String()
 		}
-		if reply.ID != "" {
-			messageID = reply.ID
+		if reply.ID != 0 {
+			messageID = reply.ID.String()
 		}
 	}
 
@@ -525,14 +541,14 @@ func discordMessageURL(guildID, channelID, messageID string) string {
 	return fmt.Sprintf("https://discord.com/channels/%s/%s/%s", guildID, channelID, messageID)
 }
 
-func (b *Bot) updateBoardMessage(s *discordgo.Session, board reactionBoard, boardMessageID string, msg *discordgo.Message, count int) {
+func (b *Bot) updateBoardMessage(s *bot.Client, board reactionBoard, boardMessageID string, msg *discord.Message, count int) {
 	var messageURL string
 	if msg != nil {
-		guildID := msg.GuildID
+		guildID := snowflakeString(msg.GuildID)
 		if guildID == "" {
 			guildID = b.Config.DiscordGuildID
 		}
-		messageURL = discordMessageURL(guildID, msg.ChannelID, msg.ID)
+		messageURL = discordMessageURL(guildID, msg.ChannelID.String(), msg.ID.String())
 	} else if entry, err := b.DB.GetBoardEntryByStarboardMsgID(board.name, boardMessageID); err == nil && entry != nil {
 		messageURL = discordMessageURL(entry.GuildID, entry.ChannelID, entry.OriginalMsgID)
 	}
@@ -541,13 +557,13 @@ func (b *Bot) updateBoardMessage(s *discordgo.Session, board reactionBoard, boar
 	if messageURL != "" {
 		content += fmt.Sprintf(" | <%s>", messageURL)
 	}
-	if _, err := s.ChannelMessageEdit(b.Config.StarboardChannelID, boardMessageID, content); err != nil {
+	if _, err := s.Rest.UpdateMessage(snowflakeID(b.Config.StarboardChannelID), snowflakeID(boardMessageID), discord.MessageUpdate{Content: ptr(content)}); err != nil {
 		b.Logger.Warn("failed to update board message", zap.Error(err), zap.String("board", board.name))
 	}
 }
 
 // RefreshAllStarboard refreshes both starboard and sobboard entries.
-func (b *Bot) RefreshAllStarboard(s *discordgo.Session) error {
+func (b *Bot) RefreshAllStarboard(s *bot.Client) error {
 	for _, board := range b.reactionBoards() {
 		entries, err := b.DB.GetAllBoardEntries(board.name)
 		if err != nil {
@@ -561,13 +577,13 @@ func (b *Bot) RefreshAllStarboard(s *discordgo.Session) error {
 			}
 			if ignored {
 				if entry.StarboardMsgID != nil {
-					s.ChannelMessageDelete(b.Config.StarboardChannelID, *entry.StarboardMsgID)
+					s.Rest.DeleteMessage(snowflakeID(b.Config.StarboardChannelID), snowflakeID(*entry.StarboardMsgID))
 				}
 				b.DB.DeleteBoardEntry(board.name, entry.OriginalMsgID)
 				continue
 			}
 
-			msg, err := s.ChannelMessage(entry.ChannelID, entry.OriginalMsgID)
+			msg, err := s.Rest.GetMessage(snowflakeID(entry.ChannelID), snowflakeID(entry.OriginalMsgID))
 			if err != nil {
 				b.Logger.Error("failed to get message during board refresh", zap.Error(err), zap.String("board", board.name))
 				continue

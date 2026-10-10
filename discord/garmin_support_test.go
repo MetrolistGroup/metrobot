@@ -15,7 +15,7 @@ import (
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/config"
 	"github.com/MetrolistGroup/metrobot/db"
-	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo/discord"
 	"go.uber.org/zap"
 )
 
@@ -42,8 +42,11 @@ func TestGarminAppSupportTriageUsesModelActions(t *testing.T) {
 		want  bool
 	}{
 		{name: "handoff", calls: []cmd.GarminAIToolCall{{Function: cmd.GarminAIFunctionCall{Name: "handoff_to_app_support_agent"}}}, want: true},
+
 		{name: "ignore", calls: []cmd.GarminAIToolCall{{Function: cmd.GarminAIFunctionCall{Name: "do_not_respond"}}}},
+
 		{name: "fail closed on text"},
+
 		{name: "ignore wins", calls: []cmd.GarminAIToolCall{{Function: cmd.GarminAIFunctionCall{Name: "handoff_to_app_support_agent"}}, {Function: cmd.GarminAIFunctionCall{Name: "do_not_respond"}}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -57,10 +60,10 @@ func TestGarminAppSupportTriageUsesModelActions(t *testing.T) {
 				}
 				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "should never be sent", ToolCalls: test.calls}}, nil
 			})
-			message := &discordgo.MessageCreate{Message: &discordgo.Message{
-				ID: "20", GuildID: "guild", ChannelID: garminAppSupportID, Content: "insane",
-				Author: &discordgo.User{ID: "user", Username: "user"}, Member: &discordgo.Member{},
-			}}
+			message := &discord.Message{
+				ID: snowflakeID("20"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID(garminAppSupportID), Content: "insane",
+				Author: discord.User{ID: snowflakeID("100000000000000056"), Username: "user"}, Member: &discord.Member{},
+			}
 			got, err := bot.runGarminAppSupportTriage(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "insane"}})
 			if err != nil || got != test.want {
 				t.Fatalf("triage = %v, %v, want %v", got, err, test.want)
@@ -78,13 +81,13 @@ func TestOnMessageCreateTriagesAppSupportWithoutKeywordGate(t *testing.T) {
 
 	requests := make(chan cmd.GarminAIRequest, 1)
 	bot := &Bot{
-		Config: &config.Config{DiscordGuildID: "guild"}, DB: database, Notes: &cmd.NotesHandler{DB: database}, Logger: zap.NewNop(),
+		Config: &config.Config{DiscordGuildID: "100000000000000012"}, DB: database, Notes: &cmd.NotesHandler{DB: database}, Logger: zap.NewNop(),
 		garminProcessor: cmd.NewGarminProcessor(), garminAIContexts: make(map[string]garminAIContext),
 		garminAIUserContexts: make(map[string]garminAIContext), garminContextCutoffs: make(map[string]string),
 		garminAIRequests: make(map[string]map[string]context.CancelFunc),
 	}
 	bot.garminAIContexts["10"] = garminAIContext{
-		userID: "user", guildID: "guild", channelID: garminAppSupportID, expiresAt: time.Now().Add(time.Hour),
+		userID: "100000000000000056", guildID: "100000000000000012", channelID: garminAppSupportID, expiresAt: time.Now().Add(time.Hour),
 		messages: []cmd.GarminAIMessage{{Role: "user", Content: "earlier"}, {Role: "assistant", Content: "earlier reply"}},
 	}
 	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
@@ -94,10 +97,10 @@ func TestOnMessageCreateTriagesAppSupportWithoutKeywordGate(t *testing.T) {
 		}}}}, nil
 	})
 
-	bot.onMessageCreate(nil, &discordgo.MessageCreate{Message: &discordgo.Message{
-		ID: "20", GuildID: "guild", ChannelID: garminAppSupportID, Content: "insane",
-		Author: &discordgo.User{ID: "user"}, MessageReference: &discordgo.MessageReference{MessageID: "10"},
-	}})
+	bot.onMessageCreate(nil, &discord.Message{
+		ID: snowflakeID("20"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID(garminAppSupportID), Content: "insane",
+		Author: discord.User{ID: snowflakeID("100000000000000056")}, MessageReference: &discord.MessageReference{MessageID: snowflakePtr("10")},
+	})
 	select {
 	case request := <-requests:
 		if request.SystemPrompt != garminAppSupportTriagePrompt || len(request.Messages) != 3 || request.Messages[2].Content != "insane" {
@@ -135,25 +138,22 @@ func TestAutomaticAppSupportHandoffRunsSupportAgent(t *testing.T) {
 				t.Errorf("decode reply: %v", err)
 			}
 			reply = body.Content
-			_, _ = w.Write([]byte(`{"id":"reply","channel_id":"` + garminAppSupportID + `"}`))
+			_, _ = w.Write([]byte(`{"id":"100000000000000038","channel_id":"` + garminAppSupportID + `"}`))
 		default:
 			t.Errorf("unexpected Discord request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	defer server.Close()
-	session, err := discordgo.New("Bot token")
+	session, err := newTestClient(t)
+
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.Client = server.Client()
-	session.Client.Transport = rewriteDiscordTransport{base: session.Client.Transport, target: server.URL}
-	if err := session.State.GuildAdd(&discordgo.Guild{ID: "guild", Roles: []*discordgo.Role{{ID: "guild", Name: "@everyone"}}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := session.State.ChannelAdd(&discordgo.Channel{ID: garminAppSupportID, GuildID: "guild", Name: "app-support"}); err != nil {
-		t.Fatal(err)
-	}
+	session.Rest = testREST(server.Client())
+	session.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: session.Rest.HTTPClient().Transport, target: server.URL}
+	cacheTestGuild(session, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: snowflakeID("100000000000000012")}, Roles: []discord.Role{{ID: snowflakeID("100000000000000012"), Name: "@everyone"}}}})
+	session.Caches.AddChannel(testChannel(t, map[string]any{"id": garminAppSupportID, "guild_id": "100000000000000012", "name": "app-support"}))
 
 	calls := 0
 	bot := &Bot{
@@ -172,10 +172,10 @@ func TestAutomaticAppSupportHandoffRunsSupportAgent(t *testing.T) {
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "the support answer"}}, nil
 	})
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		ID: "20", GuildID: "guild", ChannelID: garminAppSupportID, Content: "playback pauses after two songs",
-		Author: &discordgo.User{ID: "user", Username: "user"}, Member: &discordgo.Member{},
-	}}
+	message := &discord.Message{
+		ID: snowflakeID("20"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID(garminAppSupportID), Content: "playback pauses after two songs",
+		Author: discord.User{ID: snowflakeID("100000000000000056"), Username: "user"}, Member: &discord.Member{},
+	}
 	bot.handleGarminAutomaticAppSupport(session, message, []cmd.GarminAIMessage{garminAIUserMessage(message, message.Content)})
 	if calls != 2 || reply != "the support answer" {
 		t.Fatalf("handoff made %d model calls and replied %q", calls, reply)
@@ -201,7 +201,7 @@ func TestAppSupportAgentReturnsExactNoteForPlatformRenderer(t *testing.T) {
 			ID: "note", Function: cmd.GarminAIFunctionCall{Name: "get_note", Arguments: `{"name":"kmp"}`},
 		}}}}, nil
 	})
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{ID: "20", ChannelID: garminAppSupportID, Author: &discordgo.User{ID: "user"}}}
+	message := &discord.Message{ID: snowflakeID("20"), ChannelID: snowflakeID(garminAppSupportID), Author: discord.User{ID: snowflakeID("100000000000000056")}}
 	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "what is KMP?"}})
 	if err != nil || result.NoteName != "kmp" || result.Answer != testKMPNote {
 		t.Fatalf("support note result = %#v, %v", result, err)
@@ -213,11 +213,11 @@ func TestKMPNoteUsesCompactComponentsV2(t *testing.T) {
 	if !ok || len(components) != 1 {
 		t.Fatalf("KMP components = %#v, %v", components, ok)
 	}
-	container, ok := components[0].(discordgo.Container)
+	container, ok := components[0].(discord.ContainerComponent)
 	if !ok || len(container.Components) != 4 {
 		t.Fatalf("KMP container = %#v", components[0])
 	}
-	answer, ok := container.Components[2].(discordgo.TextDisplay)
+	answer, ok := container.Components[2].(discord.TextDisplayComponent)
 	if !ok || !strings.Contains(answer.Content, "Linux") || strings.Contains(answer.Content, "fixed release date") {
 		t.Fatalf("selected KMP answer = %#v", container.Components[2])
 	}
@@ -232,20 +232,21 @@ func TestKMPNoteUsesCompactComponentsV2(t *testing.T) {
 			t.Errorf("decode KMP message: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"reply","channel_id":"support"}`))
+		_, _ = w.Write([]byte(`{"id":"100000000000000038","channel_id":"100000000000000051"}`))
 	}))
 	defer server.Close()
-	session, err := discordgo.New("Bot token")
+	session, err := newTestClient(t)
+
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.Client = server.Client()
-	session.Client.Transport = rewriteDiscordTransport{base: session.Client.Transport, target: server.URL}
+	session.Rest = testREST(server.Client())
+	session.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: session.Rest.HTTPClient().Transport, target: server.URL}
 	bot := &Bot{Logger: zap.NewNop()}
-	if bot.sendKMPNoteReply(session, "support", "message", testKMPNote) == nil {
+	if bot.sendKMPNoteReply(session, "100000000000000051", "100000000000000023", testKMPNote) == nil {
 		t.Fatal("KMP note was not sent")
 	}
-	if payload.Content != "" || payload.Flags&int(discordgo.MessageFlagsIsComponentsV2) == 0 || len(payload.Components) != 1 {
+	if payload.Content != "" || payload.Flags&int(discord.MessageFlagIsComponentsV2) == 0 || len(payload.Components) != 1 {
 		t.Fatalf("KMP message payload = %#v", payload)
 	}
 }
@@ -260,17 +261,18 @@ func TestSendGarminAppSupportReplyPreservesLongAnswerAsAttachment(t *testing.T) 
 		}
 		requestBody = string(body)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"reply","channel_id":"support"}`))
+		_, _ = w.Write([]byte(`{"id":"100000000000000038","channel_id":"100000000000000051"}`))
 	}))
 	defer server.Close()
-	session, err := discordgo.New("Bot token")
+	session, err := newTestClient(t)
+
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.Client = server.Client()
-	session.Client.Transport = rewriteDiscordTransport{base: session.Client.Transport, target: server.URL}
+	session.Rest = testREST(server.Client())
+	session.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: session.Rest.HTTPClient().Transport, target: server.URL}
 	bot := &Bot{Logger: zap.NewNop()}
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{ID: "message", ChannelID: garminAppSupportID}}
+	message := &discord.Message{ID: snowflakeID("100000000000000023"), ChannelID: snowflakeID(garminAppSupportID)}
 	if reply := bot.sendGarminAppSupportReply(session, message, content, ""); reply == nil {
 		t.Fatal("long app support answer was not sent")
 	}

@@ -2,7 +2,6 @@ package discord
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"slices"
@@ -14,7 +13,11 @@ import (
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/internal/decancer"
 	"github.com/MetrolistGroup/metrobot/util"
-	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo/bot"
+	"github.com/disgoorg/disgo/discord"
+	"github.com/disgoorg/disgo/events"
+	"github.com/disgoorg/disgo/rest"
+	"github.com/disgoorg/snowflake/v2"
 	"go.uber.org/zap"
 )
 
@@ -42,39 +45,34 @@ var newMemberDehoistDelays = []time.Duration{
 	2 * time.Minute,
 }
 
-func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	if i.GuildID != b.Config.DiscordGuildID {
+func (b *Bot) onInteractionCreate(s *bot.Client, i *events.ApplicationCommandInteractionCreate) {
+	if snowflakeString(i.GuildID()) != b.Config.DiscordGuildID {
 		return
 	}
-	if i.Type == discordgo.InteractionMessageComponent {
-		if !b.handleHelpComponent(s, i) && !b.handleKMPNoteComponent(s, i) {
-			if !b.handleGSMArenaComponent(s, i) && !b.handleHardwareComponent(s, i) {
-				b.handleCompareComponent(s, i)
-			}
+	if i.Member() == nil {
+		return
+	}
+	if i.Data.Type() == discord.ApplicationCommandTypeMessage {
+		if i.Data.CommandName() == "Clip" {
+			b.handleQuoteInteraction(s, i)
 		}
 		return
 	}
-
-	if i.Type == discordgo.InteractionApplicationCommandAutocomplete {
-		b.handleAutocomplete(s, i)
+	if i.Data.Type() != discord.ApplicationCommandTypeSlash {
 		return
 	}
-	if i.Type != discordgo.InteractionApplicationCommand {
-		return
-	}
-
-	data := i.ApplicationCommandData()
-	callerID := i.Member.User.ID
-	opts := optionMap(data.Options)
+	data := i.SlashCommandInteractionData()
+	callerID := i.User().ID.String()
+	opts := data.Options
 
 	b.Logger.Info("slash command",
-		zap.String("command", data.Name),
+		zap.String("command", data.CommandName()),
 		zap.String("user", callerID),
 	)
 
 	stay := getOptBool(opts, "stay") && b.DB.IsAdmin("discord", callerID, b.Config)
 
-	switch data.Name {
+	switch data.CommandName() {
 	case "help":
 		b.handleHelp(s, i)
 	case "gsm":
@@ -140,7 +138,7 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 	case "removeadmin":
 		b.handleRemoveAdmin(s, i, opts, callerID)
 	case "memory":
-		b.handleGarminMemory(s, i, data.Options, callerID)
+		b.handleGarminMemory(s, i, data, callerID)
 	case "ping":
 		b.handlePing(s, i)
 	case "purge":
@@ -152,9 +150,8 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 	}
 }
 
-func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
-	b.rememberMessageForLogs(s, m.Message)
-	if m.Author == nil || m.Author.Bot || m.WebhookID != "" || m.GuildID != b.Config.DiscordGuildID {
+func (b *Bot) onMessageCreate(s *bot.Client, m *discord.Message) {
+	if m.Author.ID == 0 || m.Author.Bot || m.WebhookID != nil || snowflakeString(m.GuildID) != b.Config.DiscordGuildID {
 		return
 	}
 	if b.repostCleanYouTubeLinks(s, m) {
@@ -182,7 +179,7 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 		go b.handleGarminAI(s, m, b.garminAITriggeredConversation(m, prompt))
 		return
 	}
-	if m.ChannelID != garminAppSupportID {
+	if m.ChannelID.String() != garminAppSupportID {
 		if messages, continuation := b.garminAIContinuation(m, content); continuation {
 			b.cancelGarminAIAmbient(m)
 			if b.autoWarnGarminAbuse(s, m, content) {
@@ -202,15 +199,15 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 			b.Logger.Debug("note not found", zap.String("note", noteName), zap.Error(err))
 			return
 		}
-		if strings.EqualFold(noteName, "kmp") && b.sendKMPNoteReply(s, m.ChannelID, m.ID, text) != nil {
+		if strings.EqualFold(noteName, "kmp") && b.sendKMPNoteReply(s, m.ChannelID.String(), m.ID.String(), text) != nil {
 			return
 		}
-		sendReplyAllowEmbeds(s, m.ChannelID, m.ID, text, false, b.Logger)
+		sendReplyAllowEmbeds(s, m.ChannelID.String(), m.ID.String(), text, false, b.Logger)
 		return
 	}
 	matches := chatModPattern.FindStringSubmatch(content)
 	if matches == nil {
-		if m.ChannelID == garminAppSupportID {
+		if m.ChannelID.String() == garminAppSupportID {
 			messages := []cmd.GarminAIMessage{b.garminAIUserMessage(m, content)}
 			if continuation, ok := b.garminAIContinuation(m, content); ok {
 				messages = continuation
@@ -218,7 +215,7 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 			go b.handleGarminAutomaticAppSupport(s, m, messages)
 			return
 		}
-		if garminAIAmbientTargetsOtherUser(s, m) || b.stopGarminAIAmbient(m, content) || !garminAIAmbientEnabled(s, m.ChannelID) {
+		if garminAIAmbientTargetsOtherUser(s, m) || b.stopGarminAIAmbient(m, content) || !garminAIAmbientEnabled(s, m.ChannelID.String()) {
 			return
 		}
 		if messages, active := b.garminAIAmbientContinuation(m, content); active {
@@ -240,14 +237,14 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 
 	action := strings.ToLower(matches[1])
 	args := strings.TrimSpace(matches[2])
-	callerID := m.Author.ID
+	callerID := m.Author.ID.String()
 	member := m.Member
-	if member == nil && s.State != nil {
-		member, _ = s.State.Member(m.GuildID, callerID)
+	if member == nil {
+		member = garminCurrentGuildMember(s, snowflakeString(m.GuildID), callerID)
 	}
 
 	if !b.canUseModerationAction(member, callerID, action) {
-		sendReply(s, m.ChannelID, m.ID, "You don't have permission to use that moderation command.", false, b.Logger)
+		sendReply(s, m.ChannelID.String(), m.ID.String(), "You don't have permission to use that moderation command.", false, b.Logger)
 		return
 	}
 
@@ -262,7 +259,7 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 			"timeout": "timeout - usage: timeout [user] [duration] [reason]",
 			"warn":    "warn - usage: warn [user] [reason]",
 		}
-		sendReply(s, m.ChannelID, m.ID, usageMap[action], false, b.Logger)
+		sendReply(s, m.ChannelID.String(), m.ID.String(), usageMap[action], false, b.Logger)
 		return
 	}
 
@@ -272,14 +269,14 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	// Check if this is a reply
 	if m.ReferencedMessage != nil {
 		// Use the replied-to user as target
-		targetID = m.ReferencedMessage.Author.ID
+		targetID = m.ReferencedMessage.Author.ID.String()
 		// Full args string is the reason
 		commandArgs = args
 	} else {
 		// Normal mode: first arg is target, rest is reason
 		parts := strings.Fields(args)
 		if len(parts) == 0 {
-			sendReply(s, m.ChannelID, m.ID, "Please specify a target user or reply to a message.", false, b.Logger)
+			sendReply(s, m.ChannelID.String(), m.ID.String(), "Please specify a target user or reply to a message.", false, b.Logger)
 			return
 		}
 		targetID = extractUserID(parts[0])
@@ -289,21 +286,21 @@ func (b *Bot) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) 
 	}
 
 	if targetID == "" {
-		sendReply(s, m.ChannelID, m.ID, "Could not resolve target user.", false, b.Logger)
+		sendReply(s, m.ChannelID.String(), m.ID.String(), "Could not resolve target user.", false, b.Logger)
 		return
 	}
 
 	if b.DB.IsAdmin("discord", targetID, b.Config) {
-		sendReply(s, m.ChannelID, m.ID, "I will not take action against an admin.", false, b.Logger)
+		sendReply(s, m.ChannelID.String(), m.ID.String(), "I will not take action against an admin.", false, b.Logger)
 		return
 	}
 
 	// Execute the command directly
-	b.executePrefixCommand(s, m.ChannelID, m.Author.ID, action, commandArgs, targetID)
+	b.executePrefixCommand(s, m.ChannelID.String(), m.Author.ID.String(), action, commandArgs, targetID)
 }
 
-func (b *Bot) handleGarminKill(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if m.ReferencedMessage == nil || m.ReferencedMessage.Author == nil {
+func (b *Bot) handleGarminKill(s *bot.Client, m *discord.Message) {
+	if m.ReferencedMessage == nil || m.ReferencedMessage.Author.ID == 0 {
 		return
 	}
 	var timeout time.Duration
@@ -311,41 +308,42 @@ func (b *Bot) handleGarminKill(s *discordgo.Session, m *discordgo.MessageCreate)
 	if b.garminKillStaff(s, m) {
 		timeout = 30 * time.Second
 		timeoutReason = "30-second timeout"
-	} else if m.Member != nil && slices.Contains(m.Member.Roles, discordCoolPeopleRoleID) {
+	} else if m.Member != nil && slices.Contains(m.Member.RoleIDs, snowflakeID(discordCoolPeopleRoleID)) {
 		timeout = 5 * time.Second
 		timeoutReason = "5-second timeout"
 	} else {
 		return
 	}
-	targetID := m.ReferencedMessage.Author.ID
+	targetID := m.ReferencedMessage.Author.ID.String()
 	until := time.Now().Add(timeout)
-	if err := s.GuildMemberTimeout(m.GuildID, targetID, &until); err != nil {
+	if err := updateTimeout(s, value(m.GuildID), snowflakeID(targetID), &until); err != nil {
 		b.Logger.Error("Garmin kill timeout failed", zap.String("target", targetID), zap.Error(err))
 		return
 	}
-	if err := s.ChannelMessageDelete(m.ChannelID, m.ReferencedMessage.ID); err != nil {
-		b.Logger.Error("Garmin kill message deletion failed", zap.String("message", m.ReferencedMessage.ID), zap.Error(err))
+	if err := s.Rest.DeleteMessage(m.ChannelID, m.ReferencedMessage.ID); err != nil {
+		b.Logger.Error("Garmin kill message deletion failed", zap.String("message", m.ReferencedMessage.ID.String()), zap.Error(err))
 		return
 	}
 	if b.DB != nil {
-		_ = b.DB.LogModAction("discord", m.Author.ID, targetID, "kill", timeoutReason)
+		_ = b.DB.LogModAction("discord", m.Author.ID.String(), targetID, "kill", timeoutReason)
 	}
-	sendReply(s, m.ChannelID, m.ID, "Target eliminated.", false, b.Logger)
+	sendReply(s, m.ChannelID.String(), m.ID.String(), "Target eliminated.", false, b.Logger)
 }
 
-func (b *Bot) garminKillStaff(s *discordgo.Session, m *discordgo.MessageCreate) bool {
-	if b.canUseModerationAction(m.Member, m.Author.ID, "kill") {
+func (b *Bot) garminKillStaff(s *bot.Client, m *discord.Message) bool {
+	if b.canUseModerationAction(m.Member, m.Author.ID.String(), "kill") {
 		return true
 	}
-	permissions, err := s.UserChannelPermissions(m.Author.ID, m.ChannelID)
-	return err == nil && permissions&(discordgo.PermissionAdministrator|discordgo.PermissionModerateMembers) != 0
+	member := garminCurrentGuildMember(s, snowflakeString(m.GuildID), m.Author.ID.String())
+	channel, err := getDiscordChannel(s, m.ChannelID.String())
+	return member != nil && err == nil && s.Caches.MemberPermissionsInChannel(channel, *member).Has(discord.PermissionModerateMembers)
 }
 
-func (b *Bot) canUseModerationAction(member *discordgo.Member, callerID, action string) bool {
+func (b *Bot) canUseModerationAction(member *discord.Member, callerID, action string) bool {
 	if b.DB != nil && b.Config != nil && b.DB.IsAdmin("discord", callerID, b.Config) {
 		return true
 	}
-	if member == nil || !slices.Contains(member.Roles, discordModeratorRoleID) {
+	if member == nil || !slices.Contains(member.RoleIDs, snowflakeID(discordModeratorRoleID)) {
 		return false
 	}
 	switch action {
@@ -356,50 +354,50 @@ func (b *Bot) canUseModerationAction(member *discordgo.Member, callerID, action 
 	}
 }
 
-func (b *Bot) handleGarminContextResetMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if b.DB == nil || !b.DB.IsAdmin("discord", m.Author.ID, b.Config) {
+func (b *Bot) handleGarminContextResetMessage(s *bot.Client, m *discord.Message) {
+	if b.DB == nil || !b.DB.IsAdmin("discord", m.Author.ID.String(), b.Config) {
 		return
 	}
-	if err := b.resetGarminContext(m.ChannelID, m.ID); err != nil {
-		b.Logger.Error("Garmin context reset failed", zap.String("channel", m.ChannelID), zap.Error(err))
-		sendReply(s, m.ChannelID, m.ID, "Couldn't reset Garmin context.", false, b.Logger)
+	if err := b.resetGarminContext(m.ChannelID.String(), m.ID.String()); err != nil {
+		b.Logger.Error("Garmin context reset failed", zap.String("channel", m.ChannelID.String()), zap.Error(err))
+		sendReply(s, m.ChannelID.String(), m.ID.String(), "Couldn't reset Garmin context.", false, b.Logger)
 		return
 	}
-	sendReply(s, m.ChannelID, m.ID, "Garmin context reset for this channel.", false, b.Logger)
+	sendReply(s, m.ChannelID.String(), m.ID.String(), "Garmin context reset for this channel.", false, b.Logger)
 }
 
-func (b *Bot) handleGarminContextResetInteraction(s *discordgo.Session, i *discordgo.InteractionCreate, callerID string) {
+func (b *Bot) handleGarminContextResetInteraction(s *bot.Client, i *events.ApplicationCommandInteractionCreate, callerID string) {
 	if b.DB == nil || !b.DB.IsAdmin("discord", callerID, b.Config) {
 		respondEphemeral(s, i, "Only admins can reset Garmin context.")
 		return
 	}
-	if err := b.resetGarminContext(i.ChannelID, i.ID); err != nil {
-		b.Logger.Error("Garmin context reset failed", zap.String("channel", i.ChannelID), zap.Error(err))
+	if err := b.resetGarminContext(i.Channel().ID().String(), i.ID().String()); err != nil {
+		b.Logger.Error("Garmin context reset failed", zap.String("channel", i.Channel().ID().String()), zap.Error(err))
 		respondEphemeral(s, i, "Couldn't reset Garmin context.")
 		return
 	}
 	respondEphemeral(s, i, "Garmin context reset for this channel.")
 }
 
-func (b *Bot) autoWarnGarminAbuse(s *discordgo.Session, m *discordgo.MessageCreate, prompt string) bool {
-	if !garminDirectSlur(prompt) || b.DB.IsAdmin("discord", m.Author.ID, b.Config) {
+func (b *Bot) autoWarnGarminAbuse(s *bot.Client, m *discord.Message, prompt string) bool {
+	if !garminDirectSlur(prompt) || b.DB.IsAdmin("discord", m.Author.ID.String(), b.Config) {
 		return false
 	}
 	reason := "Directed a prohibited slur at Metrobot"
-	response, extras, _, err := b.Warn.Warn(b.newBanner(), "system", m.Author.ID, reason, b.Config)
+	response, extras, _, err := b.Warn.Warn(b.newBanner(), "system", m.Author.ID.String(), reason, b.Config)
 	if err != nil {
 		b.Logger.Error("automatic Metrobot abuse warning failed",
-			zap.String("user", m.Author.ID), zap.String("message", m.ID), zap.Error(err))
+			zap.String("user", m.Author.ID.String()), zap.String("message", m.ID.String()), zap.Error(err))
 		return false
 	}
 	b.Logger.Info("automatic Metrobot abuse warning issued",
-		zap.String("user", m.Author.ID), zap.String("message", m.ID))
-	_, _ = s.ChannelMessageSendComplex(m.ChannelID, noPingMessage(response))
+		zap.String("user", m.Author.ID.String()), zap.String("message", m.ID.String()))
+	_, _ = s.Rest.CreateMessage(m.ChannelID, *noPingMessage(response))
 	for _, extra := range extras {
-		_, _ = s.ChannelMessageSendComplex(m.ChannelID, &discordgo.MessageSend{
+		_, _ = s.Rest.CreateMessage(m.ChannelID, discord.MessageCreate{
 			Content:         suppressDiscordEmbeds(extra),
-			Flags:           discordgo.MessageFlagsSuppressEmbeds,
-			AllowedMentions: &discordgo.MessageAllowedMentions{},
+			Flags:           discord.MessageFlagSuppressEmbeds,
+			AllowedMentions: &discord.AllowedMentions{},
 		})
 	}
 	return true
@@ -436,7 +434,7 @@ var helpPages = []struct {
 	{"Admin and triggers", "**Admin management (permaadmin only)**\n• `/addadmin [user]` - Add a bot admin\n• `/removeadmin [user]` - Remove a bot admin\n\n**Metrobot AI (admin only)**\n• `/memory view|append|replace|clear` - Manage persistent AI memory\n• `/ctx-reset`, `ok garmin ctx-reset` or `France Modération ctx-reset` - Forget earlier AI context in this channel\n\n**Prefix commands**\nModeration actions can also use `!action [user] [args]`, such as `!ban @user spam`.\n\n**Note triggers**\nType `.notename` to display a note, such as `.help` or `.rules`."},
 }
 
-func helpComponents(page int) ([]discordgo.MessageComponent, bool) {
+func helpComponents(page int) ([]discord.LayoutComponent, bool) {
 	if page < 0 || page >= len(helpPages) {
 		return nil, false
 	}
@@ -447,33 +445,33 @@ func helpComponents(page int) ([]discordgo.MessageComponent, bool) {
 	if next >= len(helpPages) {
 		next = len(helpPages) - 1
 	}
-	return []discordgo.MessageComponent{discordgo.Container{Components: []discordgo.MessageComponent{
-		discordgo.TextDisplay{Content: "# Metrobot Help\n## " + helpPages[page].title + "\n" + helpPages[page].body},
-		discordgo.Separator{},
-		discordgo.TextDisplay{Content: fmt.Sprintf("-# Page %d of %d", page+1, len(helpPages))},
-		discordgo.ActionsRow{Components: []discordgo.MessageComponent{
-			discordgo.Button{Label: "Previous", Style: discordgo.SecondaryButton, CustomID: helpComponentPrefix + strconv.Itoa(previous), Disabled: page == 0},
-			discordgo.Button{Label: "Next", Style: discordgo.SecondaryButton, CustomID: helpComponentPrefix + strconv.Itoa(next), Disabled: page == len(helpPages)-1},
+	return []discord.LayoutComponent{discord.ContainerComponent{Components: []discord.ContainerSubComponent{
+		discord.TextDisplayComponent{Content: "# Metrobot Help\n## " + helpPages[page].title + "\n" + helpPages[page].body},
+		discord.SeparatorComponent{},
+		discord.TextDisplayComponent{Content: fmt.Sprintf("-# Page %d of %d", page+1, len(helpPages))},
+		discord.ActionRowComponent{Components: []discord.InteractiveComponent{
+			discord.ButtonComponent{Label: "Previous", Style: discord.ButtonStyleSecondary, CustomID: helpComponentPrefix + strconv.Itoa(previous), Disabled: page == 0},
+			discord.ButtonComponent{Label: "Next", Style: discord.ButtonStyleSecondary, CustomID: helpComponentPrefix + strconv.Itoa(next), Disabled: page == len(helpPages)-1},
 		}},
 	}}}, true
 }
 
-func (b *Bot) handleHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
+func (b *Bot) handleHelp(s *bot.Client, i *events.ApplicationCommandInteractionCreate) {
 	components, _ := helpComponents(0)
-	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
+	if err := s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{
+		Type: discord.InteractionResponseTypeCreateMessage,
+		Data: discord.MessageCreate{
 			Components:      components,
-			Flags:           discordgo.MessageFlagsEphemeral | discordgo.MessageFlagsIsComponentsV2,
-			AllowedMentions: &discordgo.MessageAllowedMentions{},
+			Flags:           discord.MessageFlagEphemeral | discord.MessageFlagIsComponentsV2,
+			AllowedMentions: &discord.AllowedMentions{},
 		},
 	}); err != nil {
 		b.Logger.Error("failed to show help", zap.Error(err))
 	}
 }
 
-func (b *Bot) handleHelpComponent(s *discordgo.Session, i *discordgo.InteractionCreate) bool {
-	customID := i.MessageComponentData().CustomID
+func (b *Bot) handleHelpComponent(s *bot.Client, i *events.ComponentInteractionCreate) bool {
+	customID := i.Data.CustomID()
 	if !strings.HasPrefix(customID, helpComponentPrefix) {
 		return false
 	}
@@ -483,12 +481,12 @@ func (b *Bot) handleHelpComponent(s *discordgo.Session, i *discordgo.Interaction
 		respondEphemeral(s, i, "That help page is unavailable.")
 		return true
 	}
-	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseUpdateMessage,
-		Data: &discordgo.InteractionResponseData{
+	if err := s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{
+		Type: discord.InteractionResponseTypeUpdateMessage,
+		Data: discord.MessageCreate{
 			Components:      components,
-			Flags:           discordgo.MessageFlagsIsComponentsV2,
-			AllowedMentions: &discordgo.MessageAllowedMentions{},
+			Flags:           discord.MessageFlagIsComponentsV2,
+			AllowedMentions: &discord.AllowedMentions{},
 		},
 	}); err != nil {
 		b.Logger.Error("failed to change help page", zap.Error(err))
@@ -496,7 +494,7 @@ func (b *Bot) handleHelpComponent(s *discordgo.Session, i *discordgo.Interaction
 	return true
 }
 
-func (b *Bot) handleNotes(s *discordgo.Session, i *discordgo.InteractionCreate) {
+func (b *Bot) handleNotes(s *bot.Client, i *events.ApplicationCommandInteractionCreate) {
 	text, err := b.Notes.ListNotes()
 	if err != nil {
 		b.Logger.Error("notes error", zap.Error(err))
@@ -506,8 +504,8 @@ func (b *Bot) handleNotes(s *discordgo.Session, i *discordgo.InteractionCreate) 
 	respondEphemeral(s, i, text)
 }
 
-func (b *Bot) handleNote(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string, stay bool) {
-	name := opts["name"].StringValue()
+func (b *Bot) handleNote(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string, stay bool) {
+	name := opts["name"].String()
 	shortDesc, hasShortDesc := opts["short_desc"]
 	content, hasContent := opts["content"]
 	if hasShortDesc || hasContent {
@@ -519,7 +517,7 @@ func (b *Bot) handleNote(s *discordgo.Session, i *discordgo.InteractionCreate, o
 			respondEphemeral(s, i, "Only admins can add notes.")
 			return
 		}
-		if err := b.Notes.AddNote(name, shortDesc.StringValue(), content.StringValue()); err != nil {
+		if err := b.Notes.AddNote(name, shortDesc.String(), content.String()); err != nil {
 			respondPublic(s, i, fmt.Sprintf("Error adding note: %s", err))
 			return
 		}
@@ -544,14 +542,14 @@ func (b *Bot) handleNote(s *discordgo.Session, i *discordgo.InteractionCreate, o
 	}
 }
 
-func (b *Bot) handleAddNote(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
+func (b *Bot) handleAddNote(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string) {
 	if !b.DB.IsAdmin("discord", callerID, b.Config) {
 		respondEphemeral(s, i, "Only admins can add notes.")
 		return
 	}
-	name := opts["name"].StringValue()
-	shortDesc := opts["short_desc"].StringValue()
-	content := opts["content"].StringValue()
+	name := opts["name"].String()
+	shortDesc := opts["short_desc"].String()
+	content := opts["content"].String()
 	if err := b.Notes.AddNote(name, shortDesc, content); err != nil {
 		respondPublic(s, i, fmt.Sprintf("Error adding note: %s", err))
 		return
@@ -559,14 +557,14 @@ func (b *Bot) handleAddNote(s *discordgo.Session, i *discordgo.InteractionCreate
 	respondPublic(s, i, fmt.Sprintf("Note `%s` added.", strings.ToLower(name)))
 }
 
-func (b *Bot) handleEditNote(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
+func (b *Bot) handleEditNote(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string) {
 	if !b.DB.IsAdmin("discord", callerID, b.Config) {
 		respondEphemeral(s, i, "Only admins can edit notes.")
 		return
 	}
-	name := opts["name"].StringValue()
-	shortDesc := opts["short_desc"].StringValue()
-	content := opts["content"].StringValue()
+	name := opts["name"].String()
+	shortDesc := opts["short_desc"].String()
+	content := opts["content"].String()
 	if err := b.Notes.EditNote(name, shortDesc, content); err != nil {
 		respondPublic(s, i, fmt.Sprintf("Error editing note: %s", err))
 		return
@@ -574,13 +572,13 @@ func (b *Bot) handleEditNote(s *discordgo.Session, i *discordgo.InteractionCreat
 	respondPublic(s, i, fmt.Sprintf("Note `%s` updated.", strings.ToLower(name)))
 }
 
-func (b *Bot) handleRenameNote(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
+func (b *Bot) handleRenameNote(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string) {
 	if !b.DB.IsAdmin("discord", callerID, b.Config) {
 		respondEphemeral(s, i, "Only admins can rename notes.")
 		return
 	}
-	name := opts["name"].StringValue()
-	newName := opts["new_name"].StringValue()
+	name := opts["name"].String()
+	newName := opts["new_name"].String()
 	if err := b.Notes.RenameNote(name, newName); err != nil {
 		respondPublic(s, i, fmt.Sprintf("Error renaming note: %s", err))
 		return
@@ -588,12 +586,12 @@ func (b *Bot) handleRenameNote(s *discordgo.Session, i *discordgo.InteractionCre
 	respondPublic(s, i, fmt.Sprintf("Note `%s` renamed to `%s`.", strings.ToLower(name), strings.ToLower(newName)))
 }
 
-func (b *Bot) handleDelNote(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
+func (b *Bot) handleDelNote(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string) {
 	if !b.DB.IsAdmin("discord", callerID, b.Config) {
 		respondEphemeral(s, i, "Only admins can delete notes.")
 		return
 	}
-	name := opts["name"].StringValue()
+	name := opts["name"].String()
 	if err := b.Notes.DeleteNote(name); err != nil {
 		respondPublic(s, i, fmt.Sprintf("Error deleting note: %s", err))
 		return
@@ -601,10 +599,10 @@ func (b *Bot) handleDelNote(s *discordgo.Session, i *discordgo.InteractionCreate
 	respondPublic(s, i, fmt.Sprintf("Note `%s` deleted.", strings.ToLower(name)))
 }
 
-func (b *Bot) handleVersion(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, stay bool) {
+func (b *Bot) handleVersion(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, stay bool) {
 	tag := "latest"
 	if opt, ok := opts["version"]; ok {
-		tag = opt.StringValue()
+		tag = opt.String()
 	}
 
 	text, err := b.Version.GetVersion(context.Background(), tag, false)
@@ -621,7 +619,7 @@ func (b *Bot) handleVersion(s *discordgo.Session, i *discordgo.InteractionCreate
 	}
 }
 
-func (b *Bot) handleLatest(s *discordgo.Session, i *discordgo.InteractionCreate, stay bool) {
+func (b *Bot) handleLatest(s *bot.Client, i *events.ApplicationCommandInteractionCreate, stay bool) {
 	text, err := b.Version.GetVersion(context.Background(), "latest", false)
 	if err != nil {
 		b.Logger.Error("latest error", zap.Error(err))
@@ -636,7 +634,7 @@ func (b *Bot) handleLatest(s *discordgo.Session, i *discordgo.InteractionCreate,
 	}
 }
 
-func (b *Bot) handleActions(s *discordgo.Session, i *discordgo.InteractionCreate, stay bool) {
+func (b *Bot) handleActions(s *bot.Client, i *events.ApplicationCommandInteractionCreate, stay bool) {
 	text, err := b.Actions.GetActions(context.Background(), false)
 	if err != nil {
 		b.Logger.Error("actions error", zap.Error(err))
@@ -651,16 +649,16 @@ func (b *Bot) handleActions(s *discordgo.Session, i *discordgo.InteractionCreate
 	}
 }
 
-func (b *Bot) handleBan(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
+func (b *Bot) handleBan(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string) {
 	if !b.DB.IsAdmin("discord", callerID, b.Config) {
 		respondEphemeral(s, i, "You don't have ban permissions.")
 		return
 	}
-	targetUser := opts["user"].UserValue(s)
+	targetUser := opts["user"].Snowflake()
 	reason := getOptString(opts, "reason")
 	banner := b.newBanner()
 
-	resp, _, err := b.Moderation.Ban(banner, callerID, targetUser.ID, reason, b.Config)
+	resp, _, err := b.Moderation.Ban(banner, callerID, targetUser.String(), reason, b.Config)
 	if err != nil {
 		b.Logger.Error("ban failed", zap.Error(err))
 		respondEphemeral(s, i, "Error executing ban.")
@@ -669,16 +667,16 @@ func (b *Bot) handleBan(s *discordgo.Session, i *discordgo.InteractionCreate, op
 	respondPublic(s, i, resp)
 }
 
-func (b *Bot) handleDBan(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
+func (b *Bot) handleDBan(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string) {
 	if !b.DB.IsAdmin("discord", callerID, b.Config) {
 		respondEphemeral(s, i, "You don't have ban permissions.")
 		return
 	}
-	targetUser := opts["user"].UserValue(s)
+	targetUser := opts["user"].Snowflake()
 	reason := getOptString(opts, "reason")
 	banner := b.newBanner()
 
-	resp, _, err := b.Moderation.DBan(banner, callerID, targetUser.ID, reason, b.Config)
+	resp, _, err := b.Moderation.DBan(banner, callerID, targetUser.String(), reason, b.Config)
 	if err != nil {
 		b.Logger.Error("dban failed", zap.Error(err))
 		respondEphemeral(s, i, "Error executing dban.")
@@ -687,13 +685,13 @@ func (b *Bot) handleDBan(s *discordgo.Session, i *discordgo.InteractionCreate, o
 	respondPublic(s, i, resp)
 }
 
-func (b *Bot) handleTBan(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
+func (b *Bot) handleTBan(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string) {
 	if !b.DB.IsAdmin("discord", callerID, b.Config) {
 		respondEphemeral(s, i, "You don't have ban permissions.")
 		return
 	}
-	targetUser := opts["user"].UserValue(s)
-	durationStr := opts["duration"].StringValue()
+	targetUser := opts["user"].Snowflake()
+	durationStr := opts["duration"].String()
 	reason := getOptString(opts, "reason")
 
 	dur, err := util.ParseDuration(durationStr)
@@ -703,7 +701,7 @@ func (b *Bot) handleTBan(s *discordgo.Session, i *discordgo.InteractionCreate, o
 	}
 
 	banner := b.newBanner()
-	resp, _, err := b.Moderation.TBan(banner, callerID, targetUser.ID, dur, reason, b.Config)
+	resp, _, err := b.Moderation.TBan(banner, callerID, targetUser.String(), dur, reason, b.Config)
 	if err != nil {
 		b.Logger.Error("tban failed", zap.Error(err))
 		respondEphemeral(s, i, "Error executing tban.")
@@ -712,16 +710,16 @@ func (b *Bot) handleTBan(s *discordgo.Session, i *discordgo.InteractionCreate, o
 	respondPublic(s, i, resp)
 }
 
-func (b *Bot) handleSBan(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
-	if !b.canUseModerationAction(i.Member, callerID, "sban") {
+func (b *Bot) handleSBan(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string) {
+	if !b.canUseModerationAction(interactionMember(i), callerID, "sban") {
 		respondEphemeral(s, i, "You don't have softban permissions.")
 		return
 	}
-	targetUser := opts["user"].UserValue(s)
+	targetUser := opts["user"].Snowflake()
 	reason := getOptString(opts, "reason")
 	banner := b.newBanner()
 
-	resp, _, err := b.Moderation.SBan(banner, callerID, targetUser.ID, reason, b.Config)
+	resp, _, err := b.Moderation.SBan(banner, callerID, targetUser.String(), reason, b.Config)
 	if err != nil {
 		b.Logger.Error("sban failed", zap.Error(err))
 		respondEphemeral(s, i, "Error executing sban.")
@@ -730,15 +728,15 @@ func (b *Bot) handleSBan(s *discordgo.Session, i *discordgo.InteractionCreate, o
 	respondPublic(s, i, resp)
 }
 
-func (b *Bot) handleKick(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
-	if !b.canUseModerationAction(i.Member, callerID, "kick") {
+func (b *Bot) handleKick(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string) {
+	if !b.canUseModerationAction(interactionMember(i), callerID, "kick") {
 		respondEphemeral(s, i, "You don't have kick permissions.")
 		return
 	}
-	targetUser := opts["user"].UserValue(s)
+	targetUser := opts["user"].Snowflake()
 	reason := getOptString(opts, "reason")
 
-	resp, _, err := b.Moderation.Kick(b.newBanner(), callerID, targetUser.ID, reason, b.Config)
+	resp, _, err := b.Moderation.Kick(b.newBanner(), callerID, targetUser.String(), reason, b.Config)
 	if err != nil {
 		b.Logger.Error("kick failed", zap.Error(err))
 		respondEphemeral(s, i, "Error executing kick.")
@@ -747,13 +745,13 @@ func (b *Bot) handleKick(s *discordgo.Session, i *discordgo.InteractionCreate, o
 	respondPublic(s, i, resp)
 }
 
-func (b *Bot) handleMute(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
-	if !b.canUseModerationAction(i.Member, callerID, "timeout") {
+func (b *Bot) handleMute(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string) {
+	if !b.canUseModerationAction(interactionMember(i), callerID, "timeout") {
 		respondEphemeral(s, i, "You don't have timeout permissions.")
 		return
 	}
-	targetUser := opts["user"].UserValue(s)
-	durationStr := opts["duration"].StringValue()
+	targetUser := opts["user"].Snowflake()
+	durationStr := opts["duration"].String()
 	reason := getOptString(opts, "reason")
 
 	dur, err := util.ParseDuration(durationStr)
@@ -763,7 +761,7 @@ func (b *Bot) handleMute(s *discordgo.Session, i *discordgo.InteractionCreate, o
 	}
 
 	banner := b.newBanner()
-	resp, _, err := b.Moderation.Mute(banner, callerID, targetUser.ID, dur, reason, b.Config)
+	resp, _, err := b.Moderation.Mute(banner, callerID, targetUser.String(), dur, reason, b.Config)
 	if err != nil {
 		b.Logger.Error("mute failed", zap.Error(err))
 		respondEphemeral(s, i, "Error executing mute.")
@@ -772,16 +770,16 @@ func (b *Bot) handleMute(s *discordgo.Session, i *discordgo.InteractionCreate, o
 	respondPublic(s, i, resp)
 }
 
-func (b *Bot) handleWarn(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
+func (b *Bot) handleWarn(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string) {
 	if !b.DB.IsAdmin("discord", callerID, b.Config) {
 		respondEphemeral(s, i, "You don't have warn permissions.")
 		return
 	}
-	targetUser := opts["user"].UserValue(s)
+	targetUser := opts["user"].Snowflake()
 	reason := getOptString(opts, "reason")
 	banner := b.newBanner()
 
-	resp, extras, _, err := b.Warn.Warn(banner, callerID, targetUser.ID, reason, b.Config)
+	resp, extras, _, err := b.Warn.Warn(banner, callerID, targetUser.String(), reason, b.Config)
 	if err != nil {
 		b.Logger.Error("warn failed", zap.Error(err))
 		respondEphemeral(s, i, "Error executing warn.")
@@ -789,14 +787,14 @@ func (b *Bot) handleWarn(s *discordgo.Session, i *discordgo.InteractionCreate, o
 	}
 	respondPublic(s, i, resp)
 	for _, extra := range extras {
-		s.ChannelMessageSendComplex(i.ChannelID, &discordgo.MessageSend{Content: suppressDiscordEmbeds(extra), Flags: discordgo.MessageFlagsSuppressEmbeds})
+		s.Rest.CreateMessage(i.Channel().ID(), discord.MessageCreate{Content: suppressDiscordEmbeds(extra), Flags: discord.MessageFlagSuppressEmbeds})
 	}
 }
 
-func (b *Bot) handleWarnings(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption) {
-	targetUser := opts["user"].UserValue(s)
+func (b *Bot) handleWarnings(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption) {
+	targetUser := opts["user"].Snowflake()
 	banner := b.newBanner()
-	resp, err := b.Warn.Warnings(banner, targetUser.ID)
+	resp, err := b.Warn.Warnings(banner, targetUser.String())
 	if err != nil {
 		b.Logger.Error("warnings error", zap.Error(err))
 		respondEphemeral(s, i, "Error fetching warnings.")
@@ -805,16 +803,16 @@ func (b *Bot) handleWarnings(s *discordgo.Session, i *discordgo.InteractionCreat
 	respondPublic(s, i, resp)
 }
 
-func (b *Bot) handleUnwarn(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
+func (b *Bot) handleUnwarn(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string) {
 	if !b.DB.IsAdmin("discord", callerID, b.Config) {
 		respondEphemeral(s, i, "You don't have unwarn permissions.")
 		return
 	}
-	targetUser := opts["user"].UserValue(s)
-	index := int(opts["id"].IntValue())
+	targetUser := opts["user"].Snowflake()
+	index := int(opts["id"].Int())
 	banner := b.newBanner()
 
-	resp, _, err := b.Warn.Unwarn("discord", callerID, targetUser.ID, index, banner)
+	resp, _, err := b.Warn.Unwarn("discord", callerID, targetUser.String(), index, banner)
 	if err != nil {
 		b.Logger.Error("unwarn error", zap.Error(err))
 		respondEphemeral(s, i, fmt.Sprintf("Error: %s", err))
@@ -823,7 +821,7 @@ func (b *Bot) handleUnwarn(s *discordgo.Session, i *discordgo.InteractionCreate,
 	respondPublic(s, i, resp)
 }
 
-func (b *Bot) handleDehoist(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
+func (b *Bot) handleDehoist(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string) {
 	if !b.DB.IsAdmin("discord", callerID, b.Config) {
 		respondEphemeral(s, i, "You don't have dehoist permissions.")
 		return
@@ -832,7 +830,7 @@ func (b *Bot) handleDehoist(s *discordgo.Session, i *discordgo.InteractionCreate
 	dry := getOptBool(opts, "dry")
 	var targetID string
 	if opt, ok := opts["user"]; ok {
-		targetID = opt.UserValue(s).ID
+		targetID = opt.Snowflake().String()
 	}
 
 	if err := deferResponse(s, i, dry); err != nil {
@@ -866,14 +864,14 @@ func (b *Bot) handleDehoist(s *discordgo.Session, i *discordgo.InteractionCreate
 	}
 }
 
-func (b *Bot) handleApproveNick(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
+func (b *Bot) handleApproveNick(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string) {
 	if !b.DB.IsAdmin("discord", callerID, b.Config) {
 		respondEphemeral(s, i, "You don't have nickname approval permissions.")
 		return
 	}
 
-	targetID := opts["user"].UserValue(s).ID
-	if err := b.DB.ApproveNicknameChange(i.GuildID, targetID); err != nil {
+	targetID := opts["user"].Snowflake().String()
+	if err := b.DB.ApproveNicknameChange(snowflakeString(i.GuildID()), targetID); err != nil {
 		b.Logger.Error("failed to approve nickname change", zap.String("userID", targetID), zap.Error(err))
 		respondEphemeral(s, i, "Could not approve the nickname change.")
 		return
@@ -881,13 +879,13 @@ func (b *Bot) handleApproveNick(s *discordgo.Session, i *discordgo.InteractionCr
 	respondEphemeral(s, i, fmt.Sprintf("Approved <@%s>'s next nickname change.", targetID))
 }
 
-func (b *Bot) handleBulkRole(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
-	if i.Member == nil || i.Member.Permissions&(discordgo.PermissionAdministrator|discordgo.PermissionManageRoles) == 0 {
+func (b *Bot) handleBulkRole(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string) {
+	if i.Member() == nil || i.Member().Permissions&(discord.PermissionAdministrator|discord.PermissionManageRoles) == 0 {
 		respondEphemeral(s, i, "You need Manage Roles to use this command.")
 		return
 	}
 
-	users := parseBulkRoleUsers(opts["users"].StringValue())
+	users := parseBulkRoleUsers(opts["users"].String())
 	if len(users) == 0 {
 		respondEphemeral(s, i, "Provide at least one username, mention, or ID.")
 		return
@@ -897,28 +895,22 @@ func (b *Bot) handleBulkRole(s *discordgo.Session, i *discordgo.InteractionCreat
 		return
 	}
 
-	guild, err := s.State.Guild(i.GuildID)
-	var roles []*discordgo.Role
-	if err == nil {
-		roles = guild.Roles
-	} else {
-		roles, err = s.GuildRoles(i.GuildID)
-	}
+	roles, err := s.Rest.GetRoles(*i.GuildID())
 	if err != nil {
 		b.Logger.Error("failed to get roles for bulkrole", zap.Error(err))
 		_ = editDeferredResponse(s, i, "Couldn't load server roles.")
 		return
 	}
 
-	roleID := opts["role"].RoleValue(nil, i.GuildID).ID
-	var role *discordgo.Role
+	roleID := opts["role"].Snowflake()
+	var role *discord.Role
 	for _, candidate := range roles {
 		if candidate.ID == roleID {
-			role = candidate
+			role = &candidate
 			break
 		}
 	}
-	if !canAssignRole(i.Member, role, roles, i.GuildID) {
+	if !canAssignRole(i.Member(), role, roles, snowflakeString(i.GuildID())) {
 		_ = editDeferredResponse(s, i, "That role must be editable and below your highest role.")
 		return
 	}
@@ -938,8 +930,8 @@ func (b *Bot) handleBulkRole(s *discordgo.Session, i *discordgo.InteractionCreat
 	succeeded := 0
 	for _, userID := range userIDs {
 		// ponytail: sequential edits respect Discord rate limits; add workers only if large runs become too slow.
-		if err := s.GuildMemberRoleAdd(i.GuildID, userID, role.ID, discordgo.WithAuditLogReason("Bulk role add by "+callerID)); err != nil {
-			b.Logger.Warn("bulkrole add failed", zap.String("user", userID), zap.String("role", role.ID), zap.Error(err))
+		if err := s.Rest.AddMemberRole(value(i.GuildID()), snowflakeID(userID), role.ID, rest.WithReason("Bulk role add by "+callerID)); err != nil {
+			b.Logger.Warn("bulkrole add failed", zap.String("user", userID), zap.String("role", role.ID.String()), zap.Error(err))
 			continue
 		}
 		succeeded++
@@ -961,10 +953,10 @@ func (b *Bot) handleBulkRole(s *discordgo.Session, i *discordgo.InteractionCreat
 	}
 }
 
-func (b *Bot) handleAddAdmin(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
-	targetUser := opts["user"].UserValue(s)
+func (b *Bot) handleAddAdmin(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string) {
+	targetUser := opts["user"].Snowflake()
 	banner := b.newBanner()
-	resp, err := b.Admin.AddAdmin(banner, callerID, targetUser.ID, b.Config)
+	resp, err := b.Admin.AddAdmin(banner, callerID, targetUser.String(), b.Config)
 	if err != nil {
 		b.Logger.Error("addadmin error", zap.Error(err))
 		respondEphemeral(s, i, "Error adding admin.")
@@ -973,10 +965,10 @@ func (b *Bot) handleAddAdmin(s *discordgo.Session, i *discordgo.InteractionCreat
 	respondPublic(s, i, resp)
 }
 
-func (b *Bot) handleRemoveAdmin(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
-	targetUser := opts["user"].UserValue(s)
+func (b *Bot) handleRemoveAdmin(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string) {
+	targetUser := opts["user"].Snowflake()
 	banner := b.newBanner()
-	resp, err := b.Admin.RemoveAdmin(banner, callerID, targetUser.ID, b.Config)
+	resp, err := b.Admin.RemoveAdmin(banner, callerID, targetUser.String(), b.Config)
 	if err != nil {
 		b.Logger.Error("removeadmin error", zap.Error(err))
 		respondEphemeral(s, i, "Error removing admin.")
@@ -985,8 +977,8 @@ func (b *Bot) handleRemoveAdmin(s *discordgo.Session, i *discordgo.InteractionCr
 	respondPublic(s, i, resp)
 }
 
-func (b *Bot) handleGarminMemory(s *discordgo.Session, i *discordgo.InteractionCreate, options []*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
-	if len(options) != 1 {
+func (b *Bot) handleGarminMemory(s *bot.Client, i *events.ApplicationCommandInteractionCreate, data discord.SlashCommandInteractionData, callerID string) {
+	if data.SubCommandName == nil {
 		respondEphemeral(s, i, "Choose a memory action.")
 		return
 	}
@@ -1000,10 +992,10 @@ func (b *Bot) handleGarminMemory(s *discordgo.Session, i *discordgo.InteractionC
 		return
 	}
 
-	subcommand := options[0]
-	subopts := optionMap(subcommand.Options)
+	subcommand := *data.SubCommandName
+	subopts := data.Options
 	var err error
-	switch subcommand.Name {
+	switch subcommand {
 	case "view":
 		var memory string
 		memory, err = b.garminMemory.Read()
@@ -1032,36 +1024,36 @@ func (b *Bot) handleGarminMemory(s *discordgo.Session, i *discordgo.InteractionC
 			return
 		}
 	default:
-		err = fmt.Errorf("unknown memory action %q", subcommand.Name)
+		err = fmt.Errorf("unknown memory action %q", subcommand)
 	}
 
-	b.Logger.Error("Metrobot memory command failed", zap.String("action", subcommand.Name), zap.Error(err))
+	b.Logger.Error("Metrobot memory command failed", zap.String("action", subcommand), zap.Error(err))
 	respondEphemeral(s, i, fmt.Sprintf("Could not manage Metrobot memory: %s", err))
 }
 
-func respondGarminMemory(s *discordgo.Session, i *discordgo.InteractionCreate, memory string) error {
+func respondGarminMemory(s *bot.Client, i *events.ApplicationCommandInteractionCreate, memory string) error {
 	if len(memory) <= 1900 {
-		return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
+		return s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{
+			Type: discord.InteractionResponseTypeCreateMessage,
+			Data: discord.MessageCreate{
 				Content: "```md\n" + memory + "\n```",
-				Flags:   discordgo.MessageFlagsEphemeral | discordgo.MessageFlagsSuppressEmbeds,
+				Flags:   discord.MessageFlagEphemeral | discord.MessageFlagSuppressEmbeds,
 			},
 		})
 	}
-	return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
+	return s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{
+		Type: discord.InteractionResponseTypeCreateMessage,
+		Data: discord.MessageCreate{
 			Content: "Metrobot's memory is attached.",
-			Flags:   discordgo.MessageFlagsEphemeral | discordgo.MessageFlagsSuppressEmbeds,
-			Files: []*discordgo.File{
-				{Name: cmd.GarminMemoryFile, ContentType: "text/markdown", Reader: strings.NewReader(memory)},
+			Flags:   discord.MessageFlagEphemeral | discord.MessageFlagSuppressEmbeds,
+			Files: []*discord.File{
+				{Name: cmd.GarminMemoryFile, Reader: strings.NewReader(memory)},
 			},
 		},
 	})
 }
 
-func (b *Bot) handlePing(s *discordgo.Session, i *discordgo.InteractionCreate) {
+func (b *Bot) handlePing(s *bot.Client, i *events.ApplicationCommandInteractionCreate) {
 	text, err := b.Ping.Ping()
 	if err != nil {
 		b.Logger.Error("ping error", zap.Error(err))
@@ -1071,15 +1063,15 @@ func (b *Bot) handlePing(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	respondPublic(s, i, text)
 }
 
-func (b *Bot) handlePurge(s *discordgo.Session, i *discordgo.InteractionCreate, opts map[string]*discordgo.ApplicationCommandInteractionDataOption, callerID string) {
+func (b *Bot) handlePurge(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string) {
 	if !b.DB.IsAdmin("discord", callerID, b.Config) {
 		respondEphemeral(s, i, "You don't have purge permissions.")
 		return
 	}
 
-	var count int64 = 0
+	var count int = 0
 	if opt, ok := opts["count"]; ok {
-		count = opt.IntValue()
+		count = opt.Int()
 	}
 
 	if count > 0 {
@@ -1094,22 +1086,22 @@ func (b *Bot) handlePurge(s *discordgo.Session, i *discordgo.InteractionCreate, 
 			return
 		}
 
-		msgs, err := s.ChannelMessages(i.ChannelID, int(count), "", "", "")
+		msgs, err := s.Rest.GetMessages(i.Channel().ID(), 0, 0, 0, int(count))
 		if err != nil {
 			b.Logger.Error("failed to get messages for purge", zap.Error(err))
 			editDeferredResponse(s, i, "Error fetching messages.")
 			return
 		}
 
-		var toDelete []string
+		var toDelete []snowflake.ID
 		for _, msg := range msgs {
 			toDelete = append(toDelete, msg.ID)
 		}
 
 		if len(toDelete) > 1 {
-			s.ChannelMessagesBulkDelete(i.ChannelID, toDelete)
+			s.Rest.BulkDeleteMessages(i.Channel().ID(), toDelete)
 		} else if len(toDelete) == 1 {
-			s.ChannelMessageDelete(i.ChannelID, toDelete[0])
+			s.Rest.DeleteMessage(i.Channel().ID(), toDelete[0])
 		}
 
 		editDeferredResponse(s, i, fmt.Sprintf("🗑️ Deleted %d messages.", len(toDelete)))
@@ -1118,7 +1110,7 @@ func (b *Bot) handlePurge(s *discordgo.Session, i *discordgo.InteractionCreate, 
 	}
 }
 
-func (b *Bot) handleScanReactions(s *discordgo.Session, i *discordgo.InteractionCreate, callerID string) {
+func (b *Bot) handleScanReactions(s *bot.Client, i *events.ApplicationCommandInteractionCreate, callerID string) {
 	if !b.DB.IsAdmin("discord", callerID, b.Config) {
 		respondEphemeral(s, i, "You don't have permission to scan reactions.")
 		return
@@ -1129,7 +1121,7 @@ func (b *Bot) handleScanReactions(s *discordgo.Session, i *discordgo.Interaction
 		return
 	}
 
-	result, err := b.scanProhibitedReactions(s, i.ChannelID)
+	result, err := b.scanProhibitedReactions(s, i.Channel().ID().String())
 	if err != nil {
 		b.Logger.Error("scanreactions failed", zap.Error(err))
 		editDeferredResponse(s, i, fmt.Sprintf("Error scanning reactions: %s", err))
@@ -1155,7 +1147,7 @@ func (b *Bot) handleScanReactions(s *discordgo.Session, i *discordgo.Interaction
 	}
 }
 
-func (b *Bot) handleRefreshStarboard(s *discordgo.Session, i *discordgo.InteractionCreate, callerID string) {
+func (b *Bot) handleRefreshStarboard(s *bot.Client, i *events.ApplicationCommandInteractionCreate, callerID string) {
 	if !b.DB.IsAdmin("discord", callerID, b.Config) {
 		respondEphemeral(s, i, "You don't have permission to refresh the starboard.")
 		return
@@ -1178,57 +1170,49 @@ func (b *Bot) handleRefreshStarboard(s *discordgo.Session, i *discordgo.Interact
 
 // --- Helpers ---
 
-func optionMap(opts []*discordgo.ApplicationCommandInteractionDataOption) map[string]*discordgo.ApplicationCommandInteractionDataOption {
-	m := make(map[string]*discordgo.ApplicationCommandInteractionDataOption, len(opts))
-	for _, opt := range opts {
-		m[opt.Name] = opt
-	}
-	return m
-}
-
-func (b *Bot) handleAutocomplete(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	if i.GuildID != b.Config.DiscordGuildID {
+func (b *Bot) handleAutocomplete(s *bot.Client, i *events.AutocompleteInteractionCreate) {
+	if snowflakeString(i.GuildID()) != b.Config.DiscordGuildID {
 		return
 	}
 
-	data := i.ApplicationCommandData()
-	if data.Name == "gsm" || data.Name == "gsmcompare" {
+	data := i.Data
+	if data.CommandName == "gsm" || data.CommandName == "gsmcompare" {
 		b.handleGSMArenaAutocomplete(s, i, data.Options)
 		return
 	}
-	if data.Name == "nanoreview" || data.Name == "technicalcity" || data.Name == "nanoreviewcompare" || data.Name == "technicalcitycompare" {
+	if data.CommandName == "nanoreview" || data.CommandName == "technicalcity" || data.CommandName == "nanoreviewcompare" || data.CommandName == "technicalcitycompare" {
 		source := "nano"
-		if data.Name == "technicalcity" || data.Name == "technicalcitycompare" {
+		if data.CommandName == "technicalcity" || data.CommandName == "technicalcitycompare" {
 			source = "tc"
 		}
 		b.handleHardwareAutocomplete(s, i, source, data.Options)
 		return
 	}
-	if data.Name != "unwarn" {
+	if data.CommandName != "unwarn" {
 		return
 	}
 
-	opts := optionMap(data.Options)
+	opts := data.Options
 	userOpt, ok := opts["user"]
 	if !ok {
 		respondAutocomplete(s, i, nil)
 		return
 	}
 
-	targetUser := userOpt.UserValue(s)
-	if targetUser == nil {
+	targetUser := userOpt.Snowflake()
+	if targetUser == 0 {
 		respondAutocomplete(s, i, nil)
 		return
 	}
 
-	warnings, err := b.DB.GetWarnings("discord", targetUser.ID)
+	warnings, err := b.DB.GetWarnings("discord", targetUser.String())
 	if err != nil {
 		b.Logger.Error("autocomplete warnings error", zap.Error(err))
 		respondAutocomplete(s, i, nil)
 		return
 	}
 
-	choices := make([]*discordgo.ApplicationCommandOptionChoice, 0, min(len(warnings), 25))
+	choices := make([]discord.AutocompleteChoice, 0, min(len(warnings), 25))
 	for idx, warning := range warnings {
 		if len(choices) == 25 {
 			break
@@ -1239,7 +1223,7 @@ func (b *Bot) handleAutocomplete(s *discordgo.Session, i *discordgo.InteractionC
 			reason = "no reason"
 		}
 		label := fmt.Sprintf("%d - %s", idx+1, truncateForChoice(reason, 90))
-		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{
+		choices = append(choices, discord.AutocompleteChoiceInt{
 			Name:  label,
 			Value: idx + 1,
 		})
@@ -1248,11 +1232,8 @@ func (b *Bot) handleAutocomplete(s *discordgo.Session, i *discordgo.InteractionC
 	respondAutocomplete(s, i, choices)
 }
 
-func respondAutocomplete(s *discordgo.Session, i *discordgo.InteractionCreate, choices []*discordgo.ApplicationCommandOptionChoice) {
-	_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionApplicationCommandAutocompleteResult,
-		Data: &discordgo.InteractionResponseData{Choices: choices},
-	})
+func respondAutocomplete(s *bot.Client, i *events.AutocompleteInteractionCreate, choices []discord.AutocompleteChoice) {
+	_ = i.AutocompleteResult(choices)
 }
 
 func truncateForChoice(s string, max int) string {
@@ -1321,30 +1302,30 @@ func resolveBulkRoleUsers(users []string, members []cmd.MemberInfo) (ids, missin
 	return ids, missing
 }
 
-func canAssignRole(member *discordgo.Member, role *discordgo.Role, roles []*discordgo.Role, guildID string) bool {
-	if member == nil || role == nil || role.Managed || role.ID == guildID || member.Permissions&(discordgo.PermissionAdministrator|discordgo.PermissionManageRoles) == 0 {
+func canAssignRole(member *discord.ResolvedMember, role *discord.Role, roles []discord.Role, guildID string) bool {
+	if member == nil || role == nil || role.Managed || role.ID.String() == guildID || member.Permissions&(discord.PermissionAdministrator|discord.PermissionManageRoles) == 0 {
 		return false
 	}
 
 	highest := -1
 	for _, candidate := range roles {
-		if candidate.Position > highest && slices.Contains(member.Roles, candidate.ID) {
+		if candidate.Position > highest && slices.Contains(member.RoleIDs, candidate.ID) {
 			highest = candidate.Position
 		}
 	}
 	return role.Position < highest
 }
 
-func getOptString(opts map[string]*discordgo.ApplicationCommandInteractionDataOption, name string) string {
+func getOptString(opts map[string]discord.SlashCommandOption, name string) string {
 	if opt, ok := opts[name]; ok {
-		return opt.StringValue()
+		return opt.String()
 	}
 	return ""
 }
 
-func getOptBool(opts map[string]*discordgo.ApplicationCommandInteractionDataOption, name string) bool {
+func getOptBool(opts map[string]discord.SlashCommandOption, name string) bool {
 	if opt, ok := opts[name]; ok {
-		return opt.BoolValue()
+		return opt.Bool()
 	}
 	return false
 }
@@ -1379,110 +1360,96 @@ func chunkString(s string, maxLen int) []string {
 
 // Discord event handlers for automatic member actions
 
-// discordgo v0.29 drops primary_guild from User, so inspect the raw payload.
-func (b *Bot) onGuildTagEvent(s *discordgo.Session, event *discordgo.Event) {
-	if event == nil || (event.Type != "GUILD_MEMBER_ADD" && event.Type != "GUILD_MEMBER_UPDATE") {
+func (b *Bot) onGuildTagEvent(s *bot.Client, member *discord.Member) {
+	if member.GuildID.String() != b.Config.DiscordGuildID || member.User.ID == 0 {
 		return
 	}
-
-	var payload struct {
-		GuildID string `json:"guild_id"`
-		User    struct {
-			ID           string `json:"id"`
-			PrimaryGuild struct {
-				IdentityGuildID string `json:"identity_guild_id"`
-				IdentityEnabled bool   `json:"identity_enabled"`
-			} `json:"primary_guild"`
-		} `json:"user"`
-	}
-	if err := json.Unmarshal(event.RawData, &payload); err != nil {
-		b.Logger.Error("failed to inspect member guild tag", zap.Error(err))
+	tag := member.User.PrimaryGuild
+	if tag == nil || !value(tag.IdentityEnabled) || snowflakeString(tag.IdentityGuildID) != blockedGuildTagID {
 		return
 	}
-	if payload.GuildID != b.Config.DiscordGuildID || payload.User.ID == "" ||
-		!payload.User.PrimaryGuild.IdentityEnabled || payload.User.PrimaryGuild.IdentityGuildID != blockedGuildTagID {
-		return
-	}
-
 	const reason = "Displayed the blocked ROCK server tag (guild 1469982893056200819)"
-	if err := s.GuildBanCreateWithReason(payload.GuildID, payload.User.ID, reason, 0); err != nil {
-		b.Logger.Error("failed to ban member with blocked guild tag", zap.String("userID", payload.User.ID), zap.Error(err))
+	if err := s.Rest.AddBan(member.GuildID, member.User.ID, 0, rest.WithReason(reason)); err != nil {
+		b.Logger.Error("failed to ban member with blocked guild tag", zap.String("userID", member.User.ID.String()), zap.Error(err))
 		return
 	}
-	b.Logger.Info("banned member with blocked guild tag", zap.String("userID", payload.User.ID))
+	b.Logger.Info("banned member with blocked guild tag", zap.String("userID", member.User.ID.String()))
 }
 
-func (b *Bot) onGuildMemberAdd(s *discordgo.Session, m *discordgo.GuildMemberAdd) {
-	if m.GuildID != b.Config.DiscordGuildID {
+func (b *Bot) onGuildMemberAdd(s *bot.Client, m *events.GuildMemberJoin) {
+	if m.GuildID.String() != b.Config.DiscordGuildID || m.Member.User.ID == 0 {
 		return
 	}
-	if m.User == nil {
-		return
-	}
-	userID := m.User.ID
-
+	b.onGuildTagEvent(s, &m.Member)
+	userID := m.Member.User.ID.String()
 	go func() {
 		for attempt, delay := range newMemberDehoistDelays {
-			time.Sleep(delay)
-			if b.autoDehoistMember(s, m.GuildID, userID, "new member", attempt+1) {
+			timer := time.NewTimer(delay)
+			if b.lifecycle != nil {
+				select {
+				case <-timer.C:
+				case <-b.lifecycle.Done():
+					timer.Stop()
+					return
+				}
+			} else {
+				<-timer.C
+			}
+			if b.autoDehoistMember(s, m.GuildID.String(), userID, "new member", attempt+1) {
 				return
 			}
 		}
 	}()
 }
 
-func (b *Bot) onGuildMemberUpdate(s *discordgo.Session, m *discordgo.GuildMemberUpdate) {
-	if m.GuildID != b.Config.DiscordGuildID {
+func (b *Bot) onGuildMemberUpdate(s *bot.Client, m *events.GuildMemberUpdate) {
+	if m.GuildID.String() != b.Config.DiscordGuildID || m.Member.User.ID == 0 {
 		return
 	}
-	if m.User == nil {
+	b.onGuildTagEvent(s, &m.Member)
+	before, member := m.OldMember, m.Member
+	if before.User.ID != 0 && !slices.Contains(before.RoleIDs, snowflakeID(donorRoleID)) && slices.Contains(member.RoleIDs, snowflakeID(donorRoleID)) {
+		b.sendDonorWelcome(s, member.User.ID.String())
+	}
+	if before.User.ID == 0 || value(before.Nick) == value(member.Nick) {
 		return
 	}
-
-	if m.BeforeUpdate != nil && !slices.Contains(m.BeforeUpdate.Roles, donorRoleID) && slices.Contains(m.Roles, donorRoleID) {
-		b.sendDonorWelcome(s, m.User.ID)
-	}
-	if m.BeforeUpdate != nil && m.BeforeUpdate.Nick == m.Nick {
-		return
-	}
-
-	approved, err := b.DB.ConsumeNicknameApproval(m.GuildID, m.User.ID)
+	approved, err := b.DB.ConsumeNicknameApproval(m.GuildID.String(), member.User.ID.String())
 	if err != nil {
-		b.Logger.Error("failed to check nickname approval", zap.String("userID", m.User.ID), zap.Error(err))
+		b.Logger.Error("failed to check nickname approval", zap.String("userID", member.User.ID.String()), zap.Error(err))
 	} else if approved {
-		b.Logger.Info("skipping auto-dehoist for approved nickname change", zap.String("userID", m.User.ID))
+		b.Logger.Info("skipping auto-dehoist for approved nickname change", zap.String("userID", member.User.ID.String()))
 		return
 	}
-
-	b.autoDehoistMember(s, m.GuildID, m.User.ID, "updated member", 1)
+	b.autoDehoistMember(s, m.GuildID.String(), member.User.ID.String(), "updated member", 1)
 }
 
-func (b *Bot) sendDonorWelcome(s *discordgo.Session, userID string) {
+func (b *Bot) sendDonorWelcome(s *bot.Client, userID string) {
 	text, err := b.Notes.GetNote(donorWelcomeNote)
 	if err != nil {
 		b.Logger.Error("failed to load donor welcome note", zap.Error(err))
 		return
 	}
-	_, err = s.ChannelMessageSendComplex(donorWelcomeChannelID, &discordgo.MessageSend{
+	_, err = s.Rest.CreateMessage(snowflakeID(donorWelcomeChannelID), discord.MessageCreate{
 		Content:         fmt.Sprintf("<@%s>\n%s", userID, text),
-		AllowedMentions: &discordgo.MessageAllowedMentions{Users: []string{userID}},
+		AllowedMentions: &discord.AllowedMentions{Users: []snowflake.ID{snowflakeID(userID)}},
 	})
 	if err != nil {
 		b.Logger.Error("failed to send donor welcome", zap.String("userID", userID), zap.Error(err))
 	}
 }
 
-func (b *Bot) autoDehoistMember(s *discordgo.Session, guildID, userID, source string, attempt int) bool {
-	botMember, err := s.GuildMember(guildID, s.State.User.ID)
+func (b *Bot) autoDehoistMember(s *bot.Client, guildID, userID, source string, attempt int) bool {
+	botMember, err := s.Rest.GetMember(snowflakeID(guildID), s.ID())
 	if err != nil {
 		b.Logger.Debug("failed to get bot member for auto-dehoist permission check",
 			zap.String("userID", userID), zap.String("source", source), zap.Int("attempt", attempt), zap.Error(err))
 		return false
 	}
 
-	targetMember, err := s.GuildMember(guildID, userID)
+	targetMember, err := s.Rest.GetMember(snowflakeID(guildID), snowflakeID(userID))
 	if err != nil {
-		if restErr, ok := err.(*discordgo.RESTError); ok && restErr.Response != nil && restErr.Response.StatusCode == 404 {
+		if restErr, ok := err.(*rest.Error); ok && restErr.Response != nil && restErr.Response.StatusCode == 404 {
 			b.Logger.Debug("skipping auto-dehoist - member no longer in guild",
 				zap.String("userID", userID), zap.String("source", source), zap.Int("attempt", attempt))
 			return true
@@ -1492,7 +1459,7 @@ func (b *Bot) autoDehoistMember(s *discordgo.Session, guildID, userID, source st
 		return false
 	}
 
-	if targetMember.User == nil {
+	if targetMember.User.ID == 0 {
 		b.Logger.Debug("failed to auto-dehoist member with missing user data",
 			zap.String("userID", userID), zap.String("source", source), zap.Int("attempt", attempt))
 		return false
@@ -1503,7 +1470,7 @@ func (b *Bot) autoDehoistMember(s *discordgo.Session, guildID, userID, source st
 
 	if !canManageMember(s, guildID, botMember, targetMember) {
 		b.Logger.Debug("skipping auto-dehoist - insufficient permissions",
-			zap.String("userID", userID), zap.String("source", source), zap.Int("attempt", attempt), zap.String("displayName", targetMember.Nick))
+			zap.String("userID", userID), zap.String("source", source), zap.Int("attempt", attempt), zap.String("displayName", value(targetMember.Nick)))
 		return false
 	}
 
@@ -1535,37 +1502,28 @@ func (b *Bot) autoDehoistMember(s *discordgo.Session, guildID, userID, source st
 }
 
 // canManageMember checks if the bot can manage a member's nickname
-func canManageMember(s *discordgo.Session, guildID string, botMember, targetMember *discordgo.Member) bool {
-	// Get the guild to check roles
-	guild, err := s.Guild(guildID)
-	if err != nil {
+func canManageMember(s *bot.Client, guildID string, botMember, targetMember *discord.Member) bool {
+	if botMember == nil || targetMember == nil || botMember.User.ID == targetMember.User.ID {
 		return false
 	}
-
-	// Create a map of role positions
-	rolePositions := make(map[string]int)
+	guild, err := s.Rest.GetGuild(snowflakeID(guildID), false)
+	if err != nil || targetMember.User.ID == guild.OwnerID {
+		return false
+	}
+	botHighest, targetHighest := 0, 0
+	var permissions discord.Permissions
 	for _, role := range guild.Roles {
-		rolePositions[role.ID] = role.Position
-	}
-
-	// Find bot's highest role position
-	botHighestPos := -1
-	for _, roleID := range botMember.Roles {
-		if pos, ok := rolePositions[roleID]; ok && pos > botHighestPos {
-			botHighestPos = pos
+		if role.ID == guild.ID || slices.Contains(botMember.RoleIDs, role.ID) {
+			permissions |= role.Permissions
+		}
+		if slices.Contains(botMember.RoleIDs, role.ID) && role.Position > botHighest {
+			botHighest = role.Position
+		}
+		if slices.Contains(targetMember.RoleIDs, role.ID) && role.Position > targetHighest {
+			targetHighest = role.Position
 		}
 	}
-
-	// Find target's highest role position
-	targetHighestPos := -1
-	for _, roleID := range targetMember.Roles {
-		if pos, ok := rolePositions[roleID]; ok && pos > targetHighestPos {
-			targetHighestPos = pos
-		}
-	}
-
-	// Bot can manage if its highest role is higher than target's highest role
-	return botHighestPos > targetHighestPos
+	return (permissions.Has(discord.PermissionAdministrator) || permissions.Has(discord.PermissionManageNicknames)) && botHighest > targetHighest
 }
 
 // extractNoteName extracts note name from formats like .NOTE, . NOTE, .. NOTE, ..NOTE, etc.

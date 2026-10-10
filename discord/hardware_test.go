@@ -12,7 +12,7 @@ import (
 	"github.com/MetrolistGroup/metrobot/gsmarena"
 	"github.com/MetrolistGroup/metrobot/nanoreview"
 	"github.com/MetrolistGroup/metrobot/technicalcity"
-	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo/discord"
 )
 
 func TestHardwareCachedLookupAndNavigation(t *testing.T) {
@@ -25,6 +25,7 @@ func TestHardwareCachedLookupAndNavigation(t *testing.T) {
 		source, searchKey, detailKey, searchJSON, deviceJSON, query, slug string
 	}{
 		{"nano", "nano:search:oneplus 15", "nano:detail:phone/oneplus-15", `[{"name":"OnePlus 15","slug":"phone/oneplus-15","url":"https://nanoreview.net/en/phone/oneplus-15"}]`, `{"name":"OnePlus 15","slug":"phone/oneplus-15","url":"https://nanoreview.net/en/phone/oneplus-15","specs":[{"name":"Display","items":[{"name":"Size","values":["6.78 inches"]}]},{"name":"Battery","items":[{"name":"Capacity","values":["7300 mAh"]}]}]}`, "OnePlus 15", "phone/oneplus-15"},
+
 		{"tc", "tc:search:ryzen 9 9950x3d", "tc:device:cpu/Ryzen-9-9950X3D", `[{"name":"Ryzen 9 9950X3D","slug":"cpu/Ryzen-9-9950X3D","url":"https://technical.city/en/cpu/Ryzen-9-9950X3D"}]`, `{"name":"Ryzen 9 9950X3D","slug":"cpu/Ryzen-9-9950X3D","url":"https://technical.city/en/cpu/Ryzen-9-9950X3D","specs":[{"name":"Specifications","items":[{"name":"Cores","values":["16"]}]}]}`, "Ryzen 9 9950X3D", "cpu/Ryzen-9-9950X3D"},
 	}
 	bot := &Bot{nanoreview: nanoreview.New(database), technicalCity: technicalcity.New(database)}
@@ -43,14 +44,14 @@ func TestHardwareCachedLookupAndNavigation(t *testing.T) {
 			t.Fatalf("%s detail: %v, %v", fixture.source, device, err)
 		}
 		components := hardwareComponents(fixture.source, device, "1")
-		container := components[0].(discordgo.Container)
+		container := components[0].(discord.ContainerComponent)
 		foundCategory := false
 		for _, part := range container.Components {
-			if text, ok := part.(discordgo.TextDisplay); ok && strings.Contains(text.Content, device.Specs[0].Items[0].Values[0]) {
+			if text, ok := part.(discord.TextDisplayComponent); ok && strings.Contains(text.Content, device.Specs[0].Items[0].Values[0]) {
 				foundCategory = true
 			}
-			if row, ok := part.(discordgo.ActionsRow); ok {
-				if menu, ok := row.Components[0].(discordgo.SelectMenu); ok && (menu.CustomID != "hw:"+fixture.source+":"+fixture.slug || !menu.Options[1].Default) {
+			if row, ok := part.(discord.ActionRowComponent); ok {
+				if menu, ok := row.Components[0].(discord.StringSelectMenuComponent); ok && (menu.CustomID != "hw:"+fixture.source+":"+fixture.slug || !menu.Options[1].Default) {
 					t.Fatalf("%s navigation: %#v", fixture.source, menu)
 				}
 			}
@@ -86,7 +87,7 @@ func TestRunGarminAIFetchesNanoReviewBeforeAnswering(t *testing.T) {
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "NanoReview lists a 7300 mAh battery."}}, nil
 	})
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{ID: "1", GuildID: "guild", ChannelID: "channel", Content: "garmin, show NanoReview specs for OnePlus 15", Author: &discordgo.User{ID: "user"}}}
+	message := &discord.Message{ID: snowflakeID("1"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Content: "garmin, show NanoReview specs for OnePlus 15", Author: discord.User{ID: snowflakeID("100000000000000056")}}
 	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "show NanoReview specs for OnePlus 15"}})
 	if err != nil || result.ToolCalls != 1 || !strings.Contains(result.Answer, "7300 mAh") {
 		t.Fatalf("NanoReview run: %#v, %v", result, err)
@@ -98,15 +99,15 @@ func TestHardwareNavigationOverDiscordCategoryLimit(t *testing.T) {
 	for index := range 27 {
 		device.Specs = append(device.Specs, gsmarena.SpecSection{Name: fmt.Sprint("Category ", index), Items: []gsmarena.SpecItem{{Name: "Value", Values: []string{fmt.Sprint("item ", index)}}}})
 	}
-	container := hardwareComponents("tc", device, "24")[0].(discordgo.Container)
-	var menu discordgo.SelectMenu
+	container := hardwareComponents("tc", device, "24")[0].(discord.ContainerComponent)
+	var menu discord.StringSelectMenuComponent
 	var content string
 	for _, component := range container.Components {
-		if text, ok := component.(discordgo.TextDisplay); ok {
+		if text, ok := component.(discord.TextDisplayComponent); ok {
 			content += text.Content
 		}
-		if row, ok := component.(discordgo.ActionsRow); ok {
-			if selectMenu, ok := row.Components[0].(discordgo.SelectMenu); ok {
+		if row, ok := component.(discord.ActionRowComponent); ok {
+			if selectMenu, ok := row.Components[0].(discord.StringSelectMenuComponent); ok {
 				menu = selectMenu
 			}
 		}
@@ -119,8 +120,11 @@ func TestHardwareNavigationOverDiscordCategoryLimit(t *testing.T) {
 func TestGarminHardwareSourceAndSubject(t *testing.T) {
 	for _, tc := range []struct{ prompt, tool, query string }{
 		{"show NanoReview specs for OnePlus 15", "get_nanoreview_device", "OnePlus 15"},
+
 		{"search technical.city for Ryzen 9 9950X3D specs", "get_technicalcity_device", "Ryzen 9 9950X3D"},
+
 		{"how much VRAM does RTX 5090 have?", "get_technicalcity_device", "RTX 5090"},
+
 		{"show Snapdragon 8 Elite specs", "get_nanoreview_device", "Snapdragon 8 Elite"},
 	} {
 		messages := []cmd.GarminAIMessage{{Role: "user", Content: tc.prompt}}

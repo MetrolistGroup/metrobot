@@ -8,7 +8,8 @@ import (
 	"unicode"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
-	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo/bot"
+	"github.com/disgoorg/disgo/discord"
 	"go.uber.org/zap"
 )
 
@@ -30,7 +31,7 @@ var garminAppSupportTerms = map[string]struct{}{
 	"theme": {}, "update": {}, "version": {}, "virus": {}, "virustotal": {}, "vpn": {}, "widget": {}, "youtube": {},
 }
 
-func (b *Bot) handleGarminAutomaticAppSupport(s *discordgo.Session, m *discordgo.MessageCreate, messages []cmd.GarminAIMessage) {
+func (b *Bot) handleGarminAutomaticAppSupport(s *bot.Client, m *discord.Message, messages []cmd.GarminAIMessage) {
 	if b.garminAI == nil {
 		return
 	}
@@ -53,15 +54,15 @@ func (b *Bot) handleGarminAutomaticAppSupport(s *discordgo.Session, m *discordgo
 		return b.runGarminAppSupportTriage(ctx, s, m, messages)
 	}()
 	if err != nil {
-		b.Logger.Debug("automatic Metrobot app-support triage failed", zap.String("user", m.Author.ID), zap.Error(err))
+		b.Logger.Debug("automatic Metrobot app-support triage failed", zap.String("user", m.Author.ID.String()), zap.Error(err))
 		return
 	}
-	if handoff && b.garminMessageVisible(m.ChannelID, m.ID) {
+	if handoff && b.garminMessageVisible(m.ChannelID.String(), m.ID.String()) {
 		b.handleGarminAI(s, m, messages)
 	}
 }
 
-func (b *Bot) runGarminAppSupportTriage(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, messages []cmd.GarminAIMessage) (bool, error) {
+func (b *Bot) runGarminAppSupportTriage(ctx context.Context, s *bot.Client, m *discord.Message, messages []cmd.GarminAIMessage) (bool, error) {
 	completion, err := b.garminAI.Complete(ctx, cmd.GarminAIRequest{
 		SystemPrompt: garminAppSupportTriagePrompt,
 		Context:      b.garminDiscordContextForConversation(s, m, messages),
@@ -88,42 +89,42 @@ func (b *Bot) runGarminAppSupportTriage(ctx context.Context, s *discordgo.Sessio
 	return false, nil
 }
 
-func (b *Bot) sendGarminAppSupportReplyAndRememberIfVisible(s *discordgo.Session, m *discordgo.MessageCreate, content string, conversation []cmd.GarminAIMessage, noteName string) *discordgo.Message {
+func (b *Bot) sendGarminAppSupportReplyAndRememberIfVisible(s *bot.Client, m *discord.Message, content string, conversation []cmd.GarminAIMessage, noteName string) *discord.Message {
 	b.garminAIMu.Lock()
 	defer b.garminAIMu.Unlock()
-	if !b.garminMessageVisibleLocked(m.ChannelID, m.ID) {
+	if !b.garminMessageVisibleLocked(m.ChannelID.String(), m.ID.String()) {
 		return nil
 	}
 	reply := b.sendGarminAppSupportReply(s, m, content, noteName)
 	if reply != nil {
-		b.storeGarminAIContextLocked(reply.ID, m, conversation, time.Now())
+		b.storeGarminAIContextLocked(reply.ID.String(), m, conversation, time.Now())
 	}
 	return reply
 }
 
-func (b *Bot) sendGarminAppSupportReply(s *discordgo.Session, m *discordgo.MessageCreate, content, noteName string) *discordgo.Message {
+func (b *Bot) sendGarminAppSupportReply(s *bot.Client, m *discord.Message, content, noteName string) *discord.Message {
 	if strings.EqualFold(noteName, "kmp") {
-		if reply := b.sendKMPNoteReply(s, m.ChannelID, m.ID, content); reply != nil {
+		if reply := b.sendKMPNoteReply(s, m.ChannelID.String(), m.ID.String(), content); reply != nil {
 			return reply
 		}
 	}
 	if len(content) <= garminAIMaxContent {
 		return b.sendGarminReply(s, m, content)
 	}
-	message := &discordgo.MessageSend{
-		Reference:       &discordgo.MessageReference{MessageID: m.ID},
-		AllowedMentions: &discordgo.MessageAllowedMentions{},
-		Files: []*discordgo.File{{
-			Name: "app-support-note.md", ContentType: "text/markdown", Reader: strings.NewReader(content),
+	message := &discord.MessageCreate{
+		MessageReference: &discord.MessageReference{MessageID: snowflakePtr(m.ID.String())},
+		AllowedMentions:  &discord.AllowedMentions{},
+		Files: []*discord.File{{
+			Name: "app-support-note.md", Reader: strings.NewReader(content),
 		}},
 	}
-	reply, err := s.ChannelMessageSendComplex(m.ChannelID, message)
+	reply, err := s.Rest.CreateMessage(m.ChannelID, *message)
 	if err == nil {
 		return reply
 	}
-	message.Reference = nil
+	message.MessageReference = nil
 	message.Files[0].Reader = strings.NewReader(content)
-	reply, err = s.ChannelMessageSendComplex(m.ChannelID, message)
+	reply, err = s.Rest.CreateMessage(m.ChannelID, *message)
 	if err != nil {
 		b.Logger.Error("failed to send app support note", zap.Error(err))
 		return nil

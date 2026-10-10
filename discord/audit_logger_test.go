@@ -10,18 +10,19 @@ import (
 	"time"
 
 	"github.com/MetrolistGroup/metrobot/config"
-	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo/discord"
+	"github.com/disgoorg/disgo/events"
 	"go.uber.org/zap"
 )
 
 func TestAuditLogFormattingPreservesMessageDataAndPermissionChanges(t *testing.T) {
-	message := &discordgo.Message{
+	message := &discord.Message{
 		Content: "first line\nsecond line",
-		Attachments: []*discordgo.MessageAttachment{{
-			Filename: "evidence.txt", ContentType: "text/plain", Size: 42, URL: "https://cdn.example/evidence.txt",
+		Attachments: []discord.Attachment{{
+			Filename: "evidence.txt", ContentType: ptr("text/plain"), Size: 42, URL: "https://cdn.example/evidence.txt",
 		}},
-		Embeds:       []*discordgo.MessageEmbed{{Title: "Link title", Description: "Link description"}},
-		StickerItems: []*discordgo.StickerItem{{ID: "sticker", Name: "Wave"}},
+		Embeds:       []discord.Embed{{Title: "Link title", Description: "Link description"}},
+		StickerItems: []discord.MessageSticker{{ID: snowflakeID("100000000000000050"), Name: "Wave"}},
 	}
 	payload := renderMessagePayload(message)
 	for _, expected := range []string{"first line", "second line", "evidence.txt", "https://cdn.example/evidence.txt", "Link title", "Link description", "Wave"} {
@@ -31,8 +32,8 @@ func TestAuditLogFormattingPreservesMessageDataAndPermissionChanges(t *testing.T
 	}
 
 	changes := changedOverwrites(
-		[]*discordgo.PermissionOverwrite{{ID: "role", Type: discordgo.PermissionOverwriteTypeRole, Allow: discordgo.PermissionViewChannel}},
-		[]*discordgo.PermissionOverwrite{{ID: "role", Type: discordgo.PermissionOverwriteTypeRole, Allow: discordgo.PermissionViewChannel | discordgo.PermissionSendMessages, Deny: discordgo.PermissionMentionEveryone}},
+		[]discord.PermissionOverwrite{discord.RolePermissionOverwrite{RoleID: snowflakeID("100000000000000041"), Allow: discord.PermissionViewChannel}},
+		[]discord.PermissionOverwrite{discord.RolePermissionOverwrite{RoleID: snowflakeID("100000000000000041"), Allow: discord.PermissionViewChannel | discord.PermissionSendMessages, Deny: discord.PermissionMentionEveryone}},
 	)
 	if len(changes) != 1 {
 		t.Fatalf("overwrite changes = %d, want 1", len(changes))
@@ -50,9 +51,9 @@ func TestBanEventUsesAuditActorAndServerLogChannel(t *testing.T) {
 	var logged string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/guilds/guild/audit-logs"):
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/guilds/100000000000000012/audit-logs"):
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"audit_log_entries":[{"target_id":"target","user_id":"moderator","id":"` + auditID + `","action_type":22,"reason":"spam"}],"users":[],"webhooks":[],"integrations":[]}`))
+			_, _ = w.Write([]byte(`{"audit_log_entries":[{"target_id":"100000000000000052","user_id":"100000000000000024","id":"` + auditID + `","action_type":22,"reason":"spam"}],"users":[],"webhooks":[],"integrations":[]}`))
 		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/channels/"+serverLogChannelID+"/messages"):
 			var request struct {
 				Content string `json:"content"`
@@ -62,7 +63,7 @@ func TestBanEventUsesAuditActorAndServerLogChannel(t *testing.T) {
 			}
 			logged = request.Content
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"id":"log"}`))
+			_, _ = w.Write([]byte(`{"id":"100000000000000019"}`))
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
 			w.WriteHeader(http.StatusNotFound)
@@ -70,16 +71,18 @@ func TestBanEventUsesAuditActorAndServerLogChannel(t *testing.T) {
 	}))
 	defer server.Close()
 
-	session, err := discordgo.New("Bot token")
+	session, err := newTestClient(t)
+
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.Client = server.Client()
-	session.Client.Transport = rewriteDiscordTransport{base: session.Client.Transport, target: server.URL}
-	bot := &Bot{Config: &config.Config{DiscordGuildID: "guild"}, Logger: zap.NewNop()}
-	bot.onGuildBanAddLog(session, &discordgo.GuildBanAdd{GuildID: "guild", User: &discordgo.User{ID: "target"}})
+	session.Rest = testREST(server.Client())
+	session.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: session.Rest.HTTPClient().Transport, target: server.URL}
+	bot := &Bot{Config: &config.Config{DiscordGuildID: "100000000000000012"}, Logger: zap.NewNop()}
+	bot.onGuildBanAddLog(session, &events.GuildBan{GenericGuild: &events.GenericGuild{GuildID: snowflakeID("100000000000000012")},
+		User: discord.User{ID: snowflakeID("100000000000000052")}})
 
-	for _, expected := range []string{"Member banned", "<@target>", "<@moderator>", "spam"} {
+	for _, expected := range []string{"Member banned", "<@100000000000000052>", "<@100000000000000024>", "spam"} {
 		if !strings.Contains(logged, expected) {
 			t.Errorf("server log omitted %q: %s", expected, logged)
 		}

@@ -17,7 +17,9 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo/bot"
+	"github.com/disgoorg/disgo/discord"
+	"github.com/disgoorg/disgo/events"
 	"github.com/yuin/goldmark"
 	goldmarkast "github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
@@ -88,51 +90,51 @@ func isQuoteTrigger(content string) bool {
 	}
 }
 
-func (b *Bot) handleQuoteReply(s *discordgo.Session, command *discordgo.MessageCreate) {
+func (b *Bot) handleQuoteReply(s *bot.Client, command *discord.Message) {
 	target := command.ReferencedMessage
-	if target == nil && command.MessageReference != nil && command.MessageReference.MessageID != "" {
-		target, _ = s.ChannelMessage(command.ChannelID, command.MessageReference.MessageID)
+	if target == nil && command.MessageReference != nil && snowflakeString(command.MessageReference.MessageID) != "" {
+		target, _ = s.Rest.GetMessage(command.ChannelID, value(command.MessageReference.MessageID))
 	}
 	if target == nil {
-		sendReply(s, command.ChannelID, command.ID, "Reply to a message to quote it.", false, b.Logger)
+		sendReply(s, command.ChannelID.String(), command.ID.String(), "Reply to a message to quote it.", false, b.Logger)
 		return
 	}
-	if target.GuildID == "" {
+	if target.GuildID == nil {
 		target.GuildID = command.GuildID
 	}
 
 	data, err := b.makeQuoteImage(s, target)
 	if err != nil {
-		b.Logger.Error("failed to make quote", zap.String("message", target.ID), zap.Error(err))
-		sendReply(s, command.ChannelID, command.ID, "I couldn't quote that message.", false, b.Logger)
+		b.Logger.Error("failed to make quote", zap.String("message", target.ID.String()), zap.Error(err))
+		sendReply(s, command.ChannelID.String(), command.ID.String(), "I couldn't quote that message.", false, b.Logger)
 		return
 	}
-	_, err = s.ChannelMessageSendComplex(command.ChannelID, &discordgo.MessageSend{
-		Files:           []*discordgo.File{{Name: "quote.png", ContentType: "image/png", Reader: bytes.NewReader(data)}},
-		AllowedMentions: &discordgo.MessageAllowedMentions{},
-		Reference:       &discordgo.MessageReference{MessageID: target.ID},
+	_, err = s.Rest.CreateMessage(command.ChannelID, discord.MessageCreate{
+		Files:            []*discord.File{{Name: "quote.png", Reader: bytes.NewReader(data)}},
+		AllowedMentions:  &discord.AllowedMentions{},
+		MessageReference: &discord.MessageReference{MessageID: snowflakePtr(target.ID.String())},
 	})
 	if err != nil {
-		b.Logger.Error("failed to send quote", zap.String("message", target.ID), zap.Error(err))
+		b.Logger.Error("failed to send quote", zap.String("message", target.ID.String()), zap.Error(err))
 	}
 }
 
-func (b *Bot) handleQuoteInteraction(s *discordgo.Session, i *discordgo.InteractionCreate) {
+func (b *Bot) handleQuoteInteraction(s *bot.Client, i *events.ApplicationCommandInteractionCreate) {
 	if err := deferResponse(s, i, false); err != nil {
 		b.Logger.Error("failed to defer quote response", zap.Error(err))
 		return
 	}
 
-	interaction := i.ApplicationCommandData()
-	var target *discordgo.Message
-	if interaction.CommandType == discordgo.MessageApplicationCommand {
-		if interaction.Resolved != nil {
-			target = interaction.Resolved.Messages[interaction.TargetID]
+	var target *discord.Message
+	if i.Data.Type() == discord.ApplicationCommandTypeMessage {
+		message := i.MessageCommandInteractionData().TargetMessage()
+		if message.ID != 0 {
+			target = &message
 		}
 	} else {
-		messages, err := s.ChannelMessages(i.ChannelID, 1, i.ID, "", "")
+		messages, err := s.Rest.GetMessages(i.Channel().ID(), 0, i.ID(), 0, 1)
 		if err == nil && len(messages) > 0 {
-			target = messages[0]
+			target = &messages[0]
 		}
 	}
 	if target == nil {
@@ -140,32 +142,32 @@ func (b *Bot) handleQuoteInteraction(s *discordgo.Session, i *discordgo.Interact
 		_ = editDeferredResponse(s, i, "I couldn't find a message to quote.")
 		return
 	}
-	if target.GuildID == "" {
-		target.GuildID = i.GuildID
+	if target.GuildID == nil {
+		target.GuildID = i.GuildID()
 	}
-	if target.ChannelID == "" {
-		target.ChannelID = i.ChannelID
+	if target.ChannelID == 0 {
+		target.ChannelID = i.Channel().ID()
 	}
 	data, err := b.makeQuoteImage(s, target)
 	if err != nil {
-		b.Logger.Error("failed to make quote", zap.String("message", target.ID), zap.Error(err))
+		b.Logger.Error("failed to make quote", zap.String("message", target.ID.String()), zap.Error(err))
 		_ = editDeferredResponse(s, i, "I couldn't quote that message.")
 		return
 	}
 
 	empty := ""
-	_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+	_, err = s.Rest.UpdateInteractionResponse(i.ApplicationID(), i.Token(), discord.MessageUpdate{
 		Content:         &empty,
-		Files:           []*discordgo.File{{Name: "quote.png", ContentType: "image/png", Reader: bytes.NewReader(data)}},
-		AllowedMentions: &discordgo.MessageAllowedMentions{},
+		Files:           []*discord.File{{Name: "quote.png", Reader: bytes.NewReader(data)}},
+		AllowedMentions: &discord.AllowedMentions{},
 	})
 	if err != nil {
 		b.Logger.Error("failed to send quote interaction", zap.Error(err))
 	}
 }
 
-func (b *Bot) makeQuoteImage(s *discordgo.Session, message *discordgo.Message) ([]byte, error) {
-	if message.Author == nil {
+func (b *Bot) makeQuoteImage(s *bot.Client, message *discord.Message) ([]byte, error) {
+	if message.Author.ID == 0 {
 		return nil, fmt.Errorf("message has no author")
 	}
 	text := strings.TrimSpace(message.Content)
@@ -179,27 +181,27 @@ func (b *Bot) makeQuoteImage(s *discordgo.Session, message *discordgo.Message) (
 	text = resolveQuoteMentions(s, message, text)
 	name, avatarURL := quoteAuthor(s, message)
 	replyName := quoteReplyName(s, message)
-	avatar, err := fetchQuoteAvatar(s.Client, avatarURL)
+	avatar, err := fetchQuoteAvatar(s.Rest.HTTPClient(), avatarURL)
 	if err != nil {
-		b.Logger.Debug("failed to fetch quote avatar", zap.String("user", message.Author.ID), zap.Error(err))
+		b.Logger.Debug("failed to fetch quote avatar", zap.String("user", message.Author.ID.String()), zap.Error(err))
 	}
 	return renderQuote(text, name, replyName, avatar)
 }
 
-func quoteReplyName(s *discordgo.Session, message *discordgo.Message) string {
+func quoteReplyName(s *bot.Client, message *discord.Message) string {
 	reply := message.ReferencedMessage
-	if reply == nil && s != nil && message.MessageReference != nil && message.MessageReference.MessageID != "" {
-		channelID := message.MessageReference.ChannelID
+	if reply == nil && s != nil && message.MessageReference != nil && snowflakeString(message.MessageReference.MessageID) != "" {
+		channelID := snowflakeString(message.MessageReference.ChannelID)
 		if channelID == "" {
-			channelID = message.ChannelID
+			channelID = message.ChannelID.String()
 		}
-		reply, _ = s.ChannelMessage(channelID, message.MessageReference.MessageID)
+		reply, _ = s.Rest.GetMessage(snowflakeID(channelID), value(message.MessageReference.MessageID))
 	}
-	if reply == nil || reply.Author == nil {
+	if reply == nil || reply.Author.ID == 0 {
 		return ""
 	}
 	copy := *reply
-	if copy.GuildID == "" {
+	if copy.GuildID == nil {
 		copy.GuildID = message.GuildID
 	}
 	name, _ := quoteAuthor(s, &copy)
@@ -209,15 +211,15 @@ func quoteReplyName(s *discordgo.Session, message *discordgo.Message) string {
 	return "@" + name
 }
 
-func quoteAuthor(s *discordgo.Session, message *discordgo.Message) (string, string) {
-	name, avatarURL := message.Author.Username, message.Author.AvatarURL("512")
-	member := garminCurrentGuildMember(s, message.GuildID, message.Author.ID)
+func quoteAuthor(s *bot.Client, message *discord.Message) (string, string) {
+	name, avatarURL := message.Author.Username, message.Author.EffectiveAvatarURL(discord.WithSize(512))
+	member := garminCurrentGuildMember(s, snowflakeString(message.GuildID), message.Author.ID.String())
 	if member == nil {
 		member = message.Member
 	}
 	if member != nil {
-		member = copyQuoteMember(member, message.GuildID, message.Author)
-		name, avatarURL = member.DisplayName(), member.AvatarURL("512")
+		member = copyQuoteMember(member, snowflakeString(message.GuildID), &message.Author)
+		name, avatarURL = member.EffectiveName(), member.EffectiveAvatarURL(discord.WithSize(512))
 	}
 	if strings.TrimSpace(name) == "" {
 		name = message.Author.Username
@@ -225,23 +227,23 @@ func quoteAuthor(s *discordgo.Session, message *discordgo.Message) (string, stri
 	return name, avatarURL
 }
 
-func resolveQuoteMentions(s *discordgo.Session, message *discordgo.Message, text string) string {
+func resolveQuoteMentions(s *bot.Client, message *discord.Message, text string) string {
 	replacements := make([]string, 0, len(message.Mentions)*4)
 	seen := make(map[string]struct{}, len(message.Mentions))
 	for _, user := range message.Mentions {
-		if user == nil || user.ID == "" {
+		if user.ID == 0 {
 			continue
 		}
-		if _, ok := seen[user.ID]; ok {
+		if _, ok := seen[user.ID.String()]; ok {
 			continue
 		}
-		seen[user.ID] = struct{}{}
+		seen[user.ID.String()] = struct{}{}
 		name := user.Username
-		if member := garminCurrentGuildMember(s, message.GuildID, user.ID); member != nil {
-			name = copyQuoteMember(member, message.GuildID, user).DisplayName()
+		if member := garminCurrentGuildMember(s, snowflakeString(message.GuildID), user.ID.String()); member != nil {
+			name = copyQuoteMember(member, snowflakeString(message.GuildID), &user).EffectiveName()
 		}
 		if strings.TrimSpace(name) != "" {
-			replacements = append(replacements, "<@"+user.ID+">", "@"+name, "<@!"+user.ID+">", "@"+name)
+			replacements = append(replacements, "<@"+user.ID.String()+">", "@"+name, "<@!"+user.ID.String()+">", "@"+name)
 		}
 	}
 	if len(replacements) == 0 {
@@ -250,11 +252,11 @@ func resolveQuoteMentions(s *discordgo.Session, message *discordgo.Message, text
 	return strings.NewReplacer(replacements...).Replace(text)
 }
 
-func copyQuoteMember(member *discordgo.Member, guildID string, user *discordgo.User) *discordgo.Member {
+func copyQuoteMember(member *discord.Member, guildID string, user *discord.User) *discord.Member {
 	copy := *member
-	copy.GuildID = guildID
-	if copy.User == nil {
-		copy.User = user
+	copy.GuildID = snowflakeID(guildID)
+	if copy.User.ID == 0 {
+		copy.User = *user
 	}
 	return &copy
 }

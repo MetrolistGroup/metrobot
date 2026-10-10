@@ -16,16 +16,19 @@ import (
 
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/db"
-	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo/discord"
 	"go.uber.org/zap"
 )
 
 func TestExtractGarminPromptFromBotMention(t *testing.T) {
-	session, err := discordgo.New("Bot token")
+	session, err := newTestClient(t)
+
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.State.User = &discordgo.User{ID: "123"}
+	session.Caches.SetSelfUser(discord.OAuth2User{User: discord.User{
+		ID: snowflakeID("123")}})
+
 	for _, content := range []string{"<@123> hello", "<@!123>, hello", "hey <@123>"} {
 		if prompt, triggered := extractGarminPrompt(session, content); !triggered || !strings.Contains(prompt, "hello") && !strings.Contains(prompt, "hey") {
 			t.Errorf("extractGarminPrompt(%q) = (%q, %v)", content, prompt, triggered)
@@ -58,44 +61,28 @@ func TestGarminAIContinuationIncludesBoundedContext(t *testing.T) {
 		garminAIContexts:     make(map[string]garminAIContext),
 		garminAIUserContexts: make(map[string]garminAIContext),
 	}
-	history := []cmd.GarminAIMessage{
-		{Role: "user", Content: "one"},
-		{Role: "assistant", Content: "one answer"},
-		{Role: "user", Content: "two"},
-		{Role: "assistant", Content: "two answer"},
-		{Role: "user", Content: "three"},
-		{Role: "assistant", Content: "three answer"},
+	history := []cmd.GarminAIMessage{{Role: "user", Content: "one"}, {Role: "assistant", Content: "one answer"}, {Role: "user", Content: "two"}, {Role: "assistant", Content: "two answer"}, {Role: "user", Content: "three"}, {Role: "assistant", Content: "three answer"}}
+	original := &discord.Message{
+		GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Author: discord.User{ID: snowflakeID("100000000000000056")},
 	}
-	original := &discordgo.MessageCreate{Message: &discordgo.Message{
-		GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "user"},
-	}}
-	bot.rememberGarminAIContext("bot-message", original, history)
+	bot.rememberGarminAIContext("100000000000000003", original, history)
 
-	messages, ok := bot.garminAIContinuation(&discordgo.MessageCreate{Message: &discordgo.Message{
-		GuildID:          "guild",
-		ChannelID:        "channel",
-		MessageReference: &discordgo.MessageReference{MessageID: "bot-message"},
-		Author:           &discordgo.User{ID: "user"},
-	}}, "  follow up  ")
+	messages, ok := bot.garminAIContinuation(&discord.Message{
+		GuildID:   snowflakePtr("100000000000000012"),
+		ChannelID: snowflakeID("100000000000000005"), MessageReference: &discord.MessageReference{MessageID: snowflakePtr("100000000000000003")},
+		Author: discord.User{ID: snowflakeID("100000000000000056")},
+	}, "  follow up  ")
 	if !ok {
 		t.Fatal("garminAIContinuation() did not recognize tracked reply")
 	}
-	want := []cmd.GarminAIMessage{
-		{Role: "user", Content: "one"},
-		{Role: "assistant", Content: "one answer"},
-		{Role: "user", Content: "two"},
-		{Role: "assistant", Content: "two answer"},
-		{Role: "user", Content: "three"},
-		{Role: "assistant", Content: "three answer"},
-		{Role: "user", Name: "discord_user", Content: "follow up"},
-	}
+	want := []cmd.GarminAIMessage{{Role: "user", Content: "one"}, {Role: "assistant", Content: "one answer"}, {Role: "user", Content: "two"}, {Role: "assistant", Content: "two answer"}, {Role: "user", Content: "three"}, {Role: "assistant", Content: "three answer"}, {Role: "user", Name: "discord_100000000000000056", Content: "follow up"}}
 	if !reflect.DeepEqual(messages, want) {
 		t.Fatalf("messages = %#v, want %#v", messages, want)
 	}
 }
 
 func TestGarminAIConversationCompactsEveryTwentyMessages(t *testing.T) {
-	model := &summaryGarminAI{summary: "Nyx (discord_nyx) chose option B; the game score is 4-2."}
+	model := &summaryGarminAI{summary: "Nyx (discord_100000000000000027) chose option B; the game score is 4-2."}
 	bot := &Bot{garminAI: model}
 	messages := make([]cmd.GarminAIMessage, 0, garminAICompactionMessages+1)
 	for index := range garminAICompactionMessages {
@@ -103,14 +90,14 @@ func TestGarminAIConversationCompactsEveryTwentyMessages(t *testing.T) {
 		name := ""
 		if index%2 == 0 {
 			role = "user"
-			name = "discord_nyx"
+			name = "discord_100000000000000027"
 			if index == 2 {
 				name = "discord_lamp"
 			}
 		}
 		messages = append(messages, cmd.GarminAIMessage{Role: role, Name: name, Content: fmt.Sprintf("message %d", index), Images: []string{"https://example.com/image.png"}})
 	}
-	messages = append(messages, cmd.GarminAIMessage{Role: "user", Name: "discord_nyx", Content: "continue"})
+	messages = append(messages, cmd.GarminAIMessage{Role: "user", Name: "discord_100000000000000027", Content: "continue"})
 
 	got, err := bot.compactGarminAIConversation(context.Background(), messages, `{"tracked_conversation_users":[]}`)
 	if err != nil {
@@ -130,7 +117,7 @@ func TestGarminAIConversationCompactsEveryTwentyMessages(t *testing.T) {
 
 	model.summary = "merged summary"
 	secondCycle := append(copyGarminAIMessages(got[:1]), messages[:garminAICompactionMessages]...)
-	secondCycle = append(secondCycle, cmd.GarminAIMessage{Role: "user", Name: "discord_nyx", Content: "next cycle"})
+	secondCycle = append(secondCycle, cmd.GarminAIMessage{Role: "user", Name: "discord_100000000000000027", Content: "next cycle"})
 	got, err = bot.compactGarminAIConversation(context.Background(), secondCycle, "context")
 	if err != nil || len(got) != 2 || got[1].Content != "next cycle" || len(model.request.Messages) != garminAICompactionMessages+1 || model.request.Messages[0].Name != garminAIConversationSummaryName {
 		t.Fatalf("second compaction = %#v, request %#v, error %v", got, model.request, err)
@@ -171,16 +158,15 @@ func TestGarminAIContinuationRejectsUntrackedAndExpiredReplies(t *testing.T) {
 	bot := &Bot{
 		garminAI: &fakeGarminAI{},
 		garminAIContexts: map[string]garminAIContext{
-			"expired": {userID: "user", channelID: "channel", expiresAt: time.Now().Add(-time.Minute)},
+			"expired": {userID: "100000000000000056", channelID: "100000000000000005", expiresAt: time.Now().Add(-time.Minute)},
 		},
 	}
 	for _, messageID := range []string{"other-bot-message", "expired"} {
-		messages, ok := bot.garminAIContinuation(&discordgo.MessageCreate{Message: &discordgo.Message{
-			GuildID:          "guild",
-			ChannelID:        "channel",
-			MessageReference: &discordgo.MessageReference{MessageID: messageID},
-			Author:           &discordgo.User{ID: "user"},
-		}}, "follow up")
+		messages, ok := bot.garminAIContinuation(&discord.Message{
+			GuildID:   snowflakePtr("100000000000000012"),
+			ChannelID: snowflakeID("100000000000000005"), MessageReference: &discord.MessageReference{MessageID: snowflakePtr(messageID)},
+			Author: discord.User{ID: snowflakeID("100000000000000056")},
+		}, "follow up")
 		if ok || messages != nil {
 			t.Fatalf("garminAIContinuation(%q) = (%#v, %v), want rejected", messageID, messages, ok)
 		}
@@ -193,20 +179,16 @@ func TestGarminAIContinuationDoesNotWakeOnHumanReplyWithUserHistory(t *testing.T
 		garminAIContexts:     make(map[string]garminAIContext),
 		garminAIUserContexts: make(map[string]garminAIContext),
 	}
-	original := &discordgo.MessageCreate{Message: &discordgo.Message{
-		GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "nyx"},
-	}}
-	bot.rememberGarminAIContext("tracked-bot-reply", original, []cmd.GarminAIMessage{
-		{Role: "user", Content: "garmin, hello"},
-		{Role: "assistant", Content: "hey nyx"},
-	})
-	messages, ok := bot.garminAIContinuation(&discordgo.MessageCreate{Message: &discordgo.Message{
-		GuildID:           "guild",
-		ChannelID:         "channel",
-		MessageReference:  &discordgo.MessageReference{MessageID: "human-message"},
-		ReferencedMessage: &discordgo.Message{ID: "human-message", Author: &discordgo.User{ID: "human"}},
-		Author:            &discordgo.User{ID: "nyx"},
-	}}, "me and lamp")
+	original := &discord.Message{
+		GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Author: discord.User{ID: snowflakeID("100000000000000027")},
+	}
+	bot.rememberGarminAIContext("tracked-bot-reply", original, []cmd.GarminAIMessage{{Role: "user", Content: "garmin, hello"}, {Role: "assistant", Content: "hey nyx"}})
+	messages, ok := bot.garminAIContinuation(&discord.Message{
+		GuildID:   snowflakePtr("100000000000000012"),
+		ChannelID: snowflakeID("100000000000000005"), MessageReference: &discord.MessageReference{MessageID: snowflakePtr("100000000000000015")},
+		ReferencedMessage: &discord.Message{ID: snowflakeID("100000000000000015"), Author: discord.User{ID: snowflakeID("100000000000000014")}},
+		Author:            discord.User{ID: snowflakeID("100000000000000027")},
+	}, "me and lamp")
 	if ok || messages != nil {
 		t.Fatalf("human reply woke Garmin with messages %#v", messages)
 	}
@@ -217,16 +199,13 @@ func TestGarminAITriggeredConversationUsesActiveHistory(t *testing.T) {
 		garminAIContexts:     make(map[string]garminAIContext),
 		garminAIUserContexts: make(map[string]garminAIContext),
 	}
-	history := []cmd.GarminAIMessage{
-		{Role: "user", Content: "always add a heart"},
-		{Role: "assistant", Content: "got it ❤️"},
+	history := []cmd.GarminAIMessage{{Role: "user", Content: "always add a heart"}, {Role: "assistant", Content: "got it ❤️"}}
+	message := &discord.Message{
+		GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Author: discord.User{ID: snowflakeID("100000000000000018")},
 	}
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "john"},
-	}}
 	bot.rememberGarminAIContext("old-reply", message, history)
 	got := bot.garminAITriggeredConversation(message, "you forgot")
-	want := append(history, cmd.GarminAIMessage{Role: "user", Name: "discord_john", Content: "you forgot"})
+	want := append(history, cmd.GarminAIMessage{Role: "user", Name: "discord_100000000000000018", Content: "you forgot"})
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("triggered conversation = %#v, want %#v", got, want)
 	}
@@ -238,49 +217,40 @@ func TestGarminAIContextAllowsReplyParticipantsButScopesAmbientToUser(t *testing
 		garminAIContexts:     make(map[string]garminAIContext),
 		garminAIUserContexts: make(map[string]garminAIContext),
 	}
-	original := &discordgo.MessageCreate{Message: &discordgo.Message{
-		GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "owner"},
-	}}
+	original := &discord.Message{
+		GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Author: discord.User{ID: snowflakeID("100000000000000033")},
+	}
 	history := []cmd.GarminAIMessage{{Role: "user", Content: "public thread"}, {Role: "assistant", Content: "reply"}}
-	bot.rememberGarminAIContext("bot-message", original, history)
+	bot.rememberGarminAIContext("100000000000000003", original, history)
 
-	otherUser := &discordgo.MessageCreate{Message: &discordgo.Message{
-		GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "other"},
-		MessageReference: &discordgo.MessageReference{MessageID: "bot-message"},
-	}}
+	otherUser := &discord.Message{
+		GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Author: discord.User{ID: snowflakeID("100000000000000030")}, MessageReference: &discord.MessageReference{MessageID: snowflakePtr("100000000000000003")},
+	}
 	if messages, ok := bot.garminAIContinuation(otherUser, "show me"); !ok || len(messages) != 3 || messages[2].Content != "show me" {
 		t.Fatalf("same-channel participant continuation = (%#v, %v)", messages, ok)
 	}
 
-	for _, attempt := range []*discordgo.MessageCreate{
-		{Message: &discordgo.Message{GuildID: "guild", ChannelID: "other-channel", Author: &discordgo.User{ID: "owner"}, MessageReference: &discordgo.MessageReference{MessageID: "bot-message"}}},
-		{Message: &discordgo.Message{GuildID: "other-guild", ChannelID: "channel", Author: &discordgo.User{ID: "owner"}, MessageReference: &discordgo.MessageReference{MessageID: "bot-message"}}},
-	} {
+	for _, attempt := range []*discord.Message{{GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000031"), Author: discord.User{ID: snowflakeID("100000000000000033")}, MessageReference: &discord.MessageReference{MessageID: snowflakePtr("100000000000000003")}}, {GuildID: snowflakePtr("100000000000000032"), ChannelID: snowflakeID("100000000000000005"), Author: discord.User{ID: snowflakeID("100000000000000033")}, MessageReference: &discord.MessageReference{MessageID: snowflakePtr("100000000000000003")}}} {
 		if messages, ok := bot.garminAIContinuation(attempt, "show me"); ok || messages != nil {
 			t.Fatalf("cross-channel/guild reply exposed context: %#v", messages)
 		}
 	}
 
-	sameUser := &discordgo.MessageCreate{Message: &discordgo.Message{
-		GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "owner"},
-		MessageReference: &discordgo.MessageReference{MessageID: "bot-message"},
-	}}
+	sameUser := &discord.Message{
+		GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Author: discord.User{ID: snowflakeID("100000000000000033")}, MessageReference: &discord.MessageReference{MessageID: snowflakePtr("100000000000000003")},
+	}
 	if _, ok := bot.garminAIContinuation(sameUser, "continue"); !ok {
 		t.Fatal("authorized reply context was lost after rejected attempts")
 	}
 
-	ambient := &discordgo.MessageCreate{Message: &discordgo.Message{
-		GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "owner"},
-	}}
+	ambient := &discord.Message{
+		GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Author: discord.User{ID: snowflakeID("100000000000000033")},
+	}
 	messages, ok := bot.garminAIAmbientContinuation(ambient, "one more thing")
 	if !ok || len(messages) != 3 || messages[2].Content != "one more thing" {
 		t.Fatalf("ambient continuation = (%#v, %v)", messages, ok)
 	}
-	for _, attempt := range []*discordgo.MessageCreate{
-		{Message: &discordgo.Message{GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "other"}}},
-		{Message: &discordgo.Message{GuildID: "guild", ChannelID: "other-channel", Author: &discordgo.User{ID: "owner"}}},
-		{Message: &discordgo.Message{GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "owner"}, MessageReference: &discordgo.MessageReference{MessageID: "human"}}},
-	} {
+	for _, attempt := range []*discord.Message{{GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Author: discord.User{ID: snowflakeID("100000000000000030")}}, {GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000031"), Author: discord.User{ID: snowflakeID("100000000000000033")}}, {GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Author: discord.User{ID: snowflakeID("100000000000000033")}, MessageReference: &discord.MessageReference{MessageID: snowflakePtr("100000000000000014")}}} {
 		if messages, ok := bot.garminAIAmbientContinuation(attempt, "one more thing"); ok || messages != nil {
 			t.Fatalf("invalid ambient continuation exposed context: %#v", messages)
 		}
@@ -323,14 +293,14 @@ func TestGarminContextResetHidesPriorMessagesAndClearsChains(t *testing.T) {
 		garminAIContexts: make(map[string]garminAIContext), garminAIUserContexts: make(map[string]garminAIContext),
 		garminContextCutoffs: make(map[string]string), garminAIAmbientBusy: make(map[string]uint64),
 	}
-	original := &discordgo.MessageCreate{Message: &discordgo.Message{ID: "100", GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "user"}}}
+	original := &discord.Message{ID: snowflakeID("100"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Author: discord.User{ID: snowflakeID("100000000000000056")}}
 	bot.rememberGarminAIContext("150", original, []cmd.GarminAIMessage{{Role: "user", Content: "old context"}})
 	requestContext, cancelRequest := context.WithCancel(context.Background())
 	defer cancelRequest()
 	if !bot.registerGarminAIRequest(original, cancelRequest) {
 		t.Fatal("failed to register pre-reset request")
 	}
-	if err := bot.resetGarminContext("channel", "200"); err != nil {
+	if err := bot.resetGarminContext("100000000000000005", "200"); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -341,35 +311,28 @@ func TestGarminContextResetHidesPriorMessagesAndClearsChains(t *testing.T) {
 	if len(bot.garminAIContexts) != 0 || len(bot.garminAIUserContexts) != 0 {
 		t.Fatal("context reset retained an in-memory chain")
 	}
-	if bot.garminMessageVisible("channel", "199") || !bot.garminMessageVisible("channel", "201") {
+	if bot.garminMessageVisible("100000000000000005", "199") || !bot.garminMessageVisible("100000000000000005", "201") {
 		t.Fatal("context cutoff did not hide only prior messages")
 	}
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		ID: "201", GuildID: "guild", ChannelID: "channel", Author: &discordgo.User{ID: "user", Username: "user"},
-		ReferencedMessage: &discordgo.Message{ID: "199", Content: "old secret", Author: &discordgo.User{ID: "other", Username: "other"}},
-	}}
+	message := &discord.Message{
+		ID: snowflakeID("201"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Author: discord.User{ID: snowflakeID("100000000000000056"), Username: "user"},
+		ReferencedMessage: &discord.Message{ID: snowflakeID("199"), Content: "old secret", Author: discord.User{ID: snowflakeID("100000000000000030"), Username: "other"}},
+	}
 	if context := bot.garminDiscordContextForMessage(nil, message); strings.Contains(context, "old secret") {
 		t.Fatalf("old replied message survived cutoff: %s", context)
 	}
 }
 
 func TestGarminAIAmbientDisabledInGeneral(t *testing.T) {
-	state := discordgo.NewState()
-	if err := state.GuildAdd(&discordgo.Guild{ID: "guild"}); err != nil {
-		t.Fatal(err)
+	state := mustTestClient(t)
+	cacheTestGuild(state, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: snowflakeID("100000000000000012")}}})
+
+	for _, channel := range []discord.GuildChannel{testChannel(t, map[string]any{"id": garminGeneralID, "guild_id": "100000000000000012"}), testChannel(t, map[string]any{"id": "100000000000000011", "guild_id": "100000000000000012", "parent_id": garminGeneralID, "type": discord.ChannelTypeGuildPublicThread}), testChannel(t, map[string]any{"id": garminChatThreadID, "guild_id": "100000000000000012", "parent_id": garminGeneralID, "type": discord.ChannelTypeGuildPublicThread}), testChannel(t, map[string]any{"id": garminBotsID, "guild_id": "100000000000000012", "type": discord.ChannelTypeGuildText})} {
+		state.Caches.AddChannel(channel)
+
 	}
-	for _, channel := range []*discordgo.Channel{
-		{ID: garminGeneralID, GuildID: "guild"},
-		{ID: "general-thread", GuildID: "guild", ParentID: garminGeneralID, Type: discordgo.ChannelTypeGuildPublicThread},
-		{ID: garminChatThreadID, GuildID: "guild", ParentID: garminGeneralID, Type: discordgo.ChannelTypeGuildPublicThread},
-		{ID: garminBotsID, GuildID: "guild", Type: discordgo.ChannelTypeGuildText},
-	} {
-		if err := state.ChannelAdd(channel); err != nil {
-			t.Fatal(err)
-		}
-	}
-	session := &discordgo.Session{State: state}
-	if garminAIAmbientEnabled(session, garminGeneralID) || garminAIAmbientEnabled(session, "general-thread") {
+	session := state
+	if garminAIAmbientEnabled(session, garminGeneralID) || garminAIAmbientEnabled(session, "100000000000000011") {
 		t.Fatal("ambient mode was enabled in general")
 	}
 	if !garminAIAmbientEnabled(session, garminChatThreadID) || !garminAIAmbientEnabled(session, garminBotsID) {
@@ -378,12 +341,15 @@ func TestGarminAIAmbientDisabledInGeneral(t *testing.T) {
 }
 
 func TestGarminAIAmbientReplyPolicy(t *testing.T) {
-	session, err := discordgo.New("Bot token")
+	session, err := newTestClient(t)
+
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.State.User = &discordgo.User{ID: "bot"}
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{Author: &discordgo.User{ID: "user"}}}
+	session.Caches.SetSelfUser(discord.OAuth2User{User: discord.User{
+		ID: snowflakeID("100000000000000002")}})
+
+	message := &discord.Message{Author: discord.User{ID: snowflakeID("100000000000000056")}}
 	for content, want := range map[string]bool{
 		"waow":                    false,
 		"LOVELY":                  false,
@@ -397,23 +363,18 @@ func TestGarminAIAmbientReplyPolicy(t *testing.T) {
 			t.Errorf("ambient reply eligibility for %q = %v, want %v", content, got, want)
 		}
 	}
-	message.Mentions = []*discordgo.User{{ID: "other"}}
+	message.Mentions = []discord.User{{ID: snowflakeID("100000000000000030")}}
 	if !garminAIAmbientTargetsOtherUser(session, message) {
 		t.Fatal("ambient message addressing another user was accepted")
 	}
 }
 
 func TestRenderGarminGuildEmojisUsesOnlyLiveAvailableNames(t *testing.T) {
-	state := discordgo.NewState()
-	if err := state.GuildAdd(&discordgo.Guild{ID: "guild", Emojis: []*discordgo.Emoji{
-		{ID: "1", Name: "glup", Available: true},
-		{ID: "2", Name: "soggy~1", Available: true, Animated: true},
-		{ID: "3", Name: "gone", Available: false},
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	session := &discordgo.Session{State: state}
-	got := renderGarminGuildEmojis(session, "guild", "i love :glup: and <:soggy~1:999>, not :gone: or :fake:")
+	state := mustTestClient(t)
+	cacheTestGuild(state, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: snowflakeID("100000000000000012")}, Emojis: []discord.Emoji{{ID: snowflakeID("1"), Name: "glup", Available: true}, {ID: snowflakeID("2"), Name: "soggy~1", Available: true, Animated: true}, {ID: snowflakeID("3"), Name: "gone", Available: false}}}})
+
+	session := state
+	got := renderGarminGuildEmojis(session, "100000000000000012", "i love :glup: and <:soggy~1:999>, not :gone: or :fake:")
 	want := "i love <:glup:1> and <a:soggy~1:2>, not or"
 	if got != want {
 		t.Fatalf("rendered emojis = %q, want %q", got, want)
@@ -421,56 +382,52 @@ func TestRenderGarminGuildEmojisUsesOnlyLiveAvailableNames(t *testing.T) {
 }
 
 func TestRenderGarminGuildEmojisRepairsMissingClosingColon(t *testing.T) {
-	state := discordgo.NewState()
-	if err := state.GuildAdd(&discordgo.Guild{ID: "guild", Emojis: []*discordgo.Emoji{{
-		ID: "1", Name: "hm", Available: true,
-	}}}); err != nil {
-		t.Fatal(err)
-	}
-	session := &discordgo.Session{State: state}
+	state := mustTestClient(t)
+	cacheTestGuild(state, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: snowflakeID("100000000000000012")}, Emojis: []discord.Emoji{{
+		ID: snowflakeID("1"), Name: "hm", Available: true,
+	}}}})
+
+	session := state
 	for input, want := range map[string]string{
 		"nah i don't have jokes :hm": "nah i don't have jokes <:hm:1>",
 		":hm is aesthetic":           "<:hm:1> is aesthetic",
 		"keep :missing as text":      "keep :missing as text",
 	} {
-		if got := renderGarminGuildEmojis(session, "guild", input); got != want {
+		if got := renderGarminGuildEmojis(session, "100000000000000012", input); got != want {
 			t.Errorf("renderGarminGuildEmojis(%q) = %q, want %q", input, got, want)
 		}
 	}
 }
 
 func TestRenderGarminGuildEmojisRefreshesStaleState(t *testing.T) {
-	session, err := discordgo.New("Bot test")
+	session, err := newTestClient(t)
+
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.State.GuildAdd(&discordgo.Guild{ID: "guild", Emojis: []*discordgo.Emoji{{ID: "old", Name: "glup", Available: true}}}); err != nil {
-		t.Fatal(err)
-	}
-	session.Client = &http.Client{Transport: garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
-		body := `[{"id":"new","name":"glup","available":true}]`
+	cacheTestGuild(session, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: snowflakeID("100000000000000012")}, Emojis: []discord.Emoji{{ID: snowflakeID("100000000000000028"), Name: "glup", Available: true}}}})
+	session.Rest = testREST(&http.Client{Transport: garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		body := `[{"id":"100000000000000025","name":"glup","available":true}]`
+
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
-	})}
-	if got := renderGarminGuildEmojis(session, "guild", ":glup:"); got != "<:glup:new>" {
+	})})
+
+	if got := renderGarminGuildEmojis(session, "100000000000000012", ":glup:"); got != "<:glup:100000000000000025>" {
 		t.Fatalf("refreshed emoji = %q", got)
 	}
 }
 
 func TestGarminEmojiToolsListAndViewLiveGuildEmojis(t *testing.T) {
-	state := discordgo.NewState()
-	if err := state.GuildAdd(&discordgo.Guild{ID: "guild", Emojis: []*discordgo.Emoji{
-		{ID: "1", Name: "glup", Available: true},
-		{ID: "2", Name: "soggy~1", Available: true, Animated: true},
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	session := &discordgo.Session{State: state}
+	state := mustTestClient(t)
+	cacheTestGuild(state, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: snowflakeID("100000000000000012")}, Emojis: []discord.Emoji{{ID: snowflakeID("1"), Name: "glup", Available: true}, {ID: snowflakeID("2"), Name: "soggy~1", Available: true, Animated: true}}}})
+
+	session := state
 	bot := &Bot{}
-	listed, err := bot.listGarminGuildEmojis(session, "guild")
+	listed, err := bot.listGarminGuildEmojis(session, "100000000000000012")
 	if err != nil || !strings.Contains(listed, `"name":"soggy~1"`) {
 		t.Fatalf("listed emojis = %q, error %v", listed, err)
 	}
-	viewed, err := bot.viewGarminGuildEmoji(session, "guild", "soggy~1")
+	viewed, err := bot.viewGarminGuildEmoji(session, "100000000000000012", "soggy~1")
 	if err != nil || !strings.Contains(viewed, `"image_url":"https://cdn.discordapp.com/emojis/2.gif`) {
 		t.Fatalf("viewed emoji = %q, error %v", viewed, err)
 	}
@@ -494,42 +451,32 @@ func TestEnforceGarminGeneralReplyIsShortWithoutRedirect(t *testing.T) {
 }
 
 func TestEnforceGarminThreadUnderGeneralStaysShort(t *testing.T) {
-	state := discordgo.NewState()
-	if err := state.GuildAdd(&discordgo.Guild{ID: "guild"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ChannelAdd(&discordgo.Channel{ID: garminGeneralID, GuildID: "guild", Name: "general"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ChannelAdd(&discordgo.Channel{ID: "general-thread", GuildID: "guild", ParentID: garminGeneralID, Name: "thread", Type: discordgo.ChannelTypeGuildPublicThread}); err != nil {
-		t.Fatal(err)
-	}
-	session := &discordgo.Session{State: state}
-	got := enforceGarminChannelReply(garminRedirectChannelID(session, "general-thread"), "the answer is 42. here's some extra detail.")
+	state := mustTestClient(t)
+	cacheTestGuild(state, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: snowflakeID("100000000000000012")}}})
+	state.Caches.AddChannel(testChannel(t, map[string]any{"id": garminGeneralID, "guild_id": "100000000000000012", "name": "general"}))
+	state.Caches.AddChannel(testChannel(t, map[string]any{"id": "100000000000000011", "guild_id": "100000000000000012", "parent_id": garminGeneralID, "name": "thread", "type": discord.ChannelTypeGuildPublicThread}))
+
+	session := state
+	got := enforceGarminChannelReply(garminRedirectChannelID(session, "100000000000000011"), "the answer is 42. here's some extra detail.")
 	if got != "the answer is 42." {
 		t.Fatalf("thread reply = %q", got)
 	}
 }
 
 func TestGarminChatThreadUnderGeneralAllowsNormalReplies(t *testing.T) {
-	state := discordgo.NewState()
-	if err := state.GuildAdd(&discordgo.Guild{ID: "guild"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ChannelAdd(&discordgo.Channel{ID: garminGeneralID, GuildID: "guild", Name: "general"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.ChannelAdd(&discordgo.Channel{ID: garminChatThreadID, GuildID: "guild", ParentID: garminGeneralID, Name: "thread", Type: discordgo.ChannelTypeGuildPublicThread}); err != nil {
-		t.Fatal(err)
-	}
-	session := &discordgo.Session{State: state}
+	state := mustTestClient(t)
+	cacheTestGuild(state, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: snowflakeID("100000000000000012")}}})
+	state.Caches.AddChannel(testChannel(t, map[string]any{"id": garminGeneralID, "guild_id": "100000000000000012", "name": "general"}))
+	state.Caches.AddChannel(testChannel(t, map[string]any{"id": garminChatThreadID, "guild_id": "100000000000000012", "parent_id": garminGeneralID, "name": "thread", "type": discord.ChannelTypeGuildPublicThread}))
+
+	session := state
 	answer := "yeah, sure. what's on your mind?"
 	if got := enforceGarminChannelReply(garminRedirectChannelID(session, garminChatThreadID), answer); got != answer {
 		t.Fatalf("allowed thread reply = %q, want %q", got, answer)
 	}
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		GuildID: "guild", ChannelID: garminChatThreadID, Author: &discordgo.User{ID: "user", Username: "speaker"}, Member: &discordgo.Member{},
-	}}
+	message := &discord.Message{
+		GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID(garminChatThreadID), Author: discord.User{ID: snowflakeID("100000000000000056"), Username: "speaker"}, Member: &discord.Member{},
+	}
 	context := (&Bot{}).garminDiscordContextForMessage(session, message)
 	if !strings.Contains(context, "normal conversations with Metrobot are welcome") || strings.Contains(context, "#bots") {
 		t.Fatalf("allowed thread received general-only context: %s", context)
@@ -570,18 +517,12 @@ func TestGarminDirectSlurDetection(t *testing.T) {
 }
 
 func TestGarminAIUserMessageIncludesImageAttachments(t *testing.T) {
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		ChannelID: "channel",
-		Author:    &discordgo.User{ID: "123456789012345678"},
-		Attachments: []*discordgo.MessageAttachment{
-			{Filename: "photo.png", ContentType: "image/png", URL: "https://cdn.discordapp.com/attachments/photo.png"},
-			{Filename: "notes.txt", ContentType: "text/plain", URL: "https://cdn.discordapp.com/attachments/notes.txt"},
-			{Filename: "fallback.webp", URL: "https://media.discordapp.net/attachments/fallback.webp"},
-		},
-		ReferencedMessage: &discordgo.Message{ID: "200", Attachments: []*discordgo.MessageAttachment{
-			{Filename: "replied.jpg", ContentType: "image/jpeg", URL: "https://cdn.discordapp.com/attachments/replied.jpg"},
-		}},
-	}}
+	message := &discord.Message{
+		ChannelID:         snowflakeID("100000000000000005"),
+		Author:            discord.User{ID: snowflakeID("123456789012345678")},
+		Attachments:       []discord.Attachment{{Filename: "photo.png", ContentType: ptr("image/png"), URL: "https://cdn.discordapp.com/attachments/photo.png"}, {Filename: "notes.txt", ContentType: ptr("text/plain"), URL: "https://cdn.discordapp.com/attachments/notes.txt"}, {Filename: "fallback.webp", URL: "https://media.discordapp.net/attachments/fallback.webp"}},
+		ReferencedMessage: &discord.Message{ID: snowflakeID("200"), Attachments: []discord.Attachment{{Filename: "replied.jpg", ContentType: ptr("image/jpeg"), URL: "https://cdn.discordapp.com/attachments/replied.jpg"}}},
+	}
 	bot := &Bot{}
 	got := bot.garminAIUserMessage(message, "  what is this?  ")
 	want := cmd.GarminAIMessage{
@@ -597,18 +538,18 @@ func TestGarminAIUserMessageIncludesImageAttachments(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("garminAIUserMessage() = %#v, want %#v", got, want)
 	}
-	bot.garminContextCutoffs = map[string]string{"channel": "250"}
+	bot.garminContextCutoffs = map[string]string{"100000000000000005": "250"}
 	if got := bot.garminAIUserMessage(message, "what is this?"); len(got.Images) != 2 {
 		t.Fatalf("pre-cutoff reply images = %v, want only current-message images", got.Images)
 	}
 }
 
 func TestGarminAIUserMessageDefaultsImageOnlyPrompt(t *testing.T) {
-	message := &discordgo.MessageCreate{Message: &discordgo.Message{
-		Attachments: []*discordgo.MessageAttachment{{
-			Filename: "photo.jpg", ContentType: "image/jpeg", URL: "https://cdn.discordapp.com/photo.jpg",
+	message := &discord.Message{
+		Attachments: []discord.Attachment{{
+			Filename: "photo.jpg", ContentType: ptr("image/jpeg"), URL: "https://cdn.discordapp.com/photo.jpg",
 		}},
-	}}
+	}
 	got := garminAIUserMessage(message, "")
 	if got.Content != "what is in this image?" || len(got.Images) != 1 {
 		t.Fatalf("image-only message = %#v", got)
@@ -635,21 +576,22 @@ func TestSendGarminReplyRetriesWithoutReference(t *testing.T) {
 			t.Error("fallback request included message reference")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"bot-reply","channel_id":"channel","content":"answer"}`))
+		_, _ = w.Write([]byte(`{"id":"100000000000000004","channel_id":"100000000000000005","content":"answer"}`))
 	}))
 	defer server.Close()
 
-	session, err := discordgo.New("Bot token")
+	session, err := newTestClient(t)
+
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.Client = server.Client()
-	session.Client.Transport = rewriteDiscordTransport{base: session.Client.Transport, target: server.URL}
+	session.Rest = testREST(server.Client())
+	session.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: session.Rest.HTTPClient().Transport, target: server.URL}
 	bot := &Bot{Logger: zap.NewNop()}
-	reply := bot.sendGarminReply(session, &discordgo.MessageCreate{Message: &discordgo.Message{
-		ID: "original", ChannelID: "channel",
-	}}, "answer")
-	if reply == nil || reply.ID != "bot-reply" || requests != 2 {
+	reply := bot.sendGarminReply(session, &discord.Message{
+		ID: snowflakeID("100000000000000029"), ChannelID: snowflakeID("100000000000000005"),
+	}, "answer")
+	if reply == nil || reply.ID != snowflakeID("100000000000000004") || requests != 2 {
 		t.Fatalf("sendGarminReply() = %#v after %d requests", reply, requests)
 	}
 }

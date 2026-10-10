@@ -6,85 +6,90 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/disgo/bot"
+	"github.com/disgoorg/disgo/discord"
 	"go.uber.org/zap"
 )
 
 var discordURLPattern = regexp.MustCompile(`https?://[^\s>]+`)
 
-func respondEphemeral(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {
-	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: suppressDiscordEmbeds(content),
-			Flags:   discordgo.MessageFlagsEphemeral | discordgo.MessageFlagsSuppressEmbeds,
-		},
-	})
-}
-
-func respondEphemeralAllowEmbeds(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {
-	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: content,
-			Flags:   discordgo.MessageFlagsEphemeral,
-		},
-	})
-}
-
-func respondPublic(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {
-	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
+func respondEphemeral(s *bot.Client, i discord.Interaction, content string) {
+	s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{
+		Type: discord.InteractionResponseTypeCreateMessage,
+		Data: discord.MessageCreate{
 			Content:         suppressDiscordEmbeds(content),
-			Flags:           discordgo.MessageFlagsSuppressEmbeds,
-			AllowedMentions: &discordgo.MessageAllowedMentions{},
+			Flags:           discord.MessageFlagEphemeral | discord.MessageFlagSuppressEmbeds,
+			AllowedMentions: &discord.AllowedMentions{Parse: []discord.AllowedMentionType{discord.AllowedMentionTypeUsers}},
 		},
 	})
 }
 
-func noPingMessage(content string) *discordgo.MessageSend {
-	return &discordgo.MessageSend{
+func respondEphemeralAllowEmbeds(s *bot.Client, i discord.Interaction, content string) {
+	s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{
+		Type: discord.InteractionResponseTypeCreateMessage,
+		Data: discord.MessageCreate{
+			Content:         content,
+			Flags:           discord.MessageFlagEphemeral,
+			AllowedMentions: &discord.AllowedMentions{Parse: []discord.AllowedMentionType{discord.AllowedMentionTypeUsers}},
+		},
+	})
+}
+
+func respondPublic(s *bot.Client, i discord.Interaction, content string) {
+	s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{
+		Type: discord.InteractionResponseTypeCreateMessage,
+		Data: discord.MessageCreate{
+			Content:         suppressDiscordEmbeds(content),
+			Flags:           discord.MessageFlagSuppressEmbeds,
+			AllowedMentions: &discord.AllowedMentions{},
+		},
+	})
+}
+
+func noPingMessage(content string) *discord.MessageCreate {
+	return &discord.MessageCreate{
 		Content:         content,
-		AllowedMentions: &discordgo.MessageAllowedMentions{},
+		AllowedMentions: &discord.AllowedMentions{},
 	}
 }
 
-func respondPublicAllowEmbeds(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {
-	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: content,
+func respondPublicAllowEmbeds(s *bot.Client, i discord.Interaction, content string) {
+	s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{
+		Type: discord.InteractionResponseTypeCreateMessage,
+		Data: discord.MessageCreate{
+			Content:         content,
+			AllowedMentions: &discord.AllowedMentions{Parse: []discord.AllowedMentionType{discord.AllowedMentionTypeUsers}},
 		},
 	})
 }
 
-func deferResponse(s *discordgo.Session, i *discordgo.InteractionCreate, ephemeral bool) error {
-	flags := discordgo.MessageFlagsSuppressEmbeds
+func deferResponse(s *bot.Client, i discord.Interaction, ephemeral bool) error {
+	flags := discord.MessageFlagSuppressEmbeds
 	if ephemeral {
-		flags |= discordgo.MessageFlagsEphemeral
+		flags |= discord.MessageFlagEphemeral
 	}
 
-	return s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
+	return s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{
+		Type: discord.InteractionResponseTypeDeferredCreateMessage,
+		Data: discord.MessageCreate{
 			Flags: flags,
 		},
 	})
 }
 
-func editDeferredResponse(s *discordgo.Session, i *discordgo.InteractionCreate, content string) error {
+func editDeferredResponse(s *bot.Client, i discord.Interaction, content string) error {
 	sanitized := suppressDiscordEmbeds(content)
-	_, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &sanitized})
+	_, err := s.Rest.UpdateInteractionResponse(i.ApplicationID(), i.Token(), discord.MessageUpdate{Content: &sanitized, AllowedMentions: &discord.AllowedMentions{Parse: []discord.AllowedMentionType{discord.AllowedMentionTypeUsers}}})
 	return err
 }
 
-func respondPublicAutoDelete(s *discordgo.Session, i *discordgo.InteractionCreate, content string, logger *zap.Logger) {
-	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{
-			Content: suppressDiscordEmbeds(content),
-			Flags:   discordgo.MessageFlagsSuppressEmbeds,
+func respondPublicAutoDelete(s *bot.Client, i discord.Interaction, content string, logger *zap.Logger) {
+	err := s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{
+		Type: discord.InteractionResponseTypeCreateMessage,
+		Data: discord.MessageCreate{
+			Content:         suppressDiscordEmbeds(content),
+			Flags:           discord.MessageFlagSuppressEmbeds,
+			AllowedMentions: &discord.AllowedMentions{Parse: []discord.AllowedMentionType{discord.AllowedMentionTypeUsers}},
 		},
 	})
 	if err != nil {
@@ -93,20 +98,20 @@ func respondPublicAutoDelete(s *discordgo.Session, i *discordgo.InteractionCreat
 	}
 
 	time.AfterFunc(15*time.Minute, func() {
-		resp, err := s.InteractionResponse(i.Interaction)
+		resp, err := s.Rest.GetInteractionResponse(i.ApplicationID(), i.Token())
 		if err != nil {
 			return
 		}
-		s.ChannelMessageDelete(i.ChannelID, resp.ID)
+		s.Rest.DeleteMessage(i.Channel().ID(), resp.ID)
 	})
 }
 
-func sendReply(s *discordgo.Session, channelID, messageID, content string, autoDelete bool, logger *zap.Logger) {
-	msg, err := s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+func sendReply(s *bot.Client, channelID, messageID, content string, autoDelete bool, logger *zap.Logger) {
+	msg, err := s.Rest.CreateMessage(snowflakeID(channelID), discord.MessageCreate{
 		Content: suppressDiscordEmbeds(content),
-		Flags:   discordgo.MessageFlagsSuppressEmbeds,
-		Reference: &discordgo.MessageReference{
-			MessageID: messageID,
+		Flags:   discord.MessageFlagSuppressEmbeds,
+		MessageReference: &discord.MessageReference{
+			MessageID: snowflakePtr(messageID),
 		},
 	})
 	if err != nil {
@@ -116,16 +121,16 @@ func sendReply(s *discordgo.Session, channelID, messageID, content string, autoD
 
 	if autoDelete {
 		time.AfterFunc(15*time.Minute, func() {
-			s.ChannelMessageDelete(channelID, msg.ID)
+			s.Rest.DeleteMessage(snowflakeID(channelID), msg.ID)
 		})
 	}
 }
 
-func sendReplyAllowEmbeds(s *discordgo.Session, channelID, messageID, content string, autoDelete bool, logger *zap.Logger) {
-	msg, err := s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+func sendReplyAllowEmbeds(s *bot.Client, channelID, messageID, content string, autoDelete bool, logger *zap.Logger) {
+	msg, err := s.Rest.CreateMessage(snowflakeID(channelID), discord.MessageCreate{
 		Content: content,
-		Reference: &discordgo.MessageReference{
-			MessageID: messageID,
+		MessageReference: &discord.MessageReference{
+			MessageID: snowflakePtr(messageID),
 		},
 	})
 	if err != nil {
@@ -135,18 +140,18 @@ func sendReplyAllowEmbeds(s *discordgo.Session, channelID, messageID, content st
 
 	if autoDelete {
 		time.AfterFunc(15*time.Minute, func() {
-			s.ChannelMessageDelete(channelID, msg.ID)
+			s.Rest.DeleteMessage(snowflakeID(channelID), msg.ID)
 		})
 	}
 }
 
 // sendReplyWithDelete sends a reply and deletes it after the specified duration
-func sendReplyWithDelete(s *discordgo.Session, channelID, messageID, content string, duration time.Duration, logger *zap.Logger) {
-	msg, err := s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+func sendReplyWithDelete(s *bot.Client, channelID, messageID, content string, duration time.Duration, logger *zap.Logger) {
+	msg, err := s.Rest.CreateMessage(snowflakeID(channelID), discord.MessageCreate{
 		Content: suppressDiscordEmbeds(content),
-		Flags:   discordgo.MessageFlagsSuppressEmbeds,
-		Reference: &discordgo.MessageReference{
-			MessageID: messageID,
+		Flags:   discord.MessageFlagSuppressEmbeds,
+		MessageReference: &discord.MessageReference{
+			MessageID: snowflakePtr(messageID),
 		},
 	})
 	if err != nil {
@@ -155,14 +160,14 @@ func sendReplyWithDelete(s *discordgo.Session, channelID, messageID, content str
 	}
 
 	time.AfterFunc(duration, func() {
-		s.ChannelMessageDelete(channelID, msg.ID)
+		s.Rest.DeleteMessage(snowflakeID(channelID), msg.ID)
 	})
 }
 
 // sendPermissionError sends an error message about missing permissions and deletes both messages after 5 seconds
-func sendPermissionError(s *discordgo.Session, channelID, originalMsgID string, permission string, logger *zap.Logger) {
+func sendPermissionError(s *bot.Client, channelID, originalMsgID string, permission string, logger *zap.Logger) {
 	content := fmt.Sprintf("❌ I don't have the required permission: **%s**", permission)
-	msg, err := s.ChannelMessageSend(channelID, suppressDiscordEmbeds(content))
+	msg, err := s.Rest.CreateMessage(snowflakeID(channelID), discord.MessageCreate{Content: suppressDiscordEmbeds(content)})
 	if err != nil {
 		logger.Error("failed to send permission error", zap.Error(err))
 		return
@@ -170,21 +175,21 @@ func sendPermissionError(s *discordgo.Session, channelID, originalMsgID string, 
 
 	// Delete both messages after 5 seconds
 	time.AfterFunc(5*time.Second, func() {
-		s.ChannelMessageDelete(channelID, msg.ID)
+		s.Rest.DeleteMessage(snowflakeID(channelID), msg.ID)
 		if originalMsgID != "" {
-			s.ChannelMessageDelete(channelID, originalMsgID)
+			s.Rest.DeleteMessage(snowflakeID(channelID), snowflakeID(originalMsgID))
 		}
 	})
 }
 
-func dmUser(s *discordgo.Session, userID, content string) error {
-	ch, err := s.UserChannelCreate(userID)
+func dmUser(s *bot.Client, userID, content string) error {
+	ch, err := s.Rest.CreateDMChannel(snowflakeID(userID))
 	if err != nil {
 		return err
 	}
-	_, err = s.ChannelMessageSendComplex(ch.ID, &discordgo.MessageSend{
+	_, err = s.Rest.CreateMessage(ch.ID(), discord.MessageCreate{
 		Content: suppressDiscordEmbeds(content),
-		Flags:   discordgo.MessageFlagsSuppressEmbeds,
+		Flags:   discord.MessageFlagSuppressEmbeds,
 	})
 	return err
 }
