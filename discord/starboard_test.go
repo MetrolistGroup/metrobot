@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/config"
 	"github.com/MetrolistGroup/metrobot/db"
 	"github.com/disgoorg/disgo/discord"
@@ -111,6 +112,57 @@ func TestCleanerWebhookRepostsCanCreateAndUpdateBothBoards(t *testing.T) {
 			entry, err = database.GetBoardEntry(board.name, "100")
 			if err != nil || entry == nil || entry.StarCount != 4 || posts != 1 || updates != 1 {
 				t.Fatalf("repost board entry was not updated: entry=%#v, posts=%d, updates=%d, err=%v", entry, posts, updates, err)
+			}
+		})
+	}
+}
+
+func TestScanProhibitedUnicodeReactionsRemovesAndWarns(t *testing.T) {
+	for _, test := range []struct{ name, emoji, reason string }{
+		{"flag", prohibitedFlagReaction, prohibitedFlagReactionReason},
+		{"symbol", prohibitedStarOfDavidReaction, prohibitedStarOfDavidReactionReason},
+		{"text symbol", prohibitedStarOfDavidTextReaction, prohibitedStarOfDavidReactionReason},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			database, err := db.Open(filepath.Join(t.TempDir(), "reactions.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			client := mustTestClient(t)
+			reactionPath := "/api/v10/channels/200/messages/100/reactions/" + test.emoji
+			client.Rest = testREST(&http.Client{Transport: garminRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+				status, body := http.StatusOK, `{}`
+				switch r.Method + " " + r.URL.Path {
+				case "GET /api/v10/channels/200/messages":
+					body = `[{"id":"100","channel_id":"200","reactions":[{"count":1,"emoji":{"id":null,"name":"` + test.emoji + `"}}]}]`
+				case "GET " + reactionPath:
+					body = `[{"id":"400","username":"reactor"}]`
+				case "DELETE " + reactionPath + "/400":
+					status, body = http.StatusNoContent, ""
+				case "POST /api/v10/users/@me/channels":
+					body = `{"id":"500","type":1}`
+				case "POST /api/v10/channels/500/messages":
+					body = `{"id":"501","channel_id":"500"}`
+				case "PATCH /api/v10/guilds/300/members/400":
+				default:
+					t.Errorf("unexpected reaction scan request: %s %s", r.Method, r.URL)
+					status, body = http.StatusBadRequest, `{"code":10014,"message":"Unknown Emoji"}`
+				}
+				return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+			})})
+			b := &Bot{
+				Client: client, DB: database, Config: &config.Config{DiscordGuildID: "300"},
+				Logger: zap.NewNop(), Warn: &cmd.WarnHandler{DB: database},
+			}
+			result, err := b.scanProhibitedReactions(client, "200")
+			want := prohibitedReactionScanResult{MessagesChecked: 1, ReactionsFound: 1, ReactionsRemoved: 1, WarningsIssued: 1}
+			if err != nil || result != want {
+				t.Fatalf("scan result = %#v, err = %v, want %#v", result, err, want)
+			}
+			warnings, err := database.GetWarnings("discord", "400")
+			if err != nil || len(warnings) != 1 || warnings[0].Reason != test.reason || warnings[0].WarnedBy != "system" {
+				t.Fatalf("scan warning = %#v, err = %v", warnings, err)
 			}
 		})
 	}

@@ -171,9 +171,13 @@ func (b *Bot) scanProhibitedReactions(s *bot.Client, channelID string) (prohibit
 				continue
 			}
 
+			emojiAPIName := reaction.Emoji.Name
+			if reaction.Emoji.ID != 0 {
+				emojiAPIName = reaction.Emoji.Reaction()
+			}
 			afterID := ""
 			for {
-				users, err := s.Rest.GetReactions(snowflakeID(channelID), msg.ID, reaction.Emoji.Reaction(), discord.MessageReactionTypeNormal, int(snowflakeID(afterID)), 100)
+				users, err := s.Rest.GetReactions(snowflakeID(channelID), msg.ID, emojiAPIName, discord.MessageReactionTypeNormal, int(snowflakeID(afterID)), 100)
 				if err != nil {
 					result.FetchFailures++
 					b.Logger.Error("failed to fetch prohibited reaction users",
@@ -192,7 +196,7 @@ func (b *Bot) scanProhibitedReactions(s *bot.Client, channelID string) (prohibit
 					}
 
 					result.ReactionsFound++
-					removed, warned, skipped := b.removeAndWarnProhibitedReaction(s, channelID, msg.ID.String(), user.ID.String(), reaction.Emoji.Reaction(), reason)
+					removed, warned, skipped := b.removeAndWarnProhibitedReaction(s, channelID, msg.ID.String(), user.ID.String(), emojiAPIName, reason)
 					if removed {
 						result.ReactionsRemoved++
 					} else {
