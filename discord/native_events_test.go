@@ -170,6 +170,43 @@ func TestNativeDeleteAndBulkDeleteUseFilteredBoundedCache(t *testing.T) {
 	}
 }
 
+func TestNativePartialEditsKeepBotAndWebhookIdentity(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		bot     bool
+		webhook bool
+	}{
+		{"bot", true, false},
+		{"webhook", false, true},
+		{"bot webhook", true, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			b, logged := nativeLogFixture(t)
+			original := &discord.Message{
+				ID: 100, ChannelID: 200, GuildID: ptr(snowflake.ID(300)),
+				Author: discord.User{ID: 400, Bot: test.bot}, Content: "private original",
+			}
+			if test.webhook {
+				original.WebhookID = ptr(snowflake.ID(700))
+			}
+			b.rememberMessageForLogs(b.Client, original)
+			for _, author := range []string{`{"id":"400"}`, `{"id":"400","bot":false}`} {
+				dispatchPartialMessage(b, `{"id":"100","channel_id":"200","guild_id":"300","author":`+author+`,"content":"private edit"}`)
+				cached, found := b.cachedMessage("200", "100", false)
+				if !found || cached.Bot != test.bot || cached.Webhook != test.webhook || cached.Message != nil || cached.Payload != "" {
+					t.Fatalf("partial edit lost filtered identity or retained private content: %#v", cached)
+				}
+			}
+			b.onMessageDeleteLog(b.Client, &events.MessageDelete{GenericMessage: &events.GenericMessage{
+				MessageID: 100, ChannelID: 200, GuildID: ptr(snowflake.ID(300)),
+			}})
+			if len(logged) != 0 {
+				t.Fatal("bot/webhook edit or deletion was logged")
+			}
+		})
+	}
+}
+
 func TestNativeMemberUpdatesExposeOldStateBeforeCacheReplacement(t *testing.T) {
 	client := mustTestClient(t)
 	client.Caches.AddMember(discord.Member{GuildID: 300, User: discord.User{ID: 400}, Nick: ptr("old name"), RoleIDs: []snowflake.ID{500}})

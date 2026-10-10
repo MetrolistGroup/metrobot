@@ -419,9 +419,9 @@ func fillCachedIdentity(message *cachedLogMessage, fallback cachedLogMessage) {
 	if message.AuthorID == "" {
 		message.AuthorID = fallback.AuthorID
 		message.AuthorName = fallback.AuthorName
-		message.Bot = fallback.Bot
-		message.Webhook = fallback.Webhook
 	}
+	message.Bot = message.Bot || fallback.Bot
+	message.Webhook = message.Webhook || fallback.Webhook
 	if message.GuildID == "" {
 		message.GuildID = fallback.GuildID
 	}

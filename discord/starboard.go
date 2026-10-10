@@ -293,7 +293,7 @@ func (b *Bot) handleOriginalMessageReaction(s *bot.Client, channelID, messageID,
 		b.Logger.Error("failed to get message for board", zap.Error(err), zap.String("board", board.name))
 		return
 	}
-	if msg.Author.ID == 0 || msg.Author.Bot || msg.WebhookID != nil {
+	if msg.Author.ID == 0 {
 		return
 	}
 
