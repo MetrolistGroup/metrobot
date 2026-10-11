@@ -12,8 +12,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func (b *Bot) installListeners() {
-	s := b.Client
+func (b *Bot) gatewayHandlers() map[gateway.EventType]bot.GatewayEventHandler {
 	gatewayHandlers := handlers.GetGatewayHandlers()
 	// disgo splits bulk deletes into individual events; preserve one audit record.
 	gatewayHandlers[gateway.EventTypeMessageDeleteBulk] = bot.NewGatewayEventHandler(gateway.EventTypeMessageDeleteBulk,
@@ -29,7 +28,11 @@ func (b *Bot) installListeners() {
 				}})
 			}
 		})
-	s.EventManager = bot.NewEventManager(s, bot.WithGatewayHandlers(gatewayHandlers), bot.WithHTTPServerHandler(handlers.GetHTTPServerHandler()))
+	return gatewayHandlers
+}
+
+func (b *Bot) installListeners() {
+	s := b.Client
 	s.AddEventListeners(&events.ListenerAdapter{
 		OnReady:                         func(e *events.Ready) { b.readyOnce.Do(func() { close(b.ready) }) },
 		OnApplicationCommandInteraction: func(e *events.ApplicationCommandInteractionCreate) { go b.onInteractionCreate(s, e) },

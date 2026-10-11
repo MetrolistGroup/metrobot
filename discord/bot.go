@@ -75,22 +75,8 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 	if snowflakeID(cfg.DiscordGuildID) == 0 {
 		return nil, fmt.Errorf("invalid Discord guild ID")
 	}
-	session, err := disgo.New(cfg.DiscordToken,
-		bot.WithGatewayConfigOpts(
-			gateway.WithIntents(gateway.IntentGuilds|gateway.IntentGuildMessages|gateway.IntentGuildMembers|gateway.IntentGuildModeration|gateway.IntentGuildMessageReactions|gateway.IntentMessageContent),
-			gateway.WithEnableRawEvents(true),
-		),
-		// Message content is kept only in the bounded, filtered audit cache.
-		bot.WithCacheConfigOpts(cache.WithCaches(cache.FlagGuilds|cache.FlagChannels|cache.FlagRoles|cache.FlagMembers|cache.FlagEmojis)),
-		bot.WithMemberChunkingFilter(bot.MemberChunkingFilterAll),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("creating Discord client: %w", err)
-	}
 	lifecycle, cancelLifecycle := context.WithCancel(context.Background())
-
-	bot := &Bot{
-		Client:               session,
+	b := &Bot{
 		Config:               cfg,
 		DB:                   database,
 		Logger:               logger.With(zap.String("platform", "discord")),
@@ -117,10 +103,25 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		lifecycle:            lifecycle,
 		cancelLifecycle:      cancelLifecycle,
 	}
-	if len(cfg.OpenRouterAPIKeys) > 0 {
-		bot.garminAI = cmd.NewOpenRouterClient(cfg.OpenRouterAPIKeys, cfg.OpenRouterModel)
+	session, err := disgo.New(cfg.DiscordToken,
+		bot.WithEventManagerConfigOpts(bot.WithGatewayHandlers(b.gatewayHandlers())),
+		bot.WithGatewayConfigOpts(
+			gateway.WithIntents(gateway.IntentGuilds|gateway.IntentGuildMessages|gateway.IntentGuildMembers|gateway.IntentGuildModeration|gateway.IntentGuildMessageReactions|gateway.IntentMessageContent),
+			gateway.WithEnableRawEvents(true),
+		),
+		// Message content is kept only in the bounded, filtered audit cache.
+		bot.WithCacheConfigOpts(cache.WithCaches(cache.FlagGuilds|cache.FlagChannels|cache.FlagRoles|cache.FlagMembers|cache.FlagEmojis)),
+		bot.WithMemberChunkingFilter(bot.MemberChunkingFilterAll),
+	)
+	if err != nil {
+		cancelLifecycle()
+		return nil, fmt.Errorf("creating Discord client: %w", err)
 	}
-	if bot.garminAI != nil {
+	b.Client = session
+	if len(cfg.OpenRouterAPIKeys) > 0 {
+		b.garminAI = cmd.NewOpenRouterClient(cfg.OpenRouterAPIKeys, cfg.OpenRouterModel)
+	}
+	if b.garminAI != nil {
 		memoryPath := cfg.GarminMemoryFile
 		if memoryPath == "" {
 			memoryPath = cmd.GarminMemoryFile
@@ -134,23 +135,23 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 			session.Close(context.Background())
 			return nil, fmt.Errorf("initializing Metrobot memory: %w", err)
 		}
-		bot.garminMemory = memory
-		bot.garminGitHub = gh.NewAssistantClient(cfg.GitHubToken, cfg.GitHubOwner, cfg.GitHubRepo)
+		b.garminMemory = memory
+		b.garminGitHub = gh.NewAssistantClient(cfg.GitHubToken, cfg.GitHubOwner, cfg.GitHubRepo)
 		if len(cfg.FirecrawlAPIKeys) > 0 {
-			bot.garminFirecrawl = firecrawl.NewClient(cfg.FirecrawlAPIKeys)
+			b.garminFirecrawl = firecrawl.NewClient(cfg.FirecrawlAPIKeys)
 		}
-		bot.garminAISlots = make(chan struct{}, 3)
+		b.garminAISlots = make(chan struct{}, 3)
 	}
 
 	// Set up Discord case logger if log channel is configured
 	if cfg.DiscordLogChannel != "" {
-		caseLogger := NewDiscordCaseLogger(session, cfg.DiscordLogChannel, bot.Logger)
+		caseLogger := NewDiscordCaseLogger(session, cfg.DiscordLogChannel, b.Logger)
 		cases.CaseLogger = caseLogger
 	}
 
-	bot.installListeners()
+	b.installListeners()
 
-	return bot, nil
+	return b, nil
 }
 
 func (b *Bot) Start() error {

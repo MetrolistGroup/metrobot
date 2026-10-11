@@ -15,14 +15,15 @@ import (
 	"github.com/disgoorg/disgo/rest"
 )
 
-func newTestClient(t *testing.T) (*bot.Client, error) {
+func newTestClient(t *testing.T, opts ...bot.ConfigOpt) (*bot.Client, error) {
 	t.Helper()
-	client, err := disgo.New("MTIzNDU2Nzg5MDEyMzQ1Njc4.test.test",
-		bot.WithCacheConfigOpts(cache.WithCaches(cache.FlagsAll&^cache.FlagMessages)),
+	opts = append([]bot.ConfigOpt{
+		bot.WithCacheConfigOpts(cache.WithCaches(cache.FlagsAll &^ cache.FlagMessages)),
 		bot.WithRestClientConfigOpts(rest.WithHTTPClient(&http.Client{Transport: garminRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 			return nil, fmt.Errorf("unexpected Discord request: %s %s", r.Method, r.URL)
 		})})),
-	)
+	}, opts...)
+	client, err := disgo.New("MTIzNDU2Nzg5MDEyMzQ1Njc4.test.test", opts...)
 	if err == nil {
 		initialREST := client.Rest
 		t.Cleanup(func() {
@@ -35,9 +36,9 @@ func newTestClient(t *testing.T) (*bot.Client, error) {
 	return client, err
 }
 
-func mustTestClient(t *testing.T) *bot.Client {
+func mustTestClient(t *testing.T, opts ...bot.ConfigOpt) *bot.Client {
 	t.Helper()
-	client, err := newTestClient(t)
+	client, err := newTestClient(t, opts...)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -28,6 +28,14 @@ func (g *lifecycleGateway) Open(ctx context.Context) error { return g.open(ctx) 
 func (g *lifecycleGateway) Close(context.Context)          { g.closed++ }
 
 func TestNativeStartupRegistersCommandsAfterReadyAndCleansFailures(t *testing.T) {
+	originalTransport := http.DefaultTransport
+	http.DefaultTransport = garminRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v10/gateway" {
+			t.Errorf("unexpected client construction request: %s %s", r.Method, r.URL)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"url":"wss://gateway.example.invalid"}`)), Request: r}, nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = originalTransport })
 	for _, failure := range []string{"", "gateway", "registration", "ready"} {
 		t.Run("failure="+failure, func(t *testing.T) {
 			b, err := New(&config.Config{DiscordToken: "MTIzNDU2Nzg5MDEyMzQ1Njc4.test.test", DiscordGuildID: "300"}, nil, zap.NewNop(), nil, nil, nil, nil, nil, nil, nil, nil)

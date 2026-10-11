@@ -24,7 +24,9 @@ func (fixtureGateway) ShardID() int { return 0 }
 
 func nativeLogFixture(t *testing.T) (*Bot, chan discord.MessageCreate) {
 	t.Helper()
-	client := mustTestClient(t)
+	b := &Bot{Config: &config.Config{DiscordGuildID: "300"}, Logger: zap.NewNop(), ready: make(chan struct{})}
+	client := mustTestClient(t, bot.WithEventManagerConfigOpts(bot.WithGatewayHandlers(b.gatewayHandlers())))
+	b.Client = client
 	logged := make(chan discord.MessageCreate, 16)
 	client.Rest = testREST(&http.Client{Transport: garminRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/channels/"+messageLogChannelID+"/messages") {
@@ -37,7 +39,6 @@ func nativeLogFixture(t *testing.T) (*Bot, chan discord.MessageCreate) {
 		logged <- message
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":"900"}`)), Request: r}, nil
 	})})
-	b := &Bot{Client: client, Config: &config.Config{DiscordGuildID: "300"}, Logger: zap.NewNop(), ready: make(chan struct{})}
 	b.installListeners()
 	return b, logged
 }
@@ -60,6 +61,29 @@ func dispatchPartialMessage(b *Bot, data string) {
 	b.Client.EventManager.HandleGatewayEvent(fixtureGateway{}, gateway.EventTypeRaw, 1, gateway.EventRaw{
 		EventType: gateway.EventTypeMessageUpdate, Payload: strings.NewReader(data),
 	})
+}
+
+func TestNativeListenersPreserveGatewayEventManagerAndDispatchReady(t *testing.T) {
+	client := mustTestClient(t)
+	b := &Bot{Client: client, Config: &config.Config{DiscordGuildID: "300"}, Logger: zap.NewNop(), ready: make(chan struct{})}
+	manager := client.EventManager
+	// disgo binds this method when it constructs the gateway.
+	dispatch := manager.HandleGatewayEvent
+	b.installListeners()
+	if client.EventManager != manager {
+		t.Fatal("listener installation replaced the event manager bound to the gateway")
+	}
+	dispatch(fixtureGateway{}, gateway.EventTypeReady, 1, gateway.EventReady{
+		User: discord.OAuth2User{User: discord.User{ID: 900, Username: "fixture bot"}},
+	})
+	select {
+	case <-b.ready:
+	default:
+		t.Fatal("gateway READY did not reach the startup listener")
+	}
+	if client.ID() != 900 {
+		t.Fatal("READY did not populate the self-user cache")
+	}
 }
 
 func TestNativePartialUpdatesPreserveOmittedFieldsAndClearExplicitFields(t *testing.T) {
