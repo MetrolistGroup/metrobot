@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Metrobot / Administration</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to administration</a>
+  <div class="console">
+    <header class="header">
+      <div class="brand"><span>Metrobot</span><h1>Administration</h1></div>
+      <div class="session">
+        <div id="identity" hidden>
+          <span id="user-name"></span>
+          <span class="label" id="user-role"></span>
+          <span class="mono" id="user-id"></span>
+        </div>
+        <button id="logout" type="button" hidden>Sign out</button>
+      </div>
+    </header>
+
+    <main id="main" tabindex="-1">
+      <div class="feedback">
+        <p id="status" role="status" aria-live="polite" aria-atomic="true" tabindex="-1">Loading administration…</p>
+        <button id="retry" type="button" hidden>Retry state</button>
+      </div>
+
+      <noscript><p class="notice">JavaScript is required to edit administration data. <a href="/auth/login">Sign in with Discord</a>.</p></noscript>
+
+      <section id="auth" class="auth" aria-labelledby="auth-title" hidden>
+        <p class="label">Discord access</p>
+        <h2 id="auth-title">Sign in to Metrobot</h2>
+        <p id="auth-description">Use a Discord account with Metrobot administrator access.</p>
+        <a id="login" class="button primary" href="/auth/login">Sign in with Discord</a>
+      </section>
+
+      <section id="loading" aria-label="Loading notes and editor" aria-busy="true">
+        <div class="loading-nav skeleton"></div>
+        <div class="notes-layout loading-layout" aria-hidden="true">
+          <div class="loading-list"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
+          <div class="loading-editor"><div class="skeleton"></div><div class="skeleton skeleton-large"></div></div>
+        </div>
+      </section>
+
+      <div id="app" hidden>
+        <nav class="navigation" aria-label="Administration sections">
+          <button type="button" data-section="notes" aria-current="page" aria-controls="notes-section">Notes</button>
+          <button type="button" data-section="memory" aria-controls="memory-section">Shared memory</button>
+          <button type="button" data-section="channels" aria-controls="channels-section">Excluded channels</button>
+          <button id="admins-nav" type="button" data-section="admins" aria-controls="admins-section" hidden>Discord admins</button>
+        </nav>
+
+        <section id="notes-section" aria-labelledby="notes-title">
+          <div class="section-heading">
+            <div><p class="label">Reference library</p><h2 id="notes-title">Notes</h2></div>
+            <p>Saved notes are available to Metrobot in Discord. Edit Markdown as plain text.</p>
+          </div>
+          <div class="notes-layout">
+            <aside class="notes-sidebar" aria-label="Saved notes">
+              <div class="list-heading"><span class="label" id="notes-count">Notes</span><button id="new-note" type="button">New note</button></div>
+              <ul id="notes-list" class="notes-list"></ul>
+              <p id="notes-empty" class="empty" hidden>No notes saved. Create the first note in the editor.</p>
+            </aside>
+            <form id="note-form" class="editor">
+              <div class="editor-heading"><h3 id="editor-title">New note</h3><span id="note-draft" class="label" aria-live="polite"></span></div>
+              <label for="note-name">Note name</label>
+              <input id="note-name" name="name" required pattern="\S+" autocomplete="off" aria-describedby="name-help">
+              <p id="name-help" class="hint">A single name without spaces. Names are saved in lowercase; use Rename to change a saved name.</p>
+              <label for="note-description">Short description</label>
+              <input id="note-description" name="short_desc" required maxlength="160" autocomplete="off" aria-describedby="description-help">
+              <p id="description-help" class="hint">Required, one line, up to 160 characters.</p>
+              <label for="note-content">Markdown content</label>
+              <textarea id="note-content" name="content" class="markdown" required spellcheck="false" aria-describedby="content-help"></textarea>
+              <p id="content-help" class="hint">Plain-text editing only. Content is never rendered as HTML here.</p>
+              <div class="actions">
+                <button id="save-note" class="primary" type="submit">Create note</button>
+                <button id="rename-note" type="button">Rename</button>
+                <button id="delete-note" class="danger" type="button">Delete note</button>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <section id="memory-section" aria-labelledby="memory-title" hidden>
+          <div class="section-heading">
+            <div><p class="label">Garmin / Global context</p><h2 id="memory-title">Shared memory</h2></div>
+            <p>This Markdown applies to Garmin globally. It is not a private user profile.</p>
+          </div>
+          <p id="memory-unavailable" class="notice" hidden>AI is not configured. Shared memory editing is unavailable.</p>
+          <form id="memory-form" class="wide-editor">
+            <label for="memory-content">Shared Garmin memory</label>
+            <textarea id="memory-content" class="markdown" required spellcheck="false" aria-describedby="memory-help memory-size"></textarea>
+            <div class="editor-meta"><p id="memory-help" class="hint">Replacing affects all Garmin conversations. Maximum saved size: 16 KiB (16,384 UTF-8 bytes).</p><span id="memory-draft" class="label" aria-live="polite"></span></div>
+            <p id="memory-size" class="mono hint"></p>
+            <div class="actions"><button id="replace-memory" class="primary" type="submit">Replace memory</button><button id="clear-memory" class="danger" type="button">Clear memory</button></div>
+          </form>
+        </section>
+
+        <section id="channels-section" aria-labelledby="channels-title" hidden>
+          <div class="section-heading">
+            <div><p class="label">Moderation settings</p><h2 id="channels-title">Excluded channels</h2></div>
+            <p>Channel IDs designated for exclusion from automatic moderation.</p>
+          </div>
+          <p class="notice">The current bot stores this list but does not yet consult it in message handlers. Adding an ID here does not currently disable moderation.</p>
+          <form id="channel-form" class="id-form">
+            <div><label for="channel-id">Discord channel ID</label><input id="channel-id" required pattern="[0-9]+" maxlength="20" inputmode="numeric" autocomplete="off" aria-describedby="channel-help"></div>
+            <button id="add-channel" class="primary" type="submit">Add channel</button>
+          </form>
+          <p id="channel-help" class="hint">Use the numeric channel ID from Discord's Copy Channel ID command.</p>
+          <ul id="channels-list" class="id-list" aria-label="Excluded channel IDs"></ul>
+          <p id="channels-empty" class="empty" hidden>No channel exclusions saved.</p>
+        </section>
+
+        <section id="admins-section" aria-labelledby="admins-title" hidden>
+          <div class="section-heading">
+            <div><p class="label">Permanent admin controls</p><h2 id="admins-title">Discord admins</h2></div>
+            <p>Only permanent admins can add or remove Discord administrators.</p>
+          </div>
+          <p class="notice">Permanent admins are configured outside this dashboard and cannot be removed here. New entries receive administrator access, not permanent status.</p>
+          <form id="admin-form" class="id-form">
+            <div><label for="admin-id">Discord user ID</label><input id="admin-id" required pattern="[0-9]+" maxlength="20" inputmode="numeric" autocomplete="off" aria-describedby="admin-help"></div>
+            <button id="add-admin" class="primary" type="submit">Add admin</button>
+          </form>
+          <p id="admin-help" class="hint">Use the numeric user ID from Discord's Copy User ID command.</p>
+          <ul id="admins-list" class="id-list" aria-label="Discord administrator IDs"></ul>
+          <p id="admins-empty" class="empty" hidden>No Discord admins returned.</p>
+        </section>
+      </div>
+    </main>
+    <footer class="footer"><span class="label">Metrobot / Discord administration</span><span>Configuration secrets are not editable here.</span></footer>
+  </div>
+</body>
+</html>
