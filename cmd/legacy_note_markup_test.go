@@ -18,6 +18,8 @@ func TestLegacyDirectiveExamplesRemainLiteralUntilEdited(t *testing.T) {
 		"invalid-layout": "Before\n```components-v2\nnot JSON\n```\nAfter",
 		"valid-layout":   "Before\n```components-v2\n{\"components\":[{\"type\":\"text\",\"content\":\"Example\"}]}\n```\nAfter",
 		"unclosed":       "Before\n```random\nnot JSON",
+		"kmp":            "Before\n```random\nnot JSON\n```\nAfter",
+		"donate":         "Before\n```random\n[\"one\\nparagraph\", \"two\"]\n```\nAfter",
 	}
 	path := filepath.Join(t.TempDir(), "legacy.db")
 	legacy, err := sql.Open("sqlite", path)
@@ -77,13 +79,17 @@ func TestLegacyDirectiveExamplesRemainLiteralUntilEdited(t *testing.T) {
 			t.Fatal("editor body changed")
 		}
 	}
-	if err := h.EditNote("saved-invalid-random", "Invalid", bodies["invalid-random"]); err == nil {
-		t.Fatal("invalid edit passed validation")
+	for _, name := range []string{"invalid-random", "kmp"} {
+		if err := h.EditNote("saved-"+name, "Invalid", bodies[name]); err == nil {
+			t.Fatal("invalid edit passed validation")
+		}
+		assertLiteral("saved-"+name, bodies[name])
 	}
-	assertLiteral("saved-invalid-random", bodies["invalid-random"])
 	active := "Before\n" + notefmt.Fence("random", `["one"]`) + "\nAfter"
-	if err := h.EditNote("saved-valid-random", "Authored", active); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"saved-valid-random", "saved-donate"} {
+		if err := h.EditNote(name, "Authored", active); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := h.AddNote("new-markup", "Authored", active); err != nil {
 		t.Fatal(err)
@@ -97,11 +103,11 @@ func TestLegacyDirectiveExamplesRemainLiteralUntilEdited(t *testing.T) {
 	}
 	h.DB = database
 	for name, body := range bodies {
-		if name != "valid-random" {
+		if name != "valid-random" && name != "donate" {
 			assertLiteral("saved-"+name, body)
 		}
 	}
-	for _, name := range []string{"saved-valid-random", "new-markup"} {
+	for _, name := range []string{"saved-valid-random", "saved-donate", "new-markup"} {
 		if got, err := h.GetNote(name); err != nil || got != "Before\none\nAfter" {
 			t.Fatalf("%s authored note = %q, %v", name, got, err)
 		}

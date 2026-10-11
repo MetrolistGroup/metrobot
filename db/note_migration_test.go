@@ -93,7 +93,7 @@ func TestNoteMarkupMigrationPreservesContentAndRunsOnce(t *testing.T) {
 	}
 }
 
-func TestNoteMarkupMigrationSkipsAuthoredAndHandlesBlankLegacyLines(t *testing.T) {
+func TestNoteMarkupMigrationSkipsDirectiveBodiesAndHandlesBlankLegacyLines(t *testing.T) {
 	authored := "intro\n" + notefmt.Fence("random", `["one", "two"]`)
 	path := legacyNotes(t, map[string]string{"donate": authored, "kmp": notefmt.Fence("faq", "## Q\nA")})
 	d, err := Open(path)
@@ -101,8 +101,11 @@ func TestNoteMarkupMigrationSkipsAuthoredAndHandlesBlankLegacyLines(t *testing.T
 		t.Fatal(err)
 	}
 	defer d.Close()
-	if got, _ := d.GetNote("donate"); got != authored {
-		t.Fatal("authored group wrapped twice")
+	for name, want := range map[string]string{"donate": authored, "kmp": notefmt.Fence("faq", "## Q\nA")} {
+		got, enabled, err := d.GetNoteForDelivery(name)
+		if err != nil || got != want || enabled {
+			t.Fatalf("%s skipped body = %q, markup = %v, error = %v", name, got, enabled, err)
+		}
 	}
 	path = legacyNotes(t, map[string]string{"donate": "Intro\n\nFirst\n\nSecond\n\n"})
 	other, err := Open(path)
@@ -157,7 +160,7 @@ func TestNoteMarkupMigrationRollbackIncludesMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := conn.Exec(`CREATE TRIGGER fail_kmp BEFORE UPDATE ON notes WHEN OLD.name = 'kmp' BEGIN SELECT RAISE(ABORT, 'test failure'); END`); err != nil {
+	if _, err := conn.Exec(`CREATE TRIGGER fail_kmp BEFORE UPDATE OF content ON notes WHEN OLD.name = 'kmp' BEGIN SELECT RAISE(ABORT, 'test failure'); END`); err != nil {
 		t.Fatal(err)
 	}
 	if d, err := Open(path); err == nil {

@@ -36,8 +36,8 @@ func (d *DB) migrateNoteMarkup() error {
 	if done != 0 {
 		return tx.Commit()
 	}
-	// Ordinary legacy notes may contain directive examples, even valid JSON; leave their bodies literal.
-	if _, err := tx.Exec(`UPDATE notes SET markup_enabled = 0 WHERE name NOT IN ('donate', 'kmp')`); err != nil {
+	// Legacy directives may be examples; only migration-produced bodies opt into markup.
+	if _, err := tx.Exec(`UPDATE notes SET markup_enabled = 0`); err != nil {
 		return err
 	}
 	for _, name := range []string{"donate", "kmp"} {
@@ -82,7 +82,7 @@ func (d *DB) migrateNoteMarkup() error {
 				migrated = intro + "\n" + notefmt.Fence("random", string(body))
 			}
 		}
-		if _, err := tx.Exec(`UPDATE notes SET content = ? WHERE name = ?`, migrated, name); err != nil {
+		if _, err := tx.Exec(`UPDATE notes SET content = ?, markup_enabled = 1 WHERE name = ?`, migrated, name); err != nil {
 			return fmt.Errorf("migrating %s: %w", name, err)
 		}
 	}
