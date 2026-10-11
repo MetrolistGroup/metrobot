@@ -63,6 +63,7 @@ func TestAuditMalformedQueries(t *testing.T) {
 	cookie, _ := seedSession(t, h, permanentID)
 	for _, path := range []string{
 		"/api/cases?from=2026-02-30", "/api/cases?from=2026-3-29", "/api/cases?to=", "/api/cases?from=2026-03-30&to=2026-03-29",
+		"/api/cases?from=0000-01-01", "/api/cases?from=0001-01-01&to=0000-12-31",
 		"/api/cases?before=0", "/api/cases?before=-1", "/api/cases?before=01", "/api/cases?before=+2", "/api/cases?before=9223372036854775808",
 		"/api/cases?source=discord", "/api/cases?guild=123", "/api/cases?from=2026-03-29&from=2026-03-30", "/api/cases?q=%ZZ", "/api/cases?q=a;b", "/api/cases?q=" + strings.Repeat("x", 4097),
 		"/api/logs", "/api/logs?source=message&from=2026-03-29", "/api/logs?source=message&from=&to=2026-03-29",
@@ -150,9 +151,13 @@ func TestCasesAPIAllPlatformsPaginationUTCAndFailure(t *testing.T) {
 	for _, query := range []string{"?from=2000-01-01", "?to=9999-12-30"} {
 		checkStatus(t, request(t, h, http.MethodGet, "/api/cases"+query, "", cookie, ""), http.StatusOK)
 	}
-	w = request(t, h, http.MethodGet, "/api/cases?from=2000-01-01&to=2000-01-01", "", cookie, "")
-	if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil || len(page.Items) != 0 || page.Items == nil {
-		t.Fatalf("empty contract=%s %v", w.Body, err)
+	checkStatus(t, request(t, h, http.MethodGet, "/api/cases?to=0000-12-31", "", cookie, ""), http.StatusBadRequest)
+	for _, query := range []string{"?to=0001-01-01", "?from=2000-01-01&to=2000-01-01"} {
+		w = request(t, h, http.MethodGet, "/api/cases"+query, "", cookie, "")
+		checkStatus(t, w, http.StatusOK)
+		if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil || len(page.Items) != 0 || page.Items == nil {
+			t.Fatalf("empty contract=%s %v", w.Body, err)
+		}
 	}
 	if err := h.db.Close(); err != nil {
 		t.Fatal(err)

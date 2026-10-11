@@ -13,7 +13,8 @@ backfills, live configuration changes, or edits to existing case/log data are ne
 
 All parameters are optional. Without dates, this lists **all retained database
 cases**, including Discord and Telegram, without a hidden total limit. `from` and
-`to` are inclusive UTC calendar days, independently optional. Text is a literal
+`to` are inclusive UTC calendar days, independently optional. Year-zero dates
+are rejected with 400; calendar years must start at 0001. Text is a literal
 contains search across case number, platform, target/moderator IDs, action and
 reason (SQLite case folding is ASCII). SQL wildcard characters are literal.
 

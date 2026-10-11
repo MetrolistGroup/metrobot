@@ -46,8 +46,8 @@ func auditDates(values url.Values, required bool) (from, until time.Time, err er
 			continue
 		}
 		date, parseErr := time.Parse("2006-01-02", value[0])
-		if parseErr != nil || date.Format("2006-01-02") != value[0] {
-			return from, until, errors.New("Dates must be valid YYYY-MM-DD UTC days.")
+		if parseErr != nil || date.Year() < 1 || date.Format("2006-01-02") != value[0] {
+			return from, until, errors.New("Dates must be valid YYYY-MM-DD UTC days with year 0001 or later.")
 		}
 		if name == "from" {
 			from = date
