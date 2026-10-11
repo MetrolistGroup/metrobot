@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/config"
@@ -28,13 +29,14 @@ import (
 var assets embed.FS
 
 const (
-	stateCookie   = "metrobot_oauth_state"
-	sessionCookie = "metrobot_session"
-	stateTTL      = 5 * time.Minute
-	sessionTTL    = 8 * time.Hour
-	maxEntries    = 256
-	maxBody       = 128 * 1024
-	memoryLimit   = 16 * 1024 // Matches the shared GarminMemory write limit, including its trailing newline.
+	stateCookie    = "metrobot_oauth_state"
+	sessionCookie  = "metrobot_session"
+	stateTTL       = 5 * time.Minute
+	sessionTTL     = 8 * time.Hour
+	maxEntries     = 256
+	maxBody        = 128 * 1024
+	noteReplyLimit = 2000      // Discord's single-message UTF-16 limit is lower than Telegram's.
+	memoryLimit    = 16 * 1024 // Matches the shared GarminMemory write limit, including its trailing newline.
 )
 
 type pendingLogin struct {
@@ -470,6 +472,10 @@ func (h *Handler) mutate(w http.ResponseWriter, r *http.Request, s session) {
 	}
 	switch r.URL.Path {
 	case "/api/notes/create", "/api/notes/edit":
+		if len(utf16.Encode([]rune(input.Content))) > noteReplyLimit {
+			fail(w, http.StatusBadRequest, "Note content cannot exceed 2000 UTF-16 units for bot replies.")
+			return
+		}
 		var name, shortDesc string
 		name, shortDesc, _, err = cmd.ValidateNote(input.Name, input.ShortDesc, input.Content)
 		if err == nil {

@@ -18,7 +18,7 @@ type DashboardConfig struct {
 	ClientSecret  string `json:"client_secret"`
 }
 
-// Validate keeps HTTP cookies restricted to a loopback-only local setup.
+// Validate keeps the plaintext listener on loopback and validates the public origin.
 func (d *DashboardConfig) Validate() error {
 	if !d.Enabled {
 		return nil
@@ -58,8 +58,8 @@ func (d *DashboardConfig) Validate() error {
 	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
 		return fmt.Errorf("dashboard listen_address has an invalid port")
 	}
-	if u.Scheme == "http" && !isLoopback(host) {
-		return fmt.Errorf("HTTP dashboard listen_address must be loopback")
+	if !isLoopback(host) {
+		return fmt.Errorf("dashboard listen_address must be loopback because the listener uses plaintext HTTP")
 	}
 	return nil
 }

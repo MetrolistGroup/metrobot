@@ -411,6 +411,45 @@ func TestNoteCreateAndEditPreserveRawContent(t *testing.T) {
 	}
 }
 
+func TestNotesRespectBotReplyLimit(t *testing.T) {
+	h := newTestHandler(t, nil)
+	cookie, csrf := seedSession(t, h, permanentID)
+	for _, test := range []struct {
+		name, content string
+		status        int
+	}{
+		{"ascii-limit", strings.Repeat("a", 2000), http.StatusOK},
+		{"ascii-over", strings.Repeat("a", 2001), http.StatusBadRequest},
+		{"ten-kib", strings.Repeat("a", 10*1024), http.StatusBadRequest},
+		{"bmp-limit", strings.Repeat("界", 2000), http.StatusOK},
+		{"surrogate-limit", strings.Repeat("\U0001d11e", 1000), http.StatusOK},
+		{"surrogate-over", strings.Repeat("\U0001d11e", 1001), http.StatusBadRequest},
+		{"escapes-limit", "x" + strings.Repeat(`\n`, 999) + "y", http.StatusOK},
+		{"escapes-over", "x" + strings.Repeat(`\n`, 1000), http.StatusBadRequest},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body, _ := json.Marshal(mutation{Name: test.name, ShortDesc: "Description", Content: test.content})
+			checkStatus(t, request(t, h, http.MethodPost, "/api/notes/create", string(body), cookie, csrf), test.status)
+			if test.status == http.StatusBadRequest {
+				if stored, err := h.db.GetNote(test.name); err != nil || stored != "" {
+					t.Fatalf("oversized note was created: %q, %v", stored, err)
+				}
+				if err := h.db.AddNote(test.name, "Original", "original content"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			checkStatus(t, request(t, h, http.MethodPost, "/api/notes/edit", string(body), cookie, csrf), test.status)
+			want := test.content
+			if test.status == http.StatusBadRequest {
+				want = "original content"
+			}
+			if stored, err := h.db.GetNote(test.name); err != nil || stored != want {
+				t.Fatalf("unexpected stored content: %q, %v", stored, err)
+			}
+		})
+	}
+}
+
 func TestMemorySharedInstanceLimitsAndErrors(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "memory.md")
 	memory, err := cmd.NewGarminMemory(path)

@@ -86,6 +86,10 @@ func (tm *TimerManager) Count() int {
 }
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	cfg, err := config.Load("config.json")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FATAL: %s\n", err)
@@ -191,12 +195,7 @@ func main() {
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	select {
-	case <-sigCh:
-		logger.Info("shutdown signal received")
-	case err := <-dashboardErrors:
-		logger.Error("dashboard server failed; shutting down", zap.Error(err))
-	}
+	exitCode := waitForShutdown(sigCh, dashboardErrors, logger)
 	signal.Stop(sigCh)
 	if dashboardServer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -214,6 +213,18 @@ func main() {
 	discordBot.Stop()
 	telegramBot.Stop()
 	logger.Info("graceful shutdown complete")
+	return exitCode
+}
+
+func waitForShutdown(signals <-chan os.Signal, dashboardErrors <-chan error, logger *zap.Logger) int {
+	select {
+	case <-signals:
+		logger.Info("shutdown signal received")
+		return 0
+	case err := <-dashboardErrors:
+		logger.Error("dashboard server failed; shutting down", zap.Error(err))
+		return 1
+	}
 }
 
 func restoreTimedBans(database *db.DB, discordBot *discord.Bot, telegramBot *telegram.Bot, logger *zap.Logger, timerManager *TimerManager) {

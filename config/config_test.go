@@ -65,10 +65,18 @@ func TestDashboardValidation(t *testing.T) {
 			}
 		})
 	}
-	for _, address := range []string{"0.0.0.0:8080", ":8080", "admin.example.com:8080", "localhost", "localhost:0", "localhost:65536", "localhost:http"} {
-		d := DashboardConfig{Enabled: true, BaseURL: "http://localhost:8080", ClientID: "id", ClientSecret: "secret", ListenAddress: address}
-		if err := d.Validate(); err == nil {
-			t.Fatalf("unsafe listen address accepted: %q", address)
+	for _, base := range []string{"http://localhost:8080", "https://admin.example.com"} {
+		for _, address := range []string{"0.0.0.0:8080", "[::]:8080", ":8080", "192.0.2.1:8080", "admin.example.com:8080", "localhost", "localhost:0", "localhost:65536", "localhost:http"} {
+			d := DashboardConfig{Enabled: true, BaseURL: base, ClientID: "id", ClientSecret: "secret", ListenAddress: address}
+			if err := d.Validate(); err == nil {
+				t.Fatalf("unsafe listen address %q accepted for %q", address, base)
+			}
+		}
+		for _, address := range []string{"127.0.0.1:8080", "[::1]:8080", "localhost:8080"} {
+			d := DashboardConfig{Enabled: true, BaseURL: base, ClientID: "id", ClientSecret: "secret", ListenAddress: address}
+			if err := d.Validate(); err != nil || d.ListenAddress != address {
+				t.Fatalf("valid explicit loopback listener %q rejected or changed: %v", address, err)
+			}
 		}
 	}
 	for _, d := range []DashboardConfig{
