@@ -20,12 +20,25 @@ func (d *DB) migrateNoteMarkup() error {
 	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY)`); err != nil {
 		return err
 	}
+	var hasMarkupEnabled int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name = 'markup_enabled'`).Scan(&hasMarkupEnabled); err != nil {
+		return err
+	}
+	if hasMarkupEnabled == 0 {
+		if _, err := tx.Exec(`ALTER TABLE notes ADD COLUMN markup_enabled INTEGER NOT NULL DEFAULT 1`); err != nil {
+			return err
+		}
+	}
 	var done int
 	if err := tx.QueryRow(`SELECT COUNT(*) FROM migrations WHERE name = 'note_markup_v1'`).Scan(&done); err != nil {
 		return err
 	}
 	if done != 0 {
 		return tx.Commit()
+	}
+	// Ordinary legacy notes may contain directive examples, even valid JSON; leave their bodies literal.
+	if _, err := tx.Exec(`UPDATE notes SET markup_enabled = 0 WHERE name NOT IN ('donate', 'kmp')`); err != nil {
+		return err
 	}
 	for _, name := range []string{"donate", "kmp"} {
 		var content string

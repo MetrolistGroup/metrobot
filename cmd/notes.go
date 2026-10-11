@@ -54,7 +54,7 @@ func (h *NotesHandler) GetNoteDocument(name string) (*notefmt.Note, error) {
 		return nil, fmt.Errorf("note name is required")
 	}
 
-	content, err := h.DB.GetNote(name)
+	content, markupEnabled, err := h.DB.GetNoteForDelivery(name)
 	if err != nil {
 		return nil, fmt.Errorf("fetching note: %w", err)
 	}
@@ -63,7 +63,11 @@ func (h *NotesHandler) GetNoteDocument(name string) (*notefmt.Note, error) {
 		return nil, fmt.Errorf("note %q not found", name)
 	}
 
-	note, err := notefmt.Parse(normalizeNoteContent(content))
+	content = normalizeNoteContent(content)
+	if !markupEnabled {
+		return &notefmt.Note{Parts: []notefmt.Part{{Text: content}}}, nil
+	}
+	note, err := notefmt.Parse(content)
 	if err != nil {
 		return nil, fmt.Errorf("parsing note %q: %w", name, err)
 	}

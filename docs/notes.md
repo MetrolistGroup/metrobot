@@ -5,6 +5,9 @@ note to keep its behavior; remove its directive to disable it. New `donate` and
 `kmp` notes are ordinary notes unless their bodies contain directives.
 
 The editor API returns the exact stored body, without rendering or shuffling.
+Ordinary notes saved before this feature retain literal Markdown interpretation,
+including top-level directive examples. Renaming them does not activate markup;
+a successful validated edit does. New notes interpret directives immediately.
 Create/edit commands and the dashboard share server-side validation. Invalid
 markup cannot replace an existing note. Commands still accept legacy literal
 `\n` / `\r\n` newline separators outside JSON strings; JSON string escapes are
@@ -153,13 +156,18 @@ notes and records `note_markup_v1` in the `migrations` table:
   JSON random group, using the former retrieval's newline normalization. Blank
   lines attach to a neighboring entry; rendered text and JSON escaping are preserved. A note without nonempty remaining entries stays literal.
 - Existing `kmp`: wrap the complete original Markdown in a safely sized FAQ fence.
-- Already directive-authored bodies are left unchanged.
-- All other notes are unchanged. Invalid UTF-8 legacy bodies are left byte-for-byte
-  intact rather than silently replaced by JSON encoding; an admin must repair them
-  before they can pass note validation or be rendered.
+- Already directive-authored `donate`/`kmp` bodies are left unchanged.
+- All other legacy bodies are unchanged and marked as literal Markdown using
+  internal storage metadata. Both invalid and valid JSON directive examples stay
+  literal, across renames and restarts. A successful validated edit activates
+  markup; to keep examples literal when editing, put them inside a longer ordinary
+  Markdown code fence, as in the examples above.
+- Invalid UTF-8 legacy bodies are left byte-for-byte intact rather than silently
+  replaced by JSON encoding; an admin must repair them before note validation.
 
 The marker is written even on a new/empty database. Restarts never reapply the
 migration, including after an admin removes directives or creates a new note with
-a legacy name. A migration failure rolls back both bodies and marker. Migration
+a legacy name. A migration failure rolls back bodies, interpretation metadata,
+and marker. Migration
 runs only when the application opens its database; development and tests do not
 require access to the live database or configuration.

@@ -58,6 +58,12 @@ func TestNoteMarkupMigrationPreservesContentAndRunsOnce(t *testing.T) {
 	if err != nil || note.Render().Text != faq {
 		t.Fatalf("FAQ lost content: %q, %v", raw, err)
 	}
+	for name, want := range map[string]bool{"donate": true, "kmp": true, "ordinary": false} {
+		_, enabled, err := d.GetNoteForDelivery(name)
+		if err != nil || enabled != want {
+			t.Fatalf("%s interpretation = %v, %v", name, enabled, err)
+		}
+	}
 	notes, err := d.ListRawNotes()
 	if err != nil || notes[0].Content == donate {
 		t.Fatal("raw editor reads did not expose markup")
@@ -161,6 +167,10 @@ func TestNoteMarkupMigrationRollbackIncludesMarker(t *testing.T) {
 	var content string
 	if err := conn.QueryRow(`SELECT content FROM notes WHERE name = 'donate'`).Scan(&content); err != nil || content != "Intro\nFirst\nSecond" {
 		t.Fatalf("partial migration persisted: %q, %v", content, err)
+	}
+	var hasMarkupEnabled int
+	if err := conn.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name = 'markup_enabled'`).Scan(&hasMarkupEnabled); err != nil || hasMarkupEnabled != 0 {
+		t.Fatalf("partial interpretation metadata persisted: %d, %v", hasMarkupEnabled, err)
 	}
 	if _, err := conn.Exec(`DROP TRIGGER fail_kmp`); err != nil {
 		t.Fatal(err)

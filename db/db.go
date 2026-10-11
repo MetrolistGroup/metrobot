@@ -195,12 +195,19 @@ func (d *DB) SetGSMArenaCache(key string, body []byte) error {
 // --- Notes ---
 
 func (d *DB) GetNote(name string) (string, error) {
-	var content string
-	err := d.conn.QueryRow("SELECT content FROM notes WHERE name = ?", name).Scan(&content)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
+	content, _, err := d.GetNoteForDelivery(name)
 	return content, err
+}
+
+// GetNoteForDelivery distinguishes preserved legacy Markdown from authored markup.
+func (d *DB) GetNoteForDelivery(name string) (string, bool, error) {
+	var content string
+	var markupEnabled bool
+	err := d.conn.QueryRow("SELECT content, markup_enabled FROM notes WHERE name = ?", name).Scan(&content, &markupEnabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return content, markupEnabled, err
 }
 
 type NoteSummary struct {
@@ -256,7 +263,7 @@ func (d *DB) AddNote(name, shortDesc, content string) error {
 }
 
 func (d *DB) EditNote(name, shortDesc, content string) error {
-	res, err := d.conn.Exec("UPDATE notes SET short_desc = ?, content = ? WHERE name = ?", shortDesc, content, name)
+	res, err := d.conn.Exec("UPDATE notes SET short_desc = ?, content = ?, markup_enabled = 1 WHERE name = ?", shortDesc, content, name)
 	if err != nil {
 		return err
 	}
