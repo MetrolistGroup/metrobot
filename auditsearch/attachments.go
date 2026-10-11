@@ -20,7 +20,7 @@ import (
 
 const (
 	maxAttachmentBytes     = 128 * 1024
-	maxAttachmentBudget    = 1024 * 1024
+	maxAttachmentBudget    = 10 * maxAttachmentBytes // A fresh page fits Discord's maximum ten attachments per message.
 	maxAttachmentDownloads = 20
 )
 

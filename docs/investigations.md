@@ -91,16 +91,25 @@ expected and are returned only to authorized admins. They may expire.
 
 Searches have a 20-second deadline and a four-request concurrency limit (hence
 at most four simultaneous attachment downloads). Per search, downloads are
-serial, limited to 20 requests and 1 MiB total received content; each attachment
-has a three-second timeout and 128 KiB text limit. Downloads are cut off three
-seconds before the overall request deadline. If that time budget is exhausted,
+serial, limited to 20 requests and 1.25 MiB total received content; each attachment
+has a three-second timeout and 128 KiB text limit. Before starting a message, the
+scanner checks room for one download and up to 128 KiB per downloadable text
+attachment. If only a fresh page can fit the whole message, the current page
+stops **before consuming it**; `next_cursor` retries that message with a fresh
+budget. This conservative reservation can end pages early for small files, but
+never silently skips a message because earlier downloads used the page budget.
+The fresh byte allowance fits Discord's maximum ten attachments at the per-file
+limit. Attachment-page-limit warnings describe deferred work, not lost coverage.
+Downloads are cut off three seconds before the overall request deadline. If that
+time budget is exhausted,
 the page finishes its current message, warns about unsearched attachment content,
 and returns a continuation when range remains, instead of losing progress to a
 timeout. Remaining attachment metadata/body text is still included; later logs
 are reached with the returned cursor. Caller cancellation still aborts the request.
-Metadata indicating an oversized attachment skips that download. Oversized responses are truncated;
-non-UTF-8/binary text, unavailable/expired files, redirects, interrupted downloads
-and exhausted budgets produce explicit **partial-search warnings**, never an
+Metadata indicating an oversized attachment skips that download. Oversized
+responses are truncated; non-UTF-8/binary text, unavailable/expired files,
+redirects, interrupted downloads, and posts too large for even a fresh page
+produce explicit **partial-search warnings**, never an
 unconditional complete/no-results claim. To retry missing attachment content,
 repeat the same page with its input cursor; continuation intentionally advances
 past processed messages. Non-text files are linked when their metadata URL is

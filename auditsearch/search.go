@@ -168,6 +168,7 @@ func (s *Service) Search(ctx context.Context, q Query) (Result, error) {
 			if message.ID == 0 || message.ID >= before || message.ChannelID != 0 && message.ChannelID != channel.ID {
 				return result, ErrFetch
 			}
+			previousBefore := before
 			before = message.ID
 			result.Scanned++
 			if message.ID < lower || message.CreatedAt.Before(q.From) {
@@ -175,6 +176,21 @@ func (s *Service) Search(ctx context.Context, q Query) (Result, error) {
 			}
 			if !message.CreatedAt.Before(q.Until) {
 				continue
+			}
+			downloads := 0
+			for _, a := range message.Attachments {
+				if textAttachment(a) && safeAttachmentURL(a.URL) && a.Size <= maxAttachmentBytes {
+					downloads++
+				}
+			}
+			requiredBytes := downloads * maxAttachmentBytes
+			// Leave a whole message for the next page when its attachments fit only a fresh budget.
+			if downloads > 0 && downloads <= maxAttachmentDownloads && requiredBytes <= maxAttachmentBudget &&
+				(downloads > maxAttachmentDownloads-budget.downloads || requiredBytes > budget.bytes) {
+				before = previousBefore
+				result.Scanned--
+				warn("Attachment page budget reached; continue with next_cursor to search the remaining messages.")
+				return finish(false)
 			}
 			content := flatten(message)
 			attachments := []Attachment{}

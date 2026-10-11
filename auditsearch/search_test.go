@@ -215,6 +215,64 @@ func TestAttachmentContentSearchAndPartialWarnings(t *testing.T) {
 	}
 }
 
+func TestAttachmentBudgetPreservesUnsearchedMessages(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		priorMessages    int
+		finalAttachments int
+		largePrior       bool
+	}{
+		{"download-count", maxAttachmentDownloads, 1, false},
+		{"byte-budget", maxAttachmentBudget / maxAttachmentBytes, 1, true},
+		{"whole-multi-attachment-post", maxAttachmentDownloads - 1, 10, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			q := dayQuery()
+			q.Text = "attachment-only needle"
+			h := &historyMock{}
+			bodies := map[string]string{}
+			for i := 1; i <= test.priorMessages+1; i++ {
+				message := logMessage(q.Until.Add(-time.Duration(i)*time.Second), "no body match")
+				count := 1
+				if i == test.priorMessages+1 {
+					count = test.finalAttachments
+				}
+				for j := 1; j <= count; j++ {
+					url := fmt.Sprintf("https://cdn.discordapp.com/attachments/1/%d/audit.txt", i*100+j)
+					body := "no attachment match"
+					if test.largePrior || i == test.priorMessages+1 {
+						body = strings.Repeat("x", maxAttachmentBytes)
+					}
+					if i == test.priorMessages+1 && j == count {
+						body = body[:len(body)-len(q.Text)] + q.Text
+					}
+					bodies[url] = body
+					message.Attachments = append(message.Attachments, discord.Attachment{Filename: "audit.txt", URL: url})
+				}
+				h.messages = append(h.messages, message)
+			}
+			s := New(h)
+			calls := 0
+			s.attachments.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				calls++
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(bodies[r.URL.String()])), Request: r}, nil
+			})
+			result, err := s.Search(context.Background(), q)
+			if err != nil || len(result.Items) != 0 || result.Complete || result.NextCursor != h.messages[test.priorMessages-1].ID.String() || result.Scanned != test.priorMessages || calls != test.priorMessages {
+				t.Fatalf("consumed a message whose attachments did not fit: result=%+v calls=%d err=%v", result, calls, err)
+			}
+			if !strings.Contains(strings.Join(result.Warnings, "\n"), "Attachment page budget") {
+				t.Fatalf("missing continuation-limit warning: %+v", result)
+			}
+			q.Before = snowflake.MustParse(result.NextCursor)
+			result, err = s.Search(context.Background(), q)
+			if err != nil || !result.Complete || result.NextCursor != "" || result.Scanned != 1 || len(result.Items) != 1 || result.Items[0].ID != h.messages[test.priorMessages].ID.String() || calls != test.priorMessages+test.finalAttachments {
+				t.Fatalf("continuation lost the attachment-only hit: result=%+v calls=%d err=%v", result, calls, err)
+			}
+		})
+	}
+}
+
 func TestSlowAttachmentsPreservePagination(t *testing.T) {
 	for _, test := range []struct {
 		name        string
@@ -365,7 +423,7 @@ func TestAttachmentAggregateBudgetAndNontext(t *testing.T) {
 			t.Fatalf("text=%d warning=%q", len(text), warning)
 		}
 	}
-	if _, warning := s.readAttachment(context.Background(), a, &budget); warning == "" || budget.bytes != 0 || calls != 8 {
+	if _, warning := s.readAttachment(context.Background(), a, &budget); warning == "" || budget.bytes != 0 || calls != maxAttachmentBudget/maxAttachmentBytes {
 		t.Fatalf("budget=%+v calls=%d warning=%q", budget, calls, warning)
 	}
 	budget = attachmentBudget{bytes: 4}
