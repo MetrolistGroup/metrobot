@@ -11,6 +11,11 @@ let selectedName = null;
 let noteBaseline = null;
 let rawNoteContent = "";
 let memoryBaseline = null;
+let promptBaseline = null;
+let promptData = null;
+let promptLoading = false;
+let promptController = null;
+let promptSequence = 0;
 
 function noteValues() {
   const content = $("note-content").value;
@@ -27,8 +32,12 @@ function memoryDirty() {
   return memoryBaseline !== null && $("memory-content").value !== memoryBaseline;
 }
 
+function promptDirty() {
+  return promptBaseline !== null && $("prompt-content").value !== promptBaseline;
+}
+
 function hasDraft() {
-  return noteDirty() || memoryDirty() || $("admin-id").value !== "";
+  return noteDirty() || memoryDirty() || promptDirty() || $("admin-id").value !== "";
 }
 
 function status(message, kind = "info") {
@@ -65,10 +74,20 @@ function updateControls() {
   $("clear-memory").disabled = locked || unavailable;
   const memoryStatus = memoryChanged ? "Unsaved changes" : "";
   if ($("memory-draft").textContent !== memoryStatus) $("memory-draft").textContent = memoryStatus;
-  if (!state || !state.user.permanent) {
+  const permanent = state?.user.permanent === true;
+  if (!permanent) {
     $("admin-id").readOnly = true;
     $("add-admin").disabled = true;
   }
+  $("prompt-content").readOnly = locked || !permanent || promptLoading || !promptData;
+  $("save-prompt").disabled = locked || !permanent || promptLoading || !promptData || !promptDirty();
+  $("reset-prompt").disabled = locked || !permanent || promptLoading || !promptData || (!promptData.overridden && !promptDirty());
+  $("prompt-retry").disabled = locked || !permanent || promptLoading;
+  $("prompt-draft").textContent = promptDirty() ? "Unsaved changes" : "";
+  $("prompt-loading").hidden = !promptLoading;
+  $("prompt-section").setAttribute("aria-busy", String(promptLoading));
+  updateArchiveControls();
+  refreshEditors();
 }
 
 function setBusy(value) {
@@ -84,6 +103,9 @@ function showSection(name) {
     else button.removeAttribute("aria-current");
     $(`${button.dataset.section}-section`).hidden = !active;
   });
+  refreshEditors();
+  if (authorized && name === "cases" && !archives.cases.loaded) loadArchive("cases");
+  if (authorized && name === "prompt" && !promptData) loadPrompt();
 }
 
 function setNote(note) {
@@ -117,7 +139,7 @@ function renderNotes() {
     const item = document.createElement("li");
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "note-choice";
+    button.className = "note-choice no-round";
     button.setAttribute("aria-controls", "note-form");
     if (note.name === selectedName) button.setAttribute("aria-current", "true");
     const name = document.createElement("strong");
@@ -141,14 +163,14 @@ function renderAdmins(entries) {
     text.textContent = id;
     details.append(text);
     const role = document.createElement("span");
-    role.className = "label";
+    role.className = "eyebrow";
     role.textContent = permanent ? "Permanent admin" : "Admin";
     details.append(role);
     item.append(details);
     if (!permanent) {
       const remove = document.createElement("button");
       remove.type = "button";
-      remove.className = "danger";
+      remove.className = "border no-round danger";
       remove.textContent = "Remove";
       remove.setAttribute("aria-label", `Remove admin ${id}`);
       remove.addEventListener("click", () => {
@@ -174,7 +196,11 @@ function renderState() {
   $("user-id").textContent = state.user.id;
   $("user-role").textContent = state.user.permanent ? "Permanent admin" : "Admin";
   $("admins-nav").hidden = !state.user.permanent;
-  if (section === "admins" && !state.user.permanent) showSection("notes");
+  $("prompt-nav").hidden = !state.user.permanent;
+  if (!state.user.permanent) {
+    clearPrompt();
+    if (section === "admins" || section === "prompt") showSection("notes");
+  }
   if (noteBaseline === null) setNote(state.notes[0] || null);
   else if (!noteDirty() && selectedName !== null) {
     setNote(state.notes.find((note) => note.name === selectedName) || state.notes[0] || null);
@@ -182,7 +208,7 @@ function renderState() {
   renderNotes();
   if (!memoryDirty()) {
     $("memory-content").value = state.memory;
-    memoryBaseline = state.memory;
+    memoryBaseline = $("memory-content").value;
   }
   $("memory-unavailable").hidden = state.memory_available;
   validateMemory();
@@ -191,18 +217,25 @@ function renderState() {
   updateControls();
 }
 
-async function request(path, payload) {
+async function request(path, payload, options = {}) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(options.query || {})) {
+    if (value !== "" && value !== undefined) query.set(key, value);
+  }
+  const url = query.size ? `${path}?${query}` : path;
   let response;
   try {
-    response = await fetch(path, {
+    response = await fetch(url, {
+      signal: options.signal,
       method: payload === undefined ? "GET" : "POST",
       credentials: "same-origin",
       cache: "no-store",
       headers: payload === undefined ? {} : { "Content-Type": "application/json", "X-CSRF-Token": state.csrf_token },
       body: payload === undefined ? undefined : JSON.stringify(payload),
     });
-  } catch {
-    throw new Error("Could not reach the server. Check your connection and retry state before submitting again.");
+  } catch (error) {
+    if (error.name === "AbortError") throw error;
+    throw new Error("Could not reach the server. Check your connection and retry.");
   }
   let data;
   try { data = await response.json(); }
@@ -235,6 +268,7 @@ function showRecovery() {
     drafts.push(`Note name: ${note.name}\nShort description: ${note.short_desc}\n\n${note.content}`);
   }
   if (memoryDirty()) drafts.push(`Shared Garmin memory draft:\n\n${$("memory-content").value}`);
+  if (promptDirty()) drafts.push(`Garmin system prompt draft:\n\n${$("prompt-content").value}`);
   if ($("admin-id").value) drafts.push(`Admin ID draft: ${$("admin-id").value}`);
   $("recovery-content").value = drafts.join("\n\n-----\n\n");
   $("recovery").hidden = drafts.length === 0;
@@ -246,6 +280,8 @@ function failure(error, prefix = "", lock = false) {
   if (error.status === 401 || error.status === 403) {
     $("app").hidden = true;
     $("identity").hidden = true;
+    clearArchives();
+    clearPrompt();
     showRecovery();
     $("auth").hidden = false;
     const denied = error.status === 403;
@@ -270,6 +306,7 @@ async function refresh() {
   try {
     await readState();
     status("Administration loaded.");
+    if (section === "prompt" && !promptData) loadPrompt();
   } catch (error) { failure(error, "", true); }
   finally { setBusy(false); }
 }
@@ -308,11 +345,11 @@ function validateNote() {
     : [...description].length > 160 ? "A short description cannot exceed 160 Unicode characters." : "");
   $("note-content").setCustomValidity($("note-content").value.trim() ? "" : "Note content is required.");
   const advisory = $("note-delivery");
-  const kmp = $("note-name").value.trim().toLowerCase() === "kmp";
-  advisory.hidden = !kmp && noteValues().content.length <= 2000;
-  advisory.textContent = kmp
-    ? "KMP uses the bot's existing paginated FAQ presentation for ## question headings (up to 25 questions). Oversized answers are delivered as the full note.md file instead."
-    : "Long notes are delivered as a full note.md file when they exceed Discord or Telegram message limits. Saving keeps the full content.";
+  const rich = /^```(?:faq|components-v2)[ \t]*$/m.test($("note-content").value);
+  advisory.hidden = !rich && noteValues().content.length <= 2000;
+  advisory.textContent = rich
+    ? "Delivery follows the authored FAQ or components-v2 block, regardless of note name. Use at most one rich block per note; random groups belong outside it."
+    : "Long notes are delivered as a full note.md file when they exceed message limits. Saving keeps the full content.";
 }
 
 function validateMemory() {
@@ -323,9 +360,105 @@ function validateMemory() {
   $("memory-content").setCustomValidity(size > 16384 ? "Shared memory must fit within 16 KiB, including its final newline." : content ? "" : "Memory content is required. Use Clear memory to reset it.");
 }
 
+function validatePrompt() {
+  const content = $("prompt-content").value;
+  const size = new TextEncoder().encode(content).length;
+  $("prompt-size").textContent = `${size.toLocaleString()} / 65,536 UTF-8 bytes`;
+  $("prompt-content").setCustomValidity(!content.trim() ? "The system prompt cannot be blank."
+    : size > 65536 ? "The system prompt must fit within 64 KiB." : "");
+}
+
+function clearPrompt(discard = false) {
+  promptSequence++;
+  promptController?.abort();
+  promptController = null;
+  promptLoading = false;
+  promptData = null;
+  $("prompt-default").textContent = "";
+  $("prompt-form").hidden = true;
+  $("prompt-loading").hidden = true;
+  $("prompt-retry").hidden = true;
+  $("prompt-status").textContent = "Open this section to load the system prompt.";
+  if (discard || !promptDirty()) {
+    $("prompt-content").value = "";
+    promptBaseline = null;
+  }
+}
+
+async function loadPrompt() {
+  if (!authorized || !state.user.permanent || promptLoading) return false;
+  const sequence = ++promptSequence;
+  const controller = new AbortController();
+  promptController = controller;
+  promptLoading = true;
+  $("prompt-status").textContent = "Loading system prompt…";
+  $("prompt-retry").hidden = true;
+  updateControls();
+  try {
+    const next = await request("/api/prompt", undefined, { signal: controller.signal });
+    if (sequence !== promptSequence || !authorized || !state.user.permanent) return false;
+    if (typeof next.content !== "string" || typeof next.default_content !== "string" || typeof next.overridden !== "boolean") {
+      throw new Error("The server returned an invalid system prompt.");
+    }
+    if (!promptDirty()) {
+      $("prompt-content").value = next.content;
+      promptBaseline = $("prompt-content").value;
+    }
+    promptData = next;
+    $("prompt-default").textContent = next.default_content;
+    $("prompt-status").textContent = next.overridden ? "Custom base prompt is active." : "Bundled default base prompt is active.";
+    $("prompt-form").hidden = false;
+    validatePrompt();
+    return true;
+  } catch (error) {
+    if (sequence !== promptSequence || error.name === "AbortError") return false;
+    $("prompt-status").textContent = `Could not load the system prompt: ${error.message}`;
+    $("prompt-retry").hidden = false;
+    failure(error);
+    return false;
+  } finally {
+    if (sequence === promptSequence) {
+      promptLoading = false;
+      promptController = null;
+      updateControls();
+    }
+  }
+}
+
+async function changePrompt(reset = false) {
+  if (busy || !authorized || !state.user.permanent || !promptData || promptLoading) return;
+  validatePrompt();
+  if (!reset && !$("prompt-form").reportValidity()) return;
+  if (!window.confirm(reset
+      ? "Reset Garmin's live base prompt to the bundled default? Any unsaved prompt draft will be discarded."
+      : "Save this base system prompt? It changes live Garmin's subsequent replies for everyone.")) return;
+  const content = reset ? promptData.default_content : $("prompt-content").value;
+  let saved = false;
+  setBusy(true);
+  status("Saving system prompt…");
+  try {
+    const result = await request(`/api/prompt/${reset ? "reset" : "replace"}`, reset ? {} : { content });
+    if (result.ok !== true) throw new Error("The server did not confirm the prompt change.");
+    saved = true;
+    $("prompt-content").value = content;
+    promptBaseline = $("prompt-content").value;
+    promptData.overridden = !reset;
+    if (await loadPrompt()) status(reset ? "System prompt reset to default." : "System prompt saved.", "success");
+    else if (authorized) status("System prompt saved, but could not reload it. Retry prompt to confirm the saved text.", "error");
+  } catch (error) {
+    failure(error, saved ? "Prompt saved. " : "Prompt change not confirmed: ");
+  } finally { setBusy(false); }
+}
+
+$("prompt-retry").addEventListener("click", loadPrompt);
+$("prompt-content").addEventListener("input", () => { validatePrompt(); updateControls(); });
+$("prompt-form").addEventListener("submit", (event) => { event.preventDefault(); changePrompt(); });
+$("reset-prompt").addEventListener("click", () => changePrompt(true));
+
 navigation.forEach((button) => {
   button.addEventListener("click", () => {
-    if (!busy && authorized && (button.dataset.section !== "admins" || state.user.permanent)) showSection(button.dataset.section);
+    const permanentOnly = ["admins", "prompt"].includes(button.dataset.section);
+    if (!busy && authorized && (!permanentOnly || state.user.permanent)) showSection(button.dataset.section);
   });
 });
 $("new-note").addEventListener("click", () => chooseNote(null));
@@ -402,6 +535,8 @@ $("logout").addEventListener("click", () => {
     noteBaseline = null;
     memoryBaseline = null;
     $("memory-content").value = "";
+    clearArchives();
+    clearPrompt(true);
     $("admin-id").value = "";
     $("notes-list").replaceChildren();
     $("admins-list").replaceChildren();
@@ -421,4 +556,5 @@ window.addEventListener("beforeunload", (event) => {
     event.returnValue = "";
   }
 });
+initArchives();
 refresh();
