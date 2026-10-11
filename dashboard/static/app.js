@@ -41,7 +41,6 @@ function updateControls() {
   const noteChanged = noteDirty();
   const memoryChanged = memoryDirty();
   document.querySelectorAll("#app button").forEach((button) => { button.disabled = locked; });
-  navigation.forEach((button) => { button.disabled = busy; });
   $("logout").hidden = !canLogout;
   $("logout").disabled = busy;
   $("retry").disabled = busy;
@@ -166,6 +165,8 @@ function renderIDs(listID, entries, kind) {
 function renderState() {
   $("loading").hidden = true;
   $("auth").hidden = true;
+  $("recovery").hidden = true;
+  $("recovery-content").value = "";
   $("app").hidden = false;
   $("identity").hidden = false;
   $("user-name").textContent = state.user.name;
@@ -228,15 +229,31 @@ async function readState() {
   $("retry").hidden = true;
 }
 
+function showRecovery() {
+  const drafts = [];
+  if (noteDirty()) {
+    const note = noteValues();
+    drafts.push(`Note name: ${note.name}\nShort description: ${note.short_desc}\n\n${note.content}`);
+  }
+  if (memoryDirty()) drafts.push(`Shared Garmin memory draft:\n\n${$("memory-content").value}`);
+  if ($("channel-id").value) drafts.push(`Channel ID draft: ${$("channel-id").value}`);
+  if ($("admin-id").value) drafts.push(`Admin ID draft: ${$("admin-id").value}`);
+  $("recovery-content").value = drafts.join("\n\n-----\n\n");
+  $("recovery").hidden = drafts.length === 0;
+}
+
 function failure(error, prefix = "", lock = false) {
   $("loading").hidden = true;
   if (lock || error.status === 401 || error.status === 403) authorized = false;
   if (error.status === 401 || error.status === 403) {
+    $("app").hidden = true;
+    $("identity").hidden = true;
+    showRecovery();
     $("auth").hidden = false;
     const denied = error.status === 403;
     $("auth-title").textContent = denied ? "Administrator access required" : "Sign in to Metrobot";
     $("auth-description").textContent = state
-      ? "Your session or access is no longer valid. Unsaved text is kept below for copying. Signing in again leaves this page; copy your draft first."
+      ? "Your session or access is no longer valid. Fetched administration data is hidden. Any unsaved drafts are available below for copying before signing in again."
       : "Use a Discord account with Metrobot administrator access.";
     if (!denied) canLogout = false;
     status(prefix + (denied ? "Access denied. " : state ? "Your session has expired. " : "") + error.message,
@@ -287,7 +304,10 @@ async function mutate(path, payload, message, onSaved = () => {}) {
 
 function validateNote() {
   $("note-name").setCustomValidity(/\s/.test($("note-name").value.trim()) ? "Use a note name without spaces." : "");
-  $("note-description").setCustomValidity($("note-description").value.trim() ? "" : "A short description is required.");
+  const description = $("note-description").value.trim();
+  $("note-description").setCustomValidity(!description ? "A short description is required."
+    : /[\r\n]/.test(description) ? "A short description must be one line."
+    : [...description].length > 160 ? "A short description cannot exceed 160 Unicode characters." : "");
   $("note-content").setCustomValidity($("note-content").value.trim() ? "" : "Note content is required.");
 }
 
@@ -301,7 +321,7 @@ function validateMemory() {
 
 navigation.forEach((button) => {
   button.addEventListener("click", () => {
-    if (!busy && (button.dataset.section !== "admins" || state.user.permanent)) showSection(button.dataset.section);
+    if (!busy && authorized && (button.dataset.section !== "admins" || state.user.permanent)) showSection(button.dataset.section);
   });
 });
 $("new-note").addEventListener("click", () => chooseNote(null));
@@ -385,6 +405,8 @@ $("logout").addEventListener("click", () => {
     $("admins-list").replaceChildren();
     $("app").hidden = true;
     $("identity").hidden = true;
+    $("recovery").hidden = true;
+    $("recovery-content").value = "";
     showSection("notes");
   });
 });

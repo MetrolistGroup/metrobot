@@ -38,6 +38,13 @@
         <a id="login" class="button primary" href="/auth/login">Sign in with Discord</a>
       </section>
 
+      <section id="recovery" class="wide-editor" aria-labelledby="recovery-title" hidden>
+        <div class="editor-heading"><h2 id="recovery-title">Unsaved drafts</h2></div>
+        <p id="recovery-help" class="notice">Only unsaved drafts are shown here. Copy any text you need before signing in again; leaving this page discards it.</p>
+        <label for="recovery-content">Unsaved text (read only)</label>
+        <textarea id="recovery-content" class="markdown" readonly spellcheck="false" aria-describedby="recovery-help"></textarea>
+      </section>
+
       <section id="loading" aria-label="Loading notes and editor" aria-busy="true">
         <div class="loading-nav skeleton"></div>
         <div class="notes-layout loading-layout" aria-hidden="true">
@@ -71,8 +78,8 @@
               <input id="note-name" name="name" required pattern="\S+" autocomplete="off" aria-describedby="name-help">
               <p id="name-help" class="hint">A single name without spaces. Names are saved in lowercase; use Rename to change a saved name.</p>
               <label for="note-description">Short description</label>
-              <input id="note-description" name="short_desc" required maxlength="160" autocomplete="off" aria-describedby="description-help">
-              <p id="description-help" class="hint">Required, one line, up to 160 characters.</p>
+              <input id="note-description" name="short_desc" required autocomplete="off" aria-describedby="description-help">
+              <p id="description-help" class="hint">Required, one line, up to 160 Unicode characters.</p>
               <label for="note-content">Markdown content</label>
               <textarea id="note-content" name="content" class="markdown" required spellcheck="false" aria-describedby="content-help"></textarea>
               <p id="content-help" class="hint">Plain-text editing only. Content is never rendered as HTML here.</p>
