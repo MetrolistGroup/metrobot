@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -85,11 +86,14 @@ func (d *DB) migrateNoteMarkup() error {
 						pending = ""
 					}
 				}
-				body, err := json.Marshal(entries)
-				if err != nil {
+				var body bytes.Buffer
+				encoder := json.NewEncoder(&body)
+				encoder.SetEscapeHTML(false)
+				encoder.SetIndent("", "  ")
+				if err := encoder.Encode(entries); err != nil {
 					return err
 				}
-				migrated = intro + "\n" + notefmt.Fence("random", string(body))
+				migrated = intro + "\n" + notefmt.Fence("random", strings.TrimSuffix(body.String(), "\n"))
 			}
 		}
 		if _, err := tx.Exec(`UPDATE notes SET content = ?, markup_enabled = 1 WHERE name = ?`, migrated, name); err != nil {
