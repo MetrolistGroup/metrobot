@@ -140,6 +140,8 @@ thumbnail/gallery URLs and labeled button URLs. Separators become `---`.
 
 If a rich layout cannot fit at delivery, the full readable note is sent as plain
 text, or as `note.md` when the text plus any prefix exceeds 2,000 UTF-16 units.
+Message replies and slash responses also retry this readable form if Discord
+rejects their rich payload, preserving visibility and mention restrictions.
 Nothing is truncated. Oversized legacy FAQ pages or more than 25 legacy questions
 fall back the same way. Already-posted `note:kmp:question` selectors remain usable
 while the migrated `kmp` note still contains a FAQ; new FAQ IDs are bounded hashes,

@@ -159,7 +159,16 @@ func (b *Bot) respondNote(s *bot.Client, i *events.ApplicationCommandInteraction
 	if ephemeral {
 		message.Flags |= discord.MessageFlagEphemeral
 	}
-	if err := s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{Type: discord.InteractionResponseTypeCreateMessage, Data: message}); err != nil {
+	err := s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{Type: discord.InteractionResponseTypeCreateMessage, Data: message})
+	if err != nil && message.Flags.Has(discord.MessageFlagIsComponentsV2) {
+		fallback := newDiscordNoteMessage(note.Text, "")
+		fallback.AllowedMentions = message.AllowedMentions
+		if ephemeral {
+			fallback.Flags |= discord.MessageFlagEphemeral
+		}
+		err = s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{Type: discord.InteractionResponseTypeCreateMessage, Data: fallback})
+	}
+	if err != nil {
 		b.Logger.Error("failed to respond with note", zap.Error(err))
 	}
 }
