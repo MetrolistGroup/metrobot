@@ -2,6 +2,7 @@
 package dashboard
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/subtle"
 	"embed"
@@ -23,6 +24,7 @@ import (
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/config"
 	"github.com/MetrolistGroup/metrobot/db"
+	"github.com/MetrolistGroup/metrobot/util"
 )
 
 //go:embed static/*
@@ -468,8 +470,12 @@ func (h *Handler) mutate(w http.ResponseWriter, r *http.Request, s session) {
 		fail(w, http.StatusUnsupportedMediaType, "Use application/json.")
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
-	decoder := json.NewDecoder(r.Body)
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
+	if err != nil || !util.ValidJSONUnicode(body) {
+		fail(w, http.StatusBadRequest, "Invalid Unicode JSON or request body too large.")
+		return
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	var input *mutation
 	if err := decoder.Decode(&input); err != nil || input == nil {

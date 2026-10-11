@@ -8,7 +8,6 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/url"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -431,30 +430,8 @@ func (l *Layout) Markdown() string {
 }
 
 func decodeJSON(data []byte, target any) error {
-	if !utf8.Valid(data) {
-		return fmt.Errorf("JSON must be valid UTF-8")
-	}
-	// encoding/json replaces unpaired surrogate escapes; reject them instead of losing text.
-	for i := 0; i < len(data); i++ {
-		if data[i] != '\\' {
-			continue
-		}
-		if i+1 < len(data) && data[i+1] == 'u' && i+6 <= len(data) {
-			value, err := strconv.ParseUint(string(data[i+2:i+6]), 16, 16)
-			if err == nil && value >= 0xd800 && value <= 0xdfff {
-				if value > 0xdbff || i+12 > len(data) || string(data[i+6:i+8]) != `\u` {
-					return fmt.Errorf("JSON contains an unpaired Unicode surrogate")
-				}
-				low, err := strconv.ParseUint(string(data[i+8:i+12]), 16, 16)
-				if err != nil || low < 0xdc00 || low > 0xdfff {
-					return fmt.Errorf("JSON contains an unpaired Unicode surrogate")
-				}
-				i += 6
-			}
-			i += 5
-		} else {
-			i++
-		}
+	if !util.ValidJSONUnicode(data) {
+		return fmt.Errorf("JSON must contain valid Unicode without unpaired surrogates")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()

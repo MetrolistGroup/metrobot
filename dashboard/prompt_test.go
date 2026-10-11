@@ -150,6 +150,7 @@ func TestPromptValidationDoesNotWrite(t *testing.T) {
 	for _, body := range []string{
 		`{}`, `null`, `[]`, `"text"`, `42`, `true`, `{"content":null}`, `{"content":12}`,
 		`{"content":""}`, `{"content":" \n\t"}`, `{"content":"\u2003"}`,
+		`{"content":"\ud800"}`, `{"content":"\udc00"}`, `{"content":"\ud800\u0041"}`,
 		`{"content":"new","unknown":true}`, `{"content":"new","name":"unused"}`,
 		`{"content":"new"} {}`, `{"content":"new"} trailing`, `{"content":`,
 		"{\"content\":\"" + string([]byte{0xff}) + "\"}",

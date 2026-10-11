@@ -1420,9 +1420,16 @@ func (b *Bot) sendDonorWelcome(s *bot.Client, userID string) {
 		b.Logger.Error("failed to load donor welcome note", zap.Error(err))
 		return
 	}
-	message := authoredNoteMessage(note.Render(), donorWelcomeNote, fmt.Sprintf("<@%s>\n", userID), -1)
+	rendered := note.Render()
+	prefix := fmt.Sprintf("<@%s>\n", userID)
+	message := authoredNoteMessage(rendered, donorWelcomeNote, prefix, -1)
 	message.AllowedMentions = &discord.AllowedMentions{Users: []snowflake.ID{snowflakeID(userID)}}
 	_, err = s.Rest.CreateMessage(snowflakeID(donorWelcomeChannelID), message)
+	if noteRequestRejected(err) && message.Flags.Has(discord.MessageFlagIsComponentsV2) {
+		fallback := newDiscordNoteMessage(rendered.Text, prefix)
+		fallback.AllowedMentions = message.AllowedMentions
+		_, err = s.Rest.CreateMessage(snowflakeID(donorWelcomeChannelID), fallback)
+	}
 	if err != nil {
 		b.Logger.Error("failed to send donor welcome", zap.String("userID", userID), zap.Error(err))
 	}

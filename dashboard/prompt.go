@@ -7,10 +7,10 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"unicode/utf8"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/db"
+	"github.com/MetrolistGroup/metrobot/util"
 )
 
 type promptResponse struct {
@@ -43,7 +43,7 @@ func (h *Handler) prompt(w http.ResponseWriter, r *http.Request, s session) {
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
-	if err != nil || !utf8.Valid(body) {
+	if err != nil || !util.ValidJSONUnicode(body) {
 		fail(w, http.StatusBadRequest, "Invalid UTF-8 JSON object or request body too large.")
 		return
 	}
