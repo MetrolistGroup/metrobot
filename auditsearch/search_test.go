@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/disgoorg/disgo/discord"
@@ -212,6 +213,93 @@ func TestAttachmentContentSearchAndPartialWarnings(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSlowAttachmentsPreservePagination(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		messages    int
+		attachments int
+		text        string
+		timeout     time.Duration
+	}{
+		{"one-post-no-match", 1, 8, "later needle", SearchTimeout},
+		{"one-post-body-hit", 1, 8, "body", SearchTimeout},
+		{"multiple-posts-no-match", 8, 1, "later needle", SearchTimeout},
+		{"shorter-request-deadline", 1, 8, "later needle", 4 * time.Second},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				q := dayQuery()
+				q.Text = test.text
+				h := &historyMock{}
+				for i := 1; i <= test.messages; i++ {
+					message := logMessage(q.Until.Add(-time.Duration(i)*time.Second), "body")
+					for range test.attachments {
+						message.Attachments = append(message.Attachments, discord.Attachment{Filename: "audit.txt", URL: "https://cdn.discordapp.com/attachments/1/2/audit.txt"})
+					}
+					h.messages = append(h.messages, message)
+				}
+				later := logMessage(q.Until.Add(-time.Duration(test.messages+1)*time.Second), "body later needle")
+				h.messages = append(h.messages, later)
+				s := New(h)
+				calls := 0
+				s.attachments.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					calls++
+					<-r.Context().Done()
+					return nil, r.Context().Err()
+				})
+				ctx, cancel := context.WithTimeout(context.Background(), test.timeout)
+				defer cancel()
+				started := time.Now()
+				result, err := s.Search(ctx, q)
+				if err != nil || ctx.Err() != nil || time.Since(started) >= test.timeout {
+					t.Fatalf("attachment stalls consumed the page deadline: result=%+v err=%v elapsed=%v", result, err, time.Since(started))
+				}
+				if result.Complete || result.Scanned == 0 || result.NextCursor != h.messages[result.Scanned-1].ID.String() || result.Scanned >= len(h.messages) {
+					t.Fatalf("lost continuation: %+v", result)
+				}
+				if !strings.Contains(strings.Join(result.Warnings, "\n"), "attachment time budget") {
+					t.Fatalf("missing time-budget warning: %+v", result)
+				}
+				if test.text == "body" {
+					if len(result.Items) != 1 || len(result.Items[0].Attachments) != test.attachments {
+						t.Fatalf("lost current body match or attachment metadata: %+v", result)
+					}
+				} else if len(result.Items) != 0 {
+					t.Fatalf("unexpected body match: %+v", result)
+				}
+				if calls > 6 || calls == 0 {
+					t.Fatalf("did not stop serial three-second timeouts before the search deadline: calls=%d", calls)
+				}
+				cancel()
+				q.Before = snowflake.MustParse(result.NextCursor)
+				result, err = s.Search(context.Background(), q)
+				if err != nil || result.NextCursor != "" || len(result.Items) != 1 || result.Items[0].ID != later.ID.String() {
+					t.Fatalf("later log was unreachable: result=%+v err=%v", result, err)
+				}
+			})
+		})
+	}
+}
+
+func TestCancellationDuringAttachmentStillAbortsSearch(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		q := dayQuery()
+		message := logMessage(q.From, "body")
+		message.Attachments = []discord.Attachment{{Filename: "audit.txt", URL: "https://cdn.discordapp.com/attachments/1/2/audit.txt"}}
+		s := New(&historyMock{messages: []discord.Message{message}})
+		s.attachments.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			<-r.Context().Done()
+			return nil, r.Context().Err()
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() { time.Sleep(time.Second); cancel() }()
+		if _, err := s.Search(ctx, q); !errors.Is(err, context.Canceled) {
+			t.Fatalf("ignored caller cancellation: %v", err)
+		}
+	})
 }
 
 func TestSafeAttachmentURLsAndPublicIPs(t *testing.T) {

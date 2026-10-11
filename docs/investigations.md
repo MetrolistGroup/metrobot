@@ -91,8 +91,13 @@ expected and are returned only to authorized admins. They may expire.
 Searches have a 20-second deadline and a four-request concurrency limit (hence
 at most four simultaneous attachment downloads). Per search, downloads are
 serial, limited to 20 requests and 1 MiB total received content; each attachment
-has a three-second timeout and 128 KiB text limit. Metadata indicating an
-oversized attachment skips that download. Oversized responses are truncated;
+has a three-second timeout and 128 KiB text limit. Downloads are cut off three
+seconds before the overall request deadline. If that time budget is exhausted,
+the page finishes its current message, warns about unsearched attachment content,
+and returns a continuation when range remains, instead of losing progress to a
+timeout. Remaining attachment metadata/body text is still included; later logs
+are reached with the returned cursor. Caller cancellation still aborts the request.
+Metadata indicating an oversized attachment skips that download. Oversized responses are truncated;
 non-UTF-8/binary text, unavailable/expired files, redirects, interrupted downloads
 and exhausted budgets produce explicit **partial-search warnings**, never an
 unconditional complete/no-results claim. To retry missing attachment content,

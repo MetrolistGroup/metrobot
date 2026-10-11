@@ -120,6 +120,10 @@ func (s *Service) Search(ctx context.Context, q Query) (Result, error) {
 	}
 	lower := snowflake.New(q.From)
 	budget := attachmentBudget{bytes: maxAttachmentBudget}
+	deadline, _ := ctx.Deadline()
+	// Reserve time to return the page and cursor even when attachment downloads stall.
+	attachmentCtx, cancelAttachments := context.WithDeadline(ctx, deadline.Add(-3*time.Second))
+	defer cancelAttachments()
 	needle := strings.ToLower(q.Text)
 	partial := false
 	warn := func(message string) {
@@ -174,6 +178,7 @@ func (s *Service) Search(ctx context.Context, q Query) (Result, error) {
 			}
 			content := flatten(message)
 			attachments := []Attachment{}
+			attachmentTimeExpired := false
 			for _, a := range message.Attachments {
 				if err := ctx.Err(); err != nil {
 					return result, err
@@ -184,7 +189,14 @@ func (s *Service) Search(ctx context.Context, q Query) (Result, error) {
 				if !textAttachment(a) {
 					continue
 				}
-				text, warning := s.readAttachment(ctx, a, &budget)
+				var text, warning string
+				if attachmentCtx.Err() == nil {
+					text, warning = s.readAttachment(attachmentCtx, a, &budget)
+				}
+				if attachmentCtx.Err() != nil {
+					attachmentTimeExpired = true
+					warn("Partial search: the attachment time budget was exhausted; some attachment content was not searched.")
+				}
 				if warning != "" {
 					warn(warning)
 				}
@@ -192,10 +204,13 @@ func (s *Service) Search(ctx context.Context, q Query) (Result, error) {
 					content += "\n\nAttachment: " + a.Filename + "\n" + text
 				}
 			}
+			if err := ctx.Err(); err != nil {
+				return result, err
+			}
 			if strings.Contains(strings.ToLower(content), needle) {
 				result.Items = append(result.Items, Item{ID: message.ID.String(), Timestamp: message.CreatedAt.UTC().Format(time.RFC3339Nano), Source: q.Source, Content: content, URL: fmt.Sprintf("https://discord.com/channels/%s/%s/%s", channel.GuildID, channel.ID, message.ID), Attachments: attachments})
 			}
-			if len(result.Items) == PageSize {
+			if len(result.Items) == PageSize || attachmentTimeExpired {
 				// The cursor follows the last processed message, never the end of a fetched batch.
 				return finish(before <= lower || i == len(messages)-1 && len(messages) < limit)
 			}
