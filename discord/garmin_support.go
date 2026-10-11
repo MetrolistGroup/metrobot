@@ -95,21 +95,26 @@ func (b *Bot) sendGarminAppSupportReplyAndRememberIfVisible(s *bot.Client, m *di
 	if !b.garminMessageVisibleLocked(m.ChannelID.String(), m.ID.String()) {
 		return nil
 	}
-	reply := b.sendGarminAppSupportReply(s, m, content, noteName)
+	reply, delivered := b.sendGarminAppSupportReply(s, m, content, noteName)
 	if reply != nil {
+		conversation = copyGarminAIMessages(conversation)
+		if len(conversation) > 0 && conversation[len(conversation)-1].Role == "assistant" {
+			conversation[len(conversation)-1].Content = delivered
+		}
 		b.storeGarminAIContextLocked(reply.ID.String(), m, conversation, time.Now())
 	}
 	return reply
 }
 
-func (b *Bot) sendGarminAppSupportReply(s *bot.Client, m *discord.Message, content, noteName string) *discord.Message {
+func (b *Bot) sendGarminAppSupportReply(s *bot.Client, m *discord.Message, content, noteName string) (*discord.Message, string) {
 	if noteName != "" && b.Notes != nil {
 		if note, err := b.Notes.GetNoteDocument(noteName); err == nil {
-			return b.sendNoteReply(s, m.ChannelID.String(), m.ID.String(), noteName, note.Render())
+			rendered := note.Render()
+			return b.sendNoteReply(s, m.ChannelID.String(), m.ID.String(), noteName, rendered), rendered.Text
 		}
 	}
 	if len(content) <= garminAIMaxContent {
-		return b.sendGarminReply(s, m, content)
+		return b.sendGarminReply(s, m, content), content
 	}
 	message := &discord.MessageCreate{
 		MessageReference: &discord.MessageReference{MessageID: snowflakePtr(m.ID.String())},
@@ -120,16 +125,18 @@ func (b *Bot) sendGarminAppSupportReply(s *bot.Client, m *discord.Message, conte
 	}
 	reply, err := s.Rest.CreateMessage(m.ChannelID, *message)
 	if err == nil {
-		return reply
+		return reply, content
 	}
-	message.MessageReference = nil
-	message.Files[0].Reader = strings.NewReader(content)
-	reply, err = s.Rest.CreateMessage(m.ChannelID, *message)
+	if noteRequestRejected(err) {
+		message.MessageReference = nil
+		message.Files[0].Reader = strings.NewReader(content)
+		reply, err = s.Rest.CreateMessage(m.ChannelID, *message)
+	}
 	if err != nil {
 		b.Logger.Error("failed to send app support note", zap.Error(err))
-		return nil
+		return nil, ""
 	}
-	return reply
+	return reply, content
 }
 
 func garminAppSupportIntent(content string) bool {
