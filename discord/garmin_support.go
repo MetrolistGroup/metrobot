@@ -103,9 +103,9 @@ func (b *Bot) sendGarminAppSupportReplyAndRememberIfVisible(s *bot.Client, m *di
 }
 
 func (b *Bot) sendGarminAppSupportReply(s *bot.Client, m *discord.Message, content, noteName string) *discord.Message {
-	if strings.EqualFold(noteName, "kmp") {
-		if reply := b.sendKMPNoteReply(s, m.ChannelID.String(), m.ID.String(), content); reply != nil {
-			return reply
+	if noteName != "" && b.Notes != nil {
+		if note, err := b.Notes.GetNoteDocument(noteName); err == nil {
+			return b.sendNoteReply(s, m.ChannelID.String(), m.ID.String(), noteName, note.Render())
 		}
 	}
 	if len(content) <= garminAIMaxContent {

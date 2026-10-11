@@ -14,6 +14,7 @@ import (
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/config"
 	"github.com/MetrolistGroup/metrobot/db"
+	"github.com/MetrolistGroup/metrobot/internal/notefmt"
 	"github.com/MetrolistGroup/metrobot/util"
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/events"
@@ -54,24 +55,32 @@ func TestDiscordNoteMessageBoundaries(t *testing.T) {
 	}
 }
 
-func TestKMPNoteComponentTextLimits(t *testing.T) {
-	if _, ok := kmpNoteComponents(strings.Repeat("## Question\n"+strings.Repeat("answer\n", 100), 10), -1); !ok {
+func testFAQComponents(content string, selected int) ([]discord.LayoutComponent, bool) {
+	note, err := notefmt.Parse(notefmt.Fence("faq", content))
+	if err != nil {
+		return nil, false
+	}
+	return noteComponents(note.Render(), "any-name", "", selected)
+}
+
+func TestFAQNoteComponentTextLimits(t *testing.T) {
+	if _, ok := testFAQComponents(strings.Repeat("## Question\n"+strings.Repeat("answer\n", 100), 10), -1); !ok {
 		t.Fatal("long FAQ with individually valid answers lost pagination")
 	}
-	answer := strings.Repeat("界", 4000-util.UTF16Len(kmpNoteHeader+"## Q\n"))
+	answer := strings.Repeat("界", 4000-util.UTF16Len("# FAQ\nChoose a question below.## Q\n"))
 	for _, selected := range []int{-1, 0} {
-		if _, ok := kmpNoteComponents("## Q\n"+answer, selected); !ok {
+		if _, ok := testFAQComponents("## Q\n"+answer, selected); !ok {
 			t.Fatal("FAQ at the total text limit was rejected")
 		}
-		if _, ok := kmpNoteComponents("## Q\n"+answer+"𝄞", selected); ok {
+		if _, ok := testFAQComponents("## Q\n"+answer+"𝄞", selected); ok {
 			t.Fatal("FAQ exceeding the UTF-16 text limit was accepted")
 		}
 	}
-	if _, ok := kmpNoteComponents("## Small\nshort\n## Q\n"+answer+"a", 0); ok {
+	if _, ok := testFAQComponents("## Small\nshort\n## Q\n"+answer+"a", 0); ok {
 		t.Fatal("menu hid an oversized unselected answer")
 	}
 	content := "## " + strings.Repeat("𝄞", 60) + "\n" + strings.Repeat("界𝄞", 100)
-	components, ok := kmpNoteComponents(content, 0)
+	components, ok := testFAQComponents(content, 0)
 	if !ok {
 		t.Fatal("valid Unicode FAQ was rejected")
 	}
@@ -164,7 +173,11 @@ func TestNoteDeliveryPathsPreserveVisibilityReplyAndMentions(t *testing.T) {
 			if long {
 				text += strings.Repeat("full answer 界𝄞\n", 400)
 			}
-			if err := database.EditNote(name, "test", text); err != nil {
+			stored := text
+			if name == "kmp" {
+				stored = notefmt.Fence("faq", text)
+			}
+			if err := database.EditNote(name, "test", stored); err != nil {
 				t.Fatal(err)
 			}
 			paths := []string{"trigger", "private", "stay"}
@@ -249,10 +262,10 @@ func TestKMPSelectionAfterNoteBecomesOversized(t *testing.T) {
 		if long {
 			text += strings.Repeat("\nfull 界𝄞 @everyone <@123>", 400)
 		}
-		if err := database.EditNote("kmp", "test", text); err != nil {
+		if err := database.EditNote("kmp", "test", notefmt.Fence("faq", text)); err != nil {
 			t.Fatal(err)
 		}
-		if !b.handleKMPNoteComponent(client, &events.ComponentInteractionCreate{ComponentInteraction: interaction}) {
+		if !b.handleNoteComponent(client, &events.ComponentInteractionCreate{ComponentInteraction: interaction}) {
 			t.Fatal("KMP selection was not handled")
 		}
 		got := <-requests

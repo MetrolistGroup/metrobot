@@ -1,10 +1,13 @@
 package discord
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"strconv"
 	"strings"
 	"unicode/utf16"
 
+	"github.com/MetrolistGroup/metrobot/internal/notefmt"
 	"github.com/MetrolistGroup/metrobot/util"
 	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/discord"
@@ -12,8 +15,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const kmpNoteSelectCustomID = "note:kmp:question"
-const kmpNoteHeader = "# Metrolist-KMP FAQ\nChoose a question below."
+const kmpNoteSelectCustomID = "note:kmp:question" // Keep already-posted legacy FAQ menus usable.
 
 func newDiscordNoteMessage(content, prefix string) discord.MessageCreate {
 	message := discord.MessageCreate{Content: prefix + content}
@@ -24,7 +26,12 @@ func newDiscordNoteMessage(content, prefix string) discord.MessageCreate {
 	return message
 }
 
-func kmpNoteOptionText(text string) string {
+func noteSelectCustomID(name string) string {
+	// Names are unbounded Unicode; never embed them directly in Discord's 100-character ID.
+	return fmt.Sprintf("note:faq:%x", sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(name)))))
+}
+
+func noteOptionText(text string) string {
 	if util.UTF16Len(text) <= 100 {
 		return text
 	}
@@ -38,165 +45,176 @@ func kmpNoteOptionText(text string) string {
 	return text
 }
 
-type noteFAQItem struct {
-	question string
-	answer   string
-}
-
-func noteFAQItems(content string) []noteFAQItem {
-	var items []noteFAQItem
-	var question string
-	var answer []string
-	flush := func() {
-		if question != "" {
-			items = append(items, noteFAQItem{question: question, answer: strings.TrimSpace(strings.Join(answer, "\n"))})
+func noteComponents(note notefmt.Rendered, name, prefix string, selected int) ([]discord.LayoutComponent, bool) {
+	before, after := prefix+note.Before, note.After
+	var body []discord.ContainerSubComponent
+	if strings.TrimSpace(before) != "" {
+		body = append(body, discord.TextDisplayComponent{Content: before})
+	}
+	total := 0
+	for _, text := range []string{before, after} {
+		if strings.TrimSpace(text) != "" {
+			total += util.UTF16Len(text)
 		}
 	}
-	for _, line := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
-		if heading, ok := strings.CutPrefix(strings.TrimSpace(line), "## "); ok {
-			flush()
-			question = strings.TrimSpace(heading)
-			answer = nil
-			continue
-		}
-		if question != "" {
-			answer = append(answer, line)
-		}
-	}
-	flush()
-	return items
-}
-
-func kmpNoteComponents(content string, selected int) ([]discord.LayoutComponent, bool) {
-	items := noteFAQItems(content)
-	if len(items) == 0 || len(items) > 25 || selected < -1 || selected >= len(items) {
-		return nil, false
-	}
-	options := make([]discord.StringSelectMenuOption, len(items))
-	for index, item := range items {
-		// Check every answer before publishing a menu that could later fail on selection.
-		if util.UTF16Len(kmpNoteHeader+"## "+item.question+"\n"+item.answer) > 4000 {
+	count := 1 + len(body)
+	if faq := note.FAQ; faq != nil {
+		if len(faq.Items) < 1 || len(faq.Items) > 25 || selected < -1 || selected >= len(faq.Items) {
 			return nil, false
 		}
-		description := strings.NewReplacer("*", "", "`", "").Replace(strings.Join(strings.Fields(item.answer), " "))
-		options[index] = discord.StringSelectMenuOption{
-			Label:       kmpNoteOptionText(item.question),
-			Value:       strconv.Itoa(index),
-			Description: kmpNoteOptionText(description),
-			Default:     index == selected,
+		header := faq.DisplayHeader()
+		options := make([]discord.StringSelectMenuOption, len(faq.Items))
+		for index, item := range faq.Items {
+			// Validate every page before publishing a selector, including unselected answers.
+			if item.Question == "" || item.Answer == "" || total+util.UTF16Len(header+"## "+item.Question+"\n"+item.Answer) > 4000 {
+				return nil, false
+			}
+			description := strings.NewReplacer("*", "", "`", "").Replace(strings.Join(strings.Fields(item.Answer), " "))
+			options[index] = discord.StringSelectMenuOption{Label: noteOptionText(item.Question), Value: strconv.Itoa(index), Description: noteOptionText(description), Default: index == selected}
 		}
+		body = append(body, discord.TextDisplayComponent{Content: header})
+		if selected >= 0 {
+			body = append(body, discord.SeparatorComponent{}, discord.TextDisplayComponent{Content: "## " + faq.Items[selected].Question + "\n" + faq.Items[selected].Answer})
+		}
+		body = append(body, discord.ActionRowComponent{Components: []discord.InteractiveComponent{discord.StringSelectMenuComponent{CustomID: noteSelectCustomID(name), Placeholder: "Choose a question", MaxValues: 1, Options: options}}})
+		count += 5
+	} else if layout := note.Layout; layout != nil {
+		if total+layout.TextLength() > 4000 {
+			return nil, false
+		}
+		count += layout.ComponentCount()
+		for _, c := range layout.Components {
+			switch c.Type {
+			case "text":
+				body = append(body, discord.TextDisplayComponent{Content: c.Content})
+			case "separator":
+				body = append(body, discord.SeparatorComponent{})
+			case "section":
+				body = append(body, discord.SectionComponent{Components: []discord.SectionSubComponent{discord.TextDisplayComponent{Content: c.Content}}, Accessory: discord.NewThumbnail(c.Thumbnail)})
+			case "gallery":
+				items := make([]discord.MediaGalleryItem, len(c.URLs))
+				for i, url := range c.URLs {
+					items[i] = discord.MediaGalleryItem{Media: discord.UnfurledMediaItem{URL: url}}
+				}
+				body = append(body, discord.MediaGalleryComponent{Items: items})
+			case "buttons":
+				buttons := make([]discord.InteractiveComponent, len(c.Buttons))
+				for i, button := range c.Buttons {
+					buttons[i] = discord.ButtonComponent{Style: discord.ButtonStyleLink, Label: button.Label, URL: button.URL}
+				}
+				body = append(body, discord.ActionRowComponent{Components: buttons})
+			}
+		}
+	} else {
+		return nil, false
 	}
-	body := []discord.ContainerSubComponent{
-		discord.TextDisplayComponent{Content: kmpNoteHeader},
+	if strings.TrimSpace(after) != "" {
+		body = append(body, discord.TextDisplayComponent{Content: after})
+		count++
 	}
-	if selected >= 0 && selected < len(items) {
-		body = append(body,
-			discord.SeparatorComponent{},
-			discord.TextDisplayComponent{Content: "## " + items[selected].question + "\n" + items[selected].answer},
-		)
+	if len(body) > 10 || count > 40 {
+		return nil, false
 	}
-	body = append(body, discord.ActionRowComponent{Components: []discord.InteractiveComponent{discord.StringSelectMenuComponent{
-		CustomID:    kmpNoteSelectCustomID,
-		Placeholder: "Choose a question",
-		MaxValues:   1,
-		Options:     options,
-	}}})
 	return []discord.LayoutComponent{discord.ContainerComponent{Components: body}}, true
 }
 
-func (b *Bot) sendKMPNoteReply(s *bot.Client, channelID, messageID, content string) *discord.Message {
-	components, ok := kmpNoteComponents(content, -1)
-	if !ok {
-		return nil
+func authoredNoteMessage(note notefmt.Rendered, name, prefix string, selected int) discord.MessageCreate {
+	if components, ok := noteComponents(note, name, prefix, selected); ok {
+		return discord.MessageCreate{Components: components, Flags: discord.MessageFlagIsComponentsV2, AllowedMentions: &discord.AllowedMentions{}}
 	}
-	message := &discord.MessageCreate{
-		Components:       components,
-		Flags:            discord.MessageFlagIsComponentsV2,
-		AllowedMentions:  &discord.AllowedMentions{},
-		MessageReference: &discord.MessageReference{MessageID: snowflakePtr(messageID)},
-	}
-	reply, err := s.Rest.CreateMessage(snowflakeID(channelID), *message)
-	if err == nil {
-		return reply
-	}
-	message.MessageReference = nil
-	reply, err = s.Rest.CreateMessage(snowflakeID(channelID), *message)
-	if err != nil {
-		b.Logger.Error("failed to send KMP note", zap.Error(err))
-		return nil
-	}
-	return reply
+	return newDiscordNoteMessage(note.Text, prefix)
 }
 
-func (b *Bot) respondKMPNote(s *bot.Client, i *events.ApplicationCommandInteractionCreate, content string, ephemeral bool) bool {
-	components, ok := kmpNoteComponents(content, -1)
-	if !ok {
-		return false
+func (b *Bot) sendNoteReply(s *bot.Client, channelID, messageID, name string, note notefmt.Rendered) *discord.Message {
+	attempts := 2
+	if _, rich := noteComponents(note, name, "", -1); rich {
+		attempts = 4 // Try readable text if Discord refuses an otherwise valid rich layout.
 	}
-	flags := discord.MessageFlagIsComponentsV2
+	for attempt := 0; attempt < attempts; attempt++ {
+		// Rebuild so an attachment's reader is not exhausted by a failed request.
+		message := authoredNoteMessage(note, name, "", -1)
+		if attempt >= 2 {
+			message = newDiscordNoteMessage(note.Text, "")
+		}
+		message.AllowedMentions = &discord.AllowedMentions{}
+		if attempt%2 == 0 {
+			message.MessageReference = &discord.MessageReference{MessageID: snowflakePtr(messageID)}
+		}
+		reply, err := s.Rest.CreateMessage(snowflakeID(channelID), message)
+		if err == nil {
+			return reply
+		}
+		if attempt == attempts-1 {
+			b.Logger.Error("failed to send note", zap.Error(err))
+		}
+	}
+	return nil
+}
+
+func (b *Bot) respondNote(s *bot.Client, i *events.ApplicationCommandInteractionCreate, name string, note notefmt.Rendered, ephemeral bool) {
+	message := authoredNoteMessage(note, name, "", -1)
+	if message.AllowedMentions == nil {
+		message.AllowedMentions = &discord.AllowedMentions{Parse: []discord.AllowedMentionType{discord.AllowedMentionTypeUsers}}
+	}
 	if ephemeral {
-		flags |= discord.MessageFlagEphemeral
+		message.Flags |= discord.MessageFlagEphemeral
 	}
-	if err := s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{
-		Type: discord.InteractionResponseTypeCreateMessage,
-		Data: discord.MessageCreate{
-			Components:      components,
-			Flags:           flags,
-			AllowedMentions: &discord.AllowedMentions{},
-		},
-	}); err != nil {
-		b.Logger.Error("failed to respond with KMP note", zap.Error(err))
+	if err := s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{Type: discord.InteractionResponseTypeCreateMessage, Data: message}); err != nil {
+		b.Logger.Error("failed to respond with note", zap.Error(err))
 	}
-	return true
 }
 
-func (b *Bot) handleKMPNoteComponent(s *bot.Client, i *events.ComponentInteractionCreate) bool {
+func (b *Bot) handleNoteComponent(s *bot.Client, i *events.ComponentInteractionCreate) bool {
 	data := i.StringSelectMenuInteractionData()
-	if data.CustomID() != kmpNoteSelectCustomID {
+	id := data.CustomID()
+	if id != kmpNoteSelectCustomID && !strings.HasPrefix(id, "note:faq:") {
 		return false
 	}
+	unavailable := func() bool { respondEphemeral(s, i, "That FAQ question is unavailable."); return true }
 	if len(data.Values) != 1 {
-		respondEphemeral(s, i, "That KMP question is unavailable.")
-		return true
+		return unavailable()
 	}
 	selected, err := strconv.Atoi(data.Values[0])
+	if err != nil || selected < 0 {
+		return unavailable()
+	}
+	name := "kmp"
+	if id != kmpNoteSelectCustomID {
+		names, err := b.Notes.DB.ListNotes()
+		if err != nil {
+			return unavailable()
+		}
+		name = ""
+		for _, n := range names {
+			if noteSelectCustomID(n.Name) == id {
+				name = n.Name
+				break
+			}
+		}
+		if name == "" {
+			return unavailable()
+		}
+	}
+	document, err := b.Notes.GetNoteDocument(name)
 	if err != nil {
-		respondEphemeral(s, i, "That KMP question is unavailable.")
-		return true
+		return unavailable()
 	}
-	content, err := b.Notes.GetNote("kmp")
-	if err != nil {
-		b.Logger.Error("KMP note error", zap.Error(err))
-		respondEphemeral(s, i, "The KMP note is unavailable right now.")
-		return true
+	note := document.Render()
+	if note.FAQ == nil || selected >= len(note.FAQ.Items) {
+		return unavailable()
 	}
-	if selected < 0 || selected >= len(noteFAQItems(content)) {
-		respondEphemeral(s, i, "That KMP question is unavailable.")
-		return true
-	}
-	components, ok := kmpNoteComponents(content, selected)
+	components, ok := noteComponents(note, name, "", selected)
+	message := discord.MessageCreate{Components: components, Flags: discord.MessageFlagIsComponentsV2, AllowedMentions: &discord.AllowedMentions{}}
+	responseType := discord.InteractionResponseTypeUpdateMessage
 	if !ok {
-		// Send a new response: an existing Components V2 message cannot become plain text.
-		message := newDiscordNoteMessage(content, "")
+		// A posted V2 message cannot turn into plain text; send a private readable fallback instead.
+		message = newDiscordNoteMessage(note.Text, "")
 		message.Flags = discord.MessageFlagEphemeral
 		message.AllowedMentions = &discord.AllowedMentions{}
-		if err := s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{
-			Type: discord.InteractionResponseTypeCreateMessage,
-			Data: message,
-		}); err != nil {
-			b.Logger.Error("failed to send updated KMP note", zap.Error(err))
-		}
-		return true
+		responseType = discord.InteractionResponseTypeCreateMessage
 	}
-	if err := s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{
-		Type: discord.InteractionResponseTypeUpdateMessage,
-		Data: discord.MessageCreate{
-			Components:      components,
-			Flags:           discord.MessageFlagIsComponentsV2,
-			AllowedMentions: &discord.AllowedMentions{},
-		},
-	}); err != nil {
-		b.Logger.Error("failed to update KMP note", zap.Error(err))
+	if err := s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{Type: responseType, Data: message}); err != nil {
+		b.Logger.Error("failed to update FAQ note", zap.Error(err))
 	}
 	return true
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/config"
 	"github.com/MetrolistGroup/metrobot/db"
+	"github.com/MetrolistGroup/metrobot/internal/notefmt"
 	"github.com/disgoorg/disgo/discord"
 	"go.uber.org/zap"
 )
@@ -188,7 +189,7 @@ func TestAppSupportAgentReturnsExactNoteForPlatformRenderer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if err := database.AddNote("kmp", "Kotlin Multiplatform FAQ", testKMPNote); err != nil {
+	if err := database.AddNote("kmp", "Kotlin Multiplatform FAQ", notefmt.Fence("faq", testKMPNote)); err != nil {
 		t.Fatal(err)
 	}
 	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
@@ -209,7 +210,7 @@ func TestAppSupportAgentReturnsExactNoteForPlatformRenderer(t *testing.T) {
 }
 
 func TestKMPNoteUsesCompactComponentsV2(t *testing.T) {
-	components, ok := kmpNoteComponents(testKMPNote, 1)
+	components, ok := testFAQComponents(testKMPNote, 1)
 	if !ok || len(components) != 1 {
 		t.Fatalf("KMP components = %#v, %v", components, ok)
 	}
@@ -243,7 +244,11 @@ func TestKMPNoteUsesCompactComponentsV2(t *testing.T) {
 	session.Rest = testREST(server.Client())
 	session.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: session.Rest.HTTPClient().Transport, target: server.URL}
 	bot := &Bot{Logger: zap.NewNop()}
-	if bot.sendKMPNoteReply(session, "100000000000000051", "100000000000000023", testKMPNote) == nil {
+	note, err := notefmt.Parse(notefmt.Fence("faq", testKMPNote))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bot.sendNoteReply(session, "100000000000000051", "100000000000000023", "renamed-faq", note.Render()) == nil {
 		t.Fatal("KMP note was not sent")
 	}
 	if payload.Content != "" || payload.Flags&int(discord.MessageFlagIsComponentsV2) == 0 || len(payload.Components) != 1 {

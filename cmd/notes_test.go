@@ -5,7 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"encoding/json"
 	"github.com/MetrolistGroup/metrobot/db"
+	"github.com/MetrolistGroup/metrobot/internal/notefmt"
 )
 
 func TestNormalizeNoteContent(t *testing.T) {
@@ -40,7 +42,7 @@ func TestNotesRequireSearchableNameAndDescription(t *testing.T) {
 	}
 }
 
-func TestDonateNoteRandomizesDeveloperOrder(t *testing.T) {
+func TestExplicitGroupRandomizesDeveloperOrderAcrossRename(t *testing.T) {
 	database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -54,13 +56,20 @@ func TestDonateNoteRandomizesDeveloperOrder(t *testing.T) {
 		"Adriel: https://github.com/sponsors/adrielggmotion",
 		"Lamp: https://github.com/sponsors/l6t9",
 	}
-	if err := handler.AddNote("donate", "Support the developers", intro+"\n"+strings.Join(developers, "\n")); err != nil {
+	group, err := json.Marshal(developers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.AddNote("donate", "Support the developers", intro+"\n"+notefmt.Fence("random", string(group))); err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.RenameNote("donate", "support"); err != nil {
 		t.Fatal(err)
 	}
 
 	seenFirst := map[string]bool{}
 	for range 50 {
-		content, err := handler.GetNote("donate")
+		content, err := handler.GetNote("support")
 		if err != nil {
 			t.Fatal(err)
 		}

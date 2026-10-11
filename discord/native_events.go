@@ -45,7 +45,7 @@ func (b *Bot) installListeners() {
 				if b.handleHelpComponent(s, e) || e.Data.Type() != discord.ComponentTypeStringSelectMenu {
 					return
 				}
-				if !b.handleKMPNoteComponent(s, e) && !b.handleGSMArenaComponent(s, e) && !b.handleHardwareComponent(s, e) {
+				if !b.handleNoteComponent(s, e) && !b.handleGSMArenaComponent(s, e) && !b.handleHardwareComponent(s, e) {
 					b.handleCompareComponent(s, e)
 				}
 			}()

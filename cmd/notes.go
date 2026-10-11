@@ -2,12 +2,12 @@ package cmd
 
 import (
 	"fmt"
-	"math/rand/v2"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/MetrolistGroup/metrobot/db"
+	"github.com/MetrolistGroup/metrobot/internal/notefmt"
 )
 
 type NotesHandler struct {
@@ -15,12 +15,6 @@ type NotesHandler struct {
 }
 
 const noteShortDescriptionMaxLength = 160
-
-var noteContentNormalizer = strings.NewReplacer(
-	"\r\n", "\n",
-	`\r\n`, "\n",
-	`\n`, "\n",
-)
 
 func (h *NotesHandler) ListNotes() (string, error) {
 	names, err := h.DB.ListNotes()
@@ -44,30 +38,36 @@ func (h *NotesHandler) ListNotes() (string, error) {
 	return sb.String(), nil
 }
 
+// GetNote returns readable Markdown for Telegram and AI callers.
 func (h *NotesHandler) GetNote(name string) (string, error) {
+	note, err := h.GetNoteDocument(name)
+	if err != nil {
+		return "", err
+	}
+	return note.Render().Text, nil
+}
+
+// GetNoteDocument preserves authored structure; editor APIs continue using raw DB reads.
+func (h *NotesHandler) GetNoteDocument(name string) (*notefmt.Note, error) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	if name == "" {
-		return "", fmt.Errorf("note name is required")
+		return nil, fmt.Errorf("note name is required")
 	}
 
 	content, err := h.DB.GetNote(name)
 	if err != nil {
-		return "", fmt.Errorf("fetching note: %w", err)
+		return nil, fmt.Errorf("fetching note: %w", err)
 	}
 
 	if content == "" {
-		return "", fmt.Errorf("note %q not found", name)
+		return nil, fmt.Errorf("note %q not found", name)
 	}
 
-	content = normalizeNoteContent(content)
-	if name == "donate" {
-		lines := strings.Split(content, "\n")
-		rand.Shuffle(len(lines)-1, func(i, j int) {
-			lines[i+1], lines[j+1] = lines[j+1], lines[i+1]
-		})
-		content = strings.Join(lines, "\n")
+	note, err := notefmt.Parse(normalizeNoteContent(content))
+	if err != nil {
+		return nil, fmt.Errorf("parsing note %q: %w", name, err)
 	}
-	return content, nil
+	return note, nil
 }
 
 func (h *NotesHandler) AddNote(name, shortDesc, content string) error {
@@ -116,6 +116,13 @@ func ValidateNote(name, shortDesc, content string) (string, string, string, erro
 	case strings.TrimSpace(content) == "":
 		return "", "", "", fmt.Errorf("note content is required")
 	}
+	note, err := notefmt.Parse(content)
+	if err != nil {
+		return "", "", "", err
+	}
+	if err := note.Validate(); err != nil {
+		return "", "", "", err
+	}
 	return name, shortDesc, content, nil
 }
 
@@ -139,5 +146,5 @@ func (h *NotesHandler) DeleteNote(name string) error {
 }
 
 func normalizeNoteContent(content string) string {
-	return noteContentNormalizer.Replace(content)
+	return notefmt.Normalize(content)
 }

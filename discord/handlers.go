@@ -194,15 +194,12 @@ func (b *Bot) onMessageCreate(s *bot.Client, m *discord.Message) {
 	content = b.garminProcessor.ProcessTrigger(content)
 
 	if noteName := extractNoteName(content); noteName != "" {
-		text, err := b.Notes.GetNote(noteName)
+		note, err := b.Notes.GetNoteDocument(noteName)
 		if err != nil {
 			b.Logger.Debug("note not found", zap.String("note", noteName), zap.Error(err))
 			return
 		}
-		if strings.EqualFold(noteName, "kmp") && b.sendKMPNoteReply(s, m.ChannelID.String(), m.ID.String(), text) != nil {
-			return
-		}
-		sendReplyAllowEmbeds(s, m.ChannelID.String(), m.ID.String(), text, false, b.Logger)
+		b.sendNoteReply(s, m.ChannelID.String(), m.ID.String(), noteName, note.Render())
 		return
 	}
 	matches := chatModPattern.FindStringSubmatch(content)
@@ -525,21 +522,14 @@ func (b *Bot) handleNote(s *bot.Client, i *events.ApplicationCommandInteractionC
 		return
 	}
 
-	text, err := b.Notes.GetNote(name)
+	note, err := b.Notes.GetNoteDocument(name)
 	if err != nil {
 		b.Logger.Error("note error", zap.Error(err))
 		respondEphemeral(s, i, "Error fetching note.")
 		return
 	}
 
-	if strings.EqualFold(name, "kmp") && b.respondKMPNote(s, i, text, !stay) {
-		return
-	}
-	if stay {
-		respondPublicAllowEmbeds(s, i, text)
-	} else {
-		respondEphemeralAllowEmbeds(s, i, text)
-	}
+	b.respondNote(s, i, name, note.Render(), !stay)
 }
 
 func (b *Bot) handleAddNote(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string) {
@@ -1425,12 +1415,12 @@ func (b *Bot) onGuildMemberUpdate(s *bot.Client, m *events.GuildMemberUpdate) {
 }
 
 func (b *Bot) sendDonorWelcome(s *bot.Client, userID string) {
-	text, err := b.Notes.GetNote(donorWelcomeNote)
+	note, err := b.Notes.GetNoteDocument(donorWelcomeNote)
 	if err != nil {
 		b.Logger.Error("failed to load donor welcome note", zap.Error(err))
 		return
 	}
-	message := newDiscordNoteMessage(text, fmt.Sprintf("<@%s>\n", userID))
+	message := authoredNoteMessage(note.Render(), donorWelcomeNote, fmt.Sprintf("<@%s>\n", userID), -1)
 	message.AllowedMentions = &discord.AllowedMentions{Users: []snowflake.ID{snowflakeID(userID)}}
 	_, err = s.Rest.CreateMessage(snowflakeID(donorWelcomeChannelID), message)
 	if err != nil {
