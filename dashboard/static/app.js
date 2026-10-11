@@ -9,10 +9,14 @@ let busy = false;
 let section = "notes";
 let selectedName = null;
 let noteBaseline = null;
+let rawNoteContent = "";
 let memoryBaseline = null;
 
 function noteValues() {
-  return { name: $("note-name").value, short_desc: $("note-description").value, content: $("note-content").value };
+  const content = $("note-content").value;
+  // Textareas normalize line endings; keep the raw note when only metadata changes.
+  return { name: $("note-name").value, short_desc: $("note-description").value,
+    content: content === rawNoteContent.replace(/\r\n?/g, "\n") ? rawNoteContent : content };
 }
 
 function noteDirty() {
@@ -24,7 +28,7 @@ function memoryDirty() {
 }
 
 function hasDraft() {
-  return noteDirty() || memoryDirty() || $("channel-id").value !== "" || $("admin-id").value !== "";
+  return noteDirty() || memoryDirty() || $("admin-id").value !== "";
 }
 
 function status(message, kind = "info") {
@@ -48,7 +52,6 @@ function updateControls() {
   $("note-name").readOnly = locked || selectedName !== null;
   $("note-description").readOnly = locked;
   $("note-content").readOnly = locked;
-  $("channel-id").readOnly = locked;
   $("admin-id").readOnly = locked;
   $("rename-note").disabled = locked || selectedName === null;
   $("delete-note").disabled = locked || selectedName === null;
@@ -87,7 +90,8 @@ function setNote(note) {
   selectedName = note ? note.name : null;
   $("note-name").value = note ? note.name : "";
   $("note-description").value = note ? note.short_desc : "";
-  $("note-content").value = note ? note.content : "";
+  rawNoteContent = note ? note.content : "";
+  $("note-content").value = rawNoteContent;
   noteBaseline = noteValues();
   $("editor-title").textContent = note ? "Edit note" : "New note";
   $("save-note").textContent = note ? "Save changes" : "Create note";
@@ -127,34 +131,31 @@ function renderNotes() {
   });
 }
 
-function renderIDs(listID, entries, kind) {
-  const list = $(listID);
+function renderAdmins(entries) {
+  const list = $("admins-list");
   list.replaceChildren();
-  entries.forEach((entry) => {
-    const id = kind === "admins" ? entry.id : entry;
-    const permanent = kind === "admins" && entry.permanent;
+  entries.forEach(({ id, permanent }) => {
     const item = document.createElement("li");
     const details = document.createElement("div");
     const text = document.createElement("span");
     text.textContent = id;
     details.append(text);
-    if (kind === "admins") {
-      const role = document.createElement("span");
-      role.className = "label";
-      role.textContent = permanent ? "Permanent admin" : "Admin";
-      details.append(role);
-    }
+    const role = document.createElement("span");
+    role.className = "label";
+    role.textContent = permanent ? "Permanent admin" : "Admin";
+    details.append(role);
     item.append(details);
     if (!permanent) {
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "danger";
       remove.textContent = "Remove";
-      remove.setAttribute("aria-label", `Remove ${kind === "admins" ? "admin" : "channel"} ${id}`);
+      remove.setAttribute("aria-label", `Remove admin ${id}`);
       remove.addEventListener("click", () => {
         if (busy || !authorized) return;
-        const question = kind === "admins" ? `Remove administrator access for Discord user ${id}?` : `Remove channel ${id} from the exclusion list?`;
-        if (window.confirm(question)) mutate(`/api/${kind}/remove`, { id }, "Entry removed.");
+        if (window.confirm(`Remove administrator access for Discord user ${id}?`)) {
+          mutate("/api/admins/remove", { id }, "Discord admin removed.");
+        }
       });
       item.append(remove);
     }
@@ -185,9 +186,7 @@ function renderState() {
   }
   $("memory-unavailable").hidden = state.memory_available;
   validateMemory();
-  renderIDs("channels-list", state.excluded_channels, "channels");
-  $("channels-empty").hidden = state.excluded_channels.length !== 0;
-  renderIDs("admins-list", state.user.permanent ? state.admins : [], "admins");
+  renderAdmins(state.user.permanent ? state.admins : []);
   $("admins-empty").hidden = state.admins.length !== 0;
   updateControls();
 }
@@ -218,7 +217,7 @@ async function readState() {
   const next = await request("/api/state");
   if (!next?.user || typeof next.user.id !== "string" || typeof next.user.name !== "string" ||
       typeof next.user.permanent !== "boolean" || typeof next.csrf_token !== "string" || !next.csrf_token ||
-      !Array.isArray(next.notes) || !Array.isArray(next.excluded_channels) || !Array.isArray(next.admins) ||
+      !Array.isArray(next.notes) || !Array.isArray(next.admins) ||
       typeof next.memory !== "string" || typeof next.memory_available !== "boolean") {
     throw new Error("The server returned an invalid administration state.");
   }
@@ -236,7 +235,6 @@ function showRecovery() {
     drafts.push(`Note name: ${note.name}\nShort description: ${note.short_desc}\n\n${note.content}`);
   }
   if (memoryDirty()) drafts.push(`Shared Garmin memory draft:\n\n${$("memory-content").value}`);
-  if ($("channel-id").value) drafts.push(`Channel ID draft: ${$("channel-id").value}`);
   if ($("admin-id").value) drafts.push(`Admin ID draft: ${$("admin-id").value}`);
   $("recovery-content").value = drafts.join("\n\n-----\n\n");
   $("recovery").hidden = drafts.length === 0;
@@ -309,6 +307,12 @@ function validateNote() {
     : /[\r\n]/.test(description) ? "A short description must be one line."
     : [...description].length > 160 ? "A short description cannot exceed 160 Unicode characters." : "");
   $("note-content").setCustomValidity($("note-content").value.trim() ? "" : "Note content is required.");
+  const advisory = $("note-delivery");
+  const kmp = $("note-name").value.trim().toLowerCase() === "kmp";
+  advisory.hidden = !kmp && noteValues().content.length <= 2000;
+  advisory.textContent = kmp
+    ? "KMP uses the bot's existing paginated FAQ presentation for ## question headings (up to 25 questions). Individual answers still need to fit Discord's component limits; arbitrary content is not guaranteed to display."
+    : "This note exceeds 2,000 UTF-16 units. You can save it, but chat delivery may exceed Discord's message limit. Saving does not add pagination.";
 }
 
 function validateMemory() {
@@ -338,6 +342,7 @@ $("note-form").addEventListener("submit", (event) => {
     selectedName = values.name;
     $("note-name").value = values.name;
     noteBaseline = { ...values };
+    rawNoteContent = values.content;
     $("editor-title").textContent = "Edit note";
     $("save-note").textContent = "Save changes";
   });
@@ -353,6 +358,7 @@ $("rename-note").addEventListener("click", () => {
     selectedName = newName;
     $("note-name").value = newName;
     noteBaseline.name = newName;
+    validateNote();
   });
 });
 $("delete-note").addEventListener("click", () => {
@@ -379,13 +385,11 @@ $("clear-memory").addEventListener("click", () => {
     });
   }
 });
-[["channel", "channels"], ["admin", "admins"]].forEach(([name, endpoint]) => {
-  $(`${name}-form`).addEventListener("submit", (event) => {
-    event.preventDefault();
-    if (!$(`${name}-form`).reportValidity() || busy || !authorized || (name === "admin" && !state.user.permanent)) return;
-    const id = $(`${name}-id`).value;
-    mutate(`/api/${endpoint}/add`, { id }, name === "admin" ? "Discord admin added." : "Channel exclusion added.", () => { $(`${name}-id`).value = ""; });
-  });
+$("admin-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!$("admin-form").reportValidity() || busy || !authorized || !state.user.permanent) return;
+  const id = $("admin-id").value;
+  mutate("/api/admins/add", { id }, "Discord admin added.", () => { $("admin-id").value = ""; });
 });
 $("logout").addEventListener("click", () => {
   if (busy || !canLogout) return;
@@ -398,10 +402,8 @@ $("logout").addEventListener("click", () => {
     noteBaseline = null;
     memoryBaseline = null;
     $("memory-content").value = "";
-    $("channel-id").value = "";
     $("admin-id").value = "";
     $("notes-list").replaceChildren();
-    $("channels-list").replaceChildren();
     $("admins-list").replaceChildren();
     $("app").hidden = true;
     $("identity").hidden = true;

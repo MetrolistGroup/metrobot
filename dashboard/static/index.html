@@ -57,7 +57,6 @@
         <nav class="navigation" aria-label="Administration sections">
           <button type="button" data-section="notes" aria-current="page" aria-controls="notes-section">Notes</button>
           <button type="button" data-section="memory" aria-controls="memory-section">Shared memory</button>
-          <button type="button" data-section="channels" aria-controls="channels-section">Excluded channels</button>
           <button id="admins-nav" type="button" data-section="admins" aria-controls="admins-section" hidden>Discord admins</button>
         </nav>
 
@@ -81,8 +80,9 @@
               <input id="note-description" name="short_desc" required autocomplete="off" aria-describedby="description-help">
               <p id="description-help" class="hint">Required, one line, up to 160 Unicode characters.</p>
               <label for="note-content">Markdown content</label>
-              <textarea id="note-content" name="content" class="markdown" required spellcheck="false" aria-describedby="content-help"></textarea>
+              <textarea id="note-content" name="content" class="markdown" required spellcheck="false" aria-describedby="content-help note-delivery"></textarea>
               <p id="content-help" class="hint">Plain-text editing only. Content is never rendered as HTML here.</p>
+              <p id="note-delivery" class="notice" aria-live="polite" hidden></p>
               <div class="actions">
                 <button id="save-note" class="primary" type="submit">Create note</button>
                 <button id="rename-note" type="button">Rename</button>
@@ -105,21 +105,6 @@
             <p id="memory-size" class="mono hint"></p>
             <div class="actions"><button id="replace-memory" class="primary" type="submit">Replace memory</button><button id="clear-memory" class="danger" type="button">Clear memory</button></div>
           </form>
-        </section>
-
-        <section id="channels-section" aria-labelledby="channels-title" hidden>
-          <div class="section-heading">
-            <div><p class="label">Moderation settings</p><h2 id="channels-title">Excluded channels</h2></div>
-            <p>Channel IDs designated for exclusion from automatic moderation.</p>
-          </div>
-          <p class="notice">The current bot stores this list but does not yet consult it in message handlers. Adding an ID here does not currently disable moderation.</p>
-          <form id="channel-form" class="id-form">
-            <div><label for="channel-id">Discord channel ID</label><input id="channel-id" required pattern="[0-9]+" maxlength="20" inputmode="numeric" autocomplete="off" aria-describedby="channel-help"></div>
-            <button id="add-channel" class="primary" type="submit">Add channel</button>
-          </form>
-          <p id="channel-help" class="hint">Use the numeric channel ID from Discord's Copy Channel ID command.</p>
-          <ul id="channels-list" class="id-list" aria-label="Excluded channel IDs"></ul>
-          <p id="channels-empty" class="empty" hidden>No channel exclusions saved.</p>
         </section>
 
         <section id="admins-section" aria-labelledby="admins-title" hidden>

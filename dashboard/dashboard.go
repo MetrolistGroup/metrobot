@@ -18,7 +18,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf16"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/config"
@@ -29,14 +28,13 @@ import (
 var assets embed.FS
 
 const (
-	stateCookie    = "metrobot_oauth_state"
-	sessionCookie  = "metrobot_session"
-	stateTTL       = 5 * time.Minute
-	sessionTTL     = 8 * time.Hour
-	maxEntries     = 256
-	maxBody        = 128 * 1024
-	noteReplyLimit = 2000      // Discord's single-message UTF-16 limit is lower than Telegram's.
-	memoryLimit    = 16 * 1024 // Matches the shared GarminMemory write limit, including its trailing newline.
+	stateCookie   = "metrobot_oauth_state"
+	sessionCookie = "metrobot_session"
+	stateTTL      = 5 * time.Minute
+	sessionTTL    = 8 * time.Hour
+	maxEntries    = 256
+	maxBody       = 128 * 1024
+	memoryLimit   = 16 * 1024 // Matches the shared GarminMemory write limit, including its trailing newline.
 )
 
 type pendingLogin struct {
@@ -75,9 +73,6 @@ func New(cfg *config.Config, database *db.DB, memory *cmd.GarminMemory) (*Handle
 	}
 	if err := cfg.Dashboard.Validate(); err != nil {
 		return nil, err
-	}
-	if !validSnowflake(cfg.DiscordGuildID) {
-		return nil, fmt.Errorf("dashboard requires a valid discord_guild_id")
 	}
 	static, err := fs.Sub(assets, "static")
 	if err != nil {
@@ -127,7 +122,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	case "/auth/logout", "/api/notes/create", "/api/notes/edit", "/api/notes/rename", "/api/notes/delete",
-		"/api/memory/replace", "/api/memory/clear", "/api/channels/add", "/api/channels/remove", "/api/admins/add", "/api/admins/remove":
+		"/api/memory/replace", "/api/memory/clear", "/api/admins/add", "/api/admins/remove":
 		if !method(w, r, http.MethodPost) {
 			return
 		}
@@ -384,13 +379,12 @@ type dashboardUser struct {
 }
 
 type stateResponse struct {
-	User             dashboardUser `json:"user"`
-	CSRFToken        string        `json:"csrf_token"`
-	Notes            []db.Note     `json:"notes"`
-	Memory           string        `json:"memory"`
-	MemoryAvailable  bool          `json:"memory_available"`
-	ExcludedChannels []string      `json:"excluded_channels"`
-	Admins           []admin       `json:"admins"`
+	User            dashboardUser `json:"user"`
+	CSRFToken       string        `json:"csrf_token"`
+	Notes           []db.Note     `json:"notes"`
+	Memory          string        `json:"memory"`
+	MemoryAvailable bool          `json:"memory_available"`
+	Admins          []admin       `json:"admins"`
 }
 
 func (h *Handler) state(w http.ResponseWriter, s session) {
@@ -399,15 +393,6 @@ func (h *Handler) state(w http.ResponseWriter, s session) {
 		fail(w, http.StatusInternalServerError, "Unable to read notes.")
 		return
 	}
-	channels, err := h.db.ListExcludedChannels(h.cfg.DiscordGuildID)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Unable to read excluded channels.")
-		return
-	}
-	if channels == nil {
-		channels = []string{}
-	}
-	sort.Strings(channels)
 	memory := ""
 	if h.memory != nil {
 		memory, err = h.memory.Read()
@@ -436,7 +421,7 @@ func (h *Handler) state(w http.ResponseWriter, s session) {
 	writeJSON(w, http.StatusOK, stateResponse{
 		User: dashboardUser{s.id, s.name, permanent}, CSRFToken: s.csrf,
 		Notes: notes, Memory: memory, MemoryAvailable: h.memory != nil,
-		ExcludedChannels: channels, Admins: admins,
+		Admins: admins,
 	})
 }
 
@@ -472,10 +457,6 @@ func (h *Handler) mutate(w http.ResponseWriter, r *http.Request, s session) {
 	}
 	switch r.URL.Path {
 	case "/api/notes/create", "/api/notes/edit":
-		if len(utf16.Encode([]rune(input.Content))) > noteReplyLimit {
-			fail(w, http.StatusBadRequest, "Note content cannot exceed 2000 UTF-16 units for bot replies.")
-			return
-		}
 		var name, shortDesc string
 		name, shortDesc, _, err = cmd.ValidateNote(input.Name, input.ShortDesc, input.Content)
 		if err == nil {
@@ -508,16 +489,12 @@ func (h *Handler) mutate(w http.ResponseWriter, r *http.Request, s session) {
 			fail(w, http.StatusInternalServerError, "Unable to save shared memory.")
 			return
 		}
-	case "/api/channels/add", "/api/channels/remove", "/api/admins/add", "/api/admins/remove":
+	case "/api/admins/add", "/api/admins/remove":
 		if !validSnowflake(input.ID) {
 			fail(w, http.StatusBadRequest, "A valid nonzero Discord snowflake ID is required.")
 			return
 		}
 		switch r.URL.Path {
-		case "/api/channels/add":
-			err = h.db.AddExcludedChannel(h.cfg.DiscordGuildID, input.ID)
-		case "/api/channels/remove":
-			err = h.db.RemoveExcludedChannel(h.cfg.DiscordGuildID, input.ID)
 		case "/api/admins/add":
 			err = h.db.AddAdmin("discord", input.ID, s.id)
 		case "/api/admins/remove":

@@ -21,7 +21,7 @@ import (
 
 const permanentID = "100000000000000001"
 const regularID = "100000000000000002"
-const channelID = "100000000000000003"
+const otherID = "100000000000000003"
 
 func newTestHandler(t *testing.T, memory *cmd.GarminMemory) *Handler {
 	t.Helper()
@@ -260,12 +260,13 @@ func TestOAuthDoesNotFollowRedirects(t *testing.T) {
 func TestAuthenticationCSRFLogoutAndRevocation(t *testing.T) {
 	h := newTestHandler(t, nil)
 	checkStatus(t, request(t, h, http.MethodGet, "/api/state", "", nil, ""), http.StatusUnauthorized)
+	checkStatus(t, request(t, h, http.MethodPost, "/api/notes/delete", `{"name":"draft"}`, nil, ""), http.StatusUnauthorized)
 	if err := h.db.AddAdmin("discord", regularID, permanentID); err != nil {
 		t.Fatal(err)
 	}
 	cookie, csrf := seedSession(t, h, regularID)
-	for _, path := range []string{"/auth/logout", "/api/channels/add"} {
-		checkStatus(t, request(t, h, http.MethodPost, path, `{"id":"`+channelID+`"}`, cookie, ""), http.StatusForbidden)
+	for _, path := range []string{"/auth/logout", "/api/notes/delete"} {
+		checkStatus(t, request(t, h, http.MethodPost, path, `{"name":"draft"}`, cookie, ""), http.StatusForbidden)
 		checkStatus(t, request(t, h, http.MethodPost, path, `{}`, cookie, "wrong"), http.StatusForbidden)
 	}
 	checkStatus(t, request(t, h, http.MethodPost, "/auth/logout", strings.Repeat("x", maxBody+1), cookie, csrf), http.StatusRequestEntityTooLarge)
@@ -275,7 +276,7 @@ func TestAuthenticationCSRFLogoutAndRevocation(t *testing.T) {
 	if err := h.db.RemoveAdmin("discord", regularID); err != nil {
 		t.Fatal(err)
 	}
-	checkStatus(t, request(t, h, http.MethodPost, "/api/channels/add", `{"id":"`+channelID+`"}`, cookie, csrf), http.StatusForbidden)
+	checkStatus(t, request(t, h, http.MethodPost, "/api/notes/delete", `{"name":"draft"}`, cookie, csrf), http.StatusForbidden)
 	checkStatus(t, request(t, h, http.MethodGet, "/api/state", "", cookie, ""), http.StatusUnauthorized)
 	cookie, _ = seedSession(t, h, permanentID)
 	s := h.sessions[cookie.Value]
@@ -292,7 +293,7 @@ func readState(t *testing.T, h *Handler, cookie *http.Cookie) stateResponse {
 	if err := json.Unmarshal(w.Body.Bytes(), &state); err != nil {
 		t.Fatal(err)
 	}
-	if state.Notes == nil || state.ExcludedChannels == nil || state.Admins == nil {
+	if state.Notes == nil || state.Admins == nil {
 		t.Fatal("state contains null arrays")
 	}
 	if strings.Contains(w.Body.String(), "private-client-secret") {
@@ -301,7 +302,7 @@ func readState(t *testing.T, h *Handler, cookie *http.Cookie) stateResponse {
 	return state
 }
 
-func TestPermanentAdminControlsAndChannelScope(t *testing.T) {
+func TestPermanentAdminControls(t *testing.T) {
 	h := newTestHandler(t, nil)
 	permanent, permanentCSRF := seedSession(t, h, permanentID)
 	regular, regularCSRF := seedSession(t, h, regularID)
@@ -310,7 +311,7 @@ func TestPermanentAdminControlsAndChannelScope(t *testing.T) {
 		t.Fatal("admin mutation affected the wrong platform")
 	}
 	for _, path := range []string{"/api/admins/add", "/api/admins/remove"} {
-		checkStatus(t, request(t, h, http.MethodPost, path, `{"id":"`+channelID+`"}`, regular, regularCSRF), http.StatusForbidden)
+		checkStatus(t, request(t, h, http.MethodPost, path, `{"id":"`+otherID+`"}`, regular, regularCSRF), http.StatusForbidden)
 	}
 	checkStatus(t, request(t, h, http.MethodPost, "/api/admins/remove", `{"id":"`+permanentID+`"}`, permanent, permanentCSRF), http.StatusForbidden)
 	if err := h.db.AddAdmin("discord", permanentID, permanentID); err != nil {
@@ -323,17 +324,6 @@ func TestPermanentAdminControlsAndChannelScope(t *testing.T) {
 	if state := readState(t, h, regular); state.User.Permanent || len(state.Admins) != 0 {
 		t.Fatal("regular admins can see admin management data")
 	}
-	checkStatus(t, request(t, h, http.MethodPost, "/api/channels/add", `{"id":"`+channelID+`"}`, regular, regularCSRF), http.StatusOK)
-	if excluded, err := h.db.IsChannelExcluded(h.cfg.DiscordGuildID, channelID); err != nil || !excluded {
-		t.Fatalf("channel mutation not visible in bot DB: %v, %v", excluded, err)
-	}
-	if excluded, err := h.db.IsChannelExcluded("another-guild", channelID); err != nil || excluded {
-		t.Fatal("channel mutation escaped configured guild")
-	}
-	if state := readState(t, h, regular); len(state.ExcludedChannels) != 1 || state.ExcludedChannels[0] != channelID {
-		t.Fatal("channel state not updated")
-	}
-	checkStatus(t, request(t, h, http.MethodPost, "/api/channels/remove", `{"id":"`+channelID+`"}`, regular, regularCSRF), http.StatusOK)
 	checkStatus(t, request(t, h, http.MethodPost, "/api/admins/remove", `{"id":"`+regularID+`"}`, permanent, permanentCSRF), http.StatusOK)
 	checkStatus(t, request(t, h, http.MethodGet, "/api/state", "", regular, ""), http.StatusForbidden)
 }
@@ -411,42 +401,59 @@ func TestNoteCreateAndEditPreserveRawContent(t *testing.T) {
 	}
 }
 
-func TestNotesRespectBotReplyLimit(t *testing.T) {
-	h := newTestHandler(t, nil)
-	cookie, csrf := seedSession(t, h, permanentID)
-	for _, test := range []struct {
-		name, content string
-		status        int
-	}{
-		{"ascii-limit", strings.Repeat("a", 2000), http.StatusOK},
-		{"ascii-over", strings.Repeat("a", 2001), http.StatusBadRequest},
-		{"ten-kib", strings.Repeat("a", 10*1024), http.StatusBadRequest},
-		{"bmp-limit", strings.Repeat("界", 2000), http.StatusOK},
-		{"surrogate-limit", strings.Repeat("\U0001d11e", 1000), http.StatusOK},
-		{"surrogate-over", strings.Repeat("\U0001d11e", 1001), http.StatusBadRequest},
-		{"escapes-limit", "x" + strings.Repeat(`\n`, 999) + "y", http.StatusOK},
-		{"escapes-over", "x" + strings.Repeat(`\n`, 1000), http.StatusBadRequest},
+func TestLongNotesRawRoundtripAndDescriptionOnlyEdit(t *testing.T) {
+	for _, test := range []struct{ name, content string }{
+		{"kmp", "  ## What is KMP?\r\n" + strings.Repeat("Kotlin Multiplatform shares application logic.\r\n", 40) +
+			"\r\n## When will it be released?\r\n" + strings.Repeat("Follow the project for updates.\r\n", 40) + `Literal\ntext\r\n` + "  \r\n"},
+		{"raw-multiline", "  " + strings.Repeat("first\\nsecond\\r\\nthird\r\nfourth\rlast\n", 300) + "  "},
+		{"ordinary-unicode", strings.Repeat("\U0001d11e", 1001)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			body, _ := json.Marshal(mutation{Name: test.name, ShortDesc: "Description", Content: test.content})
-			checkStatus(t, request(t, h, http.MethodPost, "/api/notes/create", string(body), cookie, csrf), test.status)
-			if test.status == http.StatusBadRequest {
-				if stored, err := h.db.GetNote(test.name); err != nil || stored != "" {
-					t.Fatalf("oversized note was created: %q, %v", stored, err)
-				}
-				if err := h.db.AddNote(test.name, "Original", "original content"); err != nil {
-					t.Fatal(err)
-				}
+			h := newTestHandler(t, nil)
+			if err := h.db.AddAdmin("discord", regularID, permanentID); err != nil {
+				t.Fatal(err)
 			}
-			checkStatus(t, request(t, h, http.MethodPost, "/api/notes/edit", string(body), cookie, csrf), test.status)
-			want := test.content
-			if test.status == http.StatusBadRequest {
-				want = "original content"
+			cookie, csrf := seedSession(t, h, regularID)
+			input := mutation{Name: test.name, ShortDesc: "Original", Content: test.content}
+			body, _ := json.Marshal(input)
+			checkStatus(t, request(t, h, http.MethodPost, "/api/notes/create", string(body), cookie, csrf), http.StatusOK)
+			state := readState(t, h, cookie)
+			if len(state.Notes) != 1 || state.Notes[0].Content != test.content {
+				t.Fatal("long note did not roundtrip raw content")
 			}
-			if stored, err := h.db.GetNote(test.name); err != nil || stored != want {
-				t.Fatalf("unexpected stored content: %q, %v", stored, err)
+			input.Content = state.Notes[0].Content
+			input.ShortDesc = "Updated description"
+			body, _ = json.Marshal(input)
+			checkStatus(t, request(t, h, http.MethodPost, "/api/notes/edit", string(body), cookie, csrf), http.StatusOK)
+			if stored, err := h.db.GetNote(test.name); err != nil || stored != test.content {
+				t.Fatalf("description-only edit changed long note: %v", err)
+			}
+			state = readState(t, h, cookie)
+			if state.Notes[0].ShortDesc != input.ShortDesc || state.Notes[0].Content != test.content {
+				t.Fatal("description-only edit did not roundtrip long note")
 			}
 		})
+	}
+}
+
+func TestNotesRespectRequestBodyLimit(t *testing.T) {
+	h := newTestHandler(t, nil)
+	cookie, csrf := seedSession(t, h, permanentID)
+	input := mutation{Name: "large", ShortDesc: "Original", Content: strings.Repeat("a", maxBody-1024)}
+	body, _ := json.Marshal(input)
+	checkStatus(t, request(t, h, http.MethodPost, "/api/notes/create", string(body), cookie, csrf), http.StatusOK)
+	original := input.Content
+	input.Content = strings.Repeat("a", maxBody)
+	body, _ = json.Marshal(input)
+	checkStatus(t, request(t, h, http.MethodPost, "/api/notes/edit", string(body), cookie, csrf), http.StatusBadRequest)
+	if stored, err := h.db.GetNote(input.Name); err != nil || stored != original {
+		t.Fatalf("oversized request changed existing note: %v", err)
+	}
+	input.Name = "too-large"
+	body, _ = json.Marshal(input)
+	checkStatus(t, request(t, h, http.MethodPost, "/api/notes/create", string(body), cookie, csrf), http.StatusBadRequest)
+	if stored, err := h.db.GetNote(input.Name); err != nil || stored != "" {
+		t.Fatalf("oversized request created a note: %v", err)
 	}
 }
 
@@ -457,7 +464,10 @@ func TestMemorySharedInstanceLimitsAndErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := newTestHandler(t, memory)
-	cookie, csrf := seedSession(t, h, permanentID)
+	if err := h.db.AddAdmin("discord", regularID, permanentID); err != nil {
+		t.Fatal(err)
+	}
+	cookie, csrf := seedSession(t, h, regularID)
 	checkStatus(t, request(t, h, http.MethodPost, "/api/memory/replace", `{"content":"Shared facts <script>"}`, cookie, csrf), http.StatusOK)
 	if got, err := memory.Read(); err != nil || got != "Shared facts <script>" {
 		t.Fatalf("bot memory not updated: %q, %v", got, err)
@@ -506,12 +516,12 @@ func TestRequestLimitsIDsAndSecurityHeaders(t *testing.T) {
 	cookie, csrf := seedSession(t, h, permanentID)
 	for _, id := range []string{"", "0", "01", "-1", "+1", " 1", "1.5", "18446744073709551616", "<script>"} {
 		body, _ := json.Marshal(mutation{ID: id})
-		for _, path := range []string{"/api/channels/add", "/api/channels/remove", "/api/admins/add", "/api/admins/remove"} {
+		for _, path := range []string{"/api/admins/add", "/api/admins/remove"} {
 			checkStatus(t, request(t, h, http.MethodPost, path, string(body), cookie, csrf), http.StatusBadRequest)
 		}
 	}
-	for _, body := range []string{`{`, `null`, `[]`, `{} {}`, `{"unexpected":true}`, `{"id":"` + strings.Repeat("1", maxBody) + `"}`} {
-		checkStatus(t, request(t, h, http.MethodPost, "/api/channels/add", body, cookie, csrf), http.StatusBadRequest)
+	for _, body := range []string{`{`, `null`, `[]`, `{} {}`, `{"unexpected":true}`, `{"name":"` + strings.Repeat("a", maxBody) + `"}`} {
+		checkStatus(t, request(t, h, http.MethodPost, "/api/notes/delete", body, cookie, csrf), http.StatusBadRequest)
 	}
 	for _, path := range []string{"/api/state", "/auth/login", "/"} {
 		w := request(t, h, http.MethodGet, path, "", cookie, "")
@@ -538,6 +548,27 @@ func TestRequestLimitsIDsAndSecurityHeaders(t *testing.T) {
 	h.setCookie(w, sessionCookie, "session", sessionTTL)
 	if !w.Result().Cookies()[0].Secure {
 		t.Fatal("HTTPS cookie is not secure")
+	}
+}
+
+func TestEmbeddedAssetRoutes(t *testing.T) {
+	h := newTestHandler(t, nil)
+	for _, test := range []struct{ path, file, contentType string }{
+		{"/", "index.html", "text/html"},
+		{"/app.js", "app.js", "text/javascript"},
+		{"/style.css", "style.css", "text/css"},
+	} {
+		t.Run(test.path, func(t *testing.T) {
+			w := request(t, h, http.MethodGet, test.path, "", nil, "")
+			checkStatus(t, w, http.StatusOK)
+			want, err := assets.ReadFile("static/" + test.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(want) == 0 || w.Body.String() != string(want) || !strings.HasPrefix(w.Header().Get("Content-Type"), test.contentType) {
+				t.Fatalf("route %s did not serve its embedded asset with the expected content type", test.path)
+			}
+		})
 	}
 }
 
