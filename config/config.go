@@ -3,18 +3,73 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 )
 
+type DashboardConfig struct {
+	Enabled       bool   `json:"enabled"`
+	ListenAddress string `json:"listen_address"`
+	BaseURL       string `json:"base_url"`
+	ClientID      string `json:"client_id"`
+	ClientSecret  string `json:"client_secret"`
+}
+
+// Validate keeps HTTP cookies restricted to a loopback-only local setup.
+func (d *DashboardConfig) Validate() error {
+	if !d.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(d.ClientID) == "" || strings.TrimSpace(d.ClientSecret) == "" {
+		return fmt.Errorf("dashboard requires client_id and client_secret")
+	}
+	u, err := url.Parse(d.BaseURL)
+	if err != nil || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(d.BaseURL, "#") || u.Opaque != "" {
+		return fmt.Errorf("dashboard base_url must be an origin without path, query, fragment or userinfo")
+	}
+	if u.Scheme != "https" && (u.Scheme != "http" || !isLoopback(u.Hostname())) {
+		return fmt.Errorf("dashboard base_url requires HTTPS except on loopback")
+	}
+	if strings.HasSuffix(u.Host, ":") {
+		return fmt.Errorf("dashboard base_url has an invalid port")
+	}
+	if port := u.Port(); port != "" {
+		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("dashboard base_url has an invalid port")
+		}
+	}
+	if d.ListenAddress == "" {
+		d.ListenAddress = "127.0.0.1:8080"
+	}
+	host, port, err := net.SplitHostPort(d.ListenAddress)
+	if err != nil {
+		return fmt.Errorf("dashboard listen_address must be host:port")
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("dashboard listen_address has an invalid port")
+	}
+	if u.Scheme == "http" && !isLoopback(host) {
+		return fmt.Errorf("HTTP dashboard listen_address must be loopback")
+	}
+	return nil
+}
+
+func isLoopback(host string) bool {
+	return strings.EqualFold(host, "localhost") || net.ParseIP(host).IsLoopback()
+}
+
 type Config struct {
-	DiscordToken      string   `json:"discord_token"`
-	TelegramToken     string   `json:"telegram_token"`
-	GitHubToken       string   `json:"github_token"`
-	OpenRouterAPIKeys []string `json:"openrouter_api_keys"`
-	OpenRouterModel   string   `json:"openrouter_model"`
-	FirecrawlAPIKeys  []string `json:"firecrawl_api_keys"`
-	GarminMemoryFile  string   `json:"garmin_memory_file"`
+	Dashboard         DashboardConfig `json:"dashboard"`
+	DiscordToken      string          `json:"discord_token"`
+	TelegramToken     string          `json:"telegram_token"`
+	GitHubToken       string          `json:"github_token"`
+	OpenRouterAPIKeys []string        `json:"openrouter_api_keys"`
+	OpenRouterModel   string          `json:"openrouter_model"`
+	FirecrawlAPIKeys  []string        `json:"firecrawl_api_keys"`
+	GarminMemoryFile  string          `json:"garmin_memory_file"`
 
 	DiscordGuildID string `json:"discord_guild_id"`
 	TelegramChatID int64  `json:"telegram_chat_id"`
@@ -102,7 +157,7 @@ func (c *Config) validate() error {
 		}
 	}
 
-	return nil
+	return c.Dashboard.Validate()
 }
 
 // GetPermaAdminIDs implements db.PermaAdminProvider.

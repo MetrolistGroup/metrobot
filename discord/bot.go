@@ -154,6 +154,11 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 	return b, nil
 }
 
+// GarminMemory returns the same shared memory used by the bot, or nil when AI is disabled.
+func (b *Bot) GarminMemory() *cmd.GarminMemory {
+	return b.garminMemory
+}
+
 func (b *Bot) Start() error {
 	ctx, cancel := context.WithTimeout(b.lifecycle, 30*time.Second)
 	defer cancel()
