@@ -50,8 +50,18 @@ func (d *DB) migrateNoteMarkup() error {
 			return err
 		}
 		// Leave invalid legacy bytes intact; JSON marshaling would silently replace them.
-		if !utf8.ValidString(content) || notefmt.HasDirectives(notefmt.Normalize(content)) || strings.TrimSpace(content) == "" {
+		if !utf8.ValidString(content) || strings.TrimSpace(content) == "" {
 			continue
+		}
+		if notefmt.HasDirectives(notefmt.Normalize(content)) {
+			// A legacy FAQ can teach directive syntax without activating its examples.
+			candidate, err := notefmt.Parse(notefmt.Fence("faq", content))
+			if err != nil {
+				return err
+			}
+			if name != "kmp" || len(candidate.Render().FAQ.Items) == 0 {
+				continue
+			}
 		}
 		migrated := content
 		if name == "kmp" {

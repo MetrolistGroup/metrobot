@@ -106,7 +106,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.URL.Path {
-	case "/", "/app.js", "/style.css":
+	case "/", "/app.js", "/style.css", "/beer.min.css", "/prism.min.js", "/editors.js", "/archives.js":
 		if method(w, r, http.MethodGet) {
 			h.static.ServeHTTP(w, r)
 		}

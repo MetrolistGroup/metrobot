@@ -158,8 +158,10 @@ notes and records `note_markup_v1` in the `migrations` table:
   JSON random group, using the former retrieval's newline normalization. Blank
   lines attach to a neighboring entry; rendered text and JSON escaping are preserved. A note without nonempty remaining entries stays literal.
 - Existing `kmp`: wrap the complete original Markdown in a safely sized FAQ fence.
-- Existing `donate`/`kmp` bodies that already contain top-level directive fences
-  are left unchanged, without double-wrapping, and marked as literal Markdown.
+- A legacy `kmp` FAQ with top-level questions and directive examples is wrapped
+  in a longer FAQ fence so its examples stay literal and the question menu survives.
+  Other existing `donate`/`kmp` bodies containing top-level directive fences are
+  left unchanged and marked as literal Markdown.
   Valid JSON alone cannot establish whether a legacy fence was authored markup
   or an example; a validated edit explicitly activates its markup.
 - All other legacy bodies are unchanged and marked as literal Markdown using

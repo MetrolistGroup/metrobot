@@ -557,6 +557,10 @@ func TestEmbeddedAssetRoutes(t *testing.T) {
 		{"/", "index.html", "text/html"},
 		{"/app.js", "app.js", "text/javascript"},
 		{"/style.css", "style.css", "text/css"},
+		{"/beer.min.css", "beer.min.css", "text/css"},
+		{"/prism.min.js", "prism.min.js", "text/javascript"},
+		{"/editors.js", "editors.js", "text/javascript"},
+		{"/archives.js", "archives.js", "text/javascript"},
 	} {
 		t.Run(test.path, func(t *testing.T) {
 			w := request(t, h, http.MethodGet, test.path, "", nil, "")

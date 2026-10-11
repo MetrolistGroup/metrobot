@@ -6,9 +6,10 @@ import (
 	"time"
 )
 
-// CaseSearch uses an exclusive upper timestamp and case-number cursor. Zero bounds are omitted.
+// CaseSearch uses an exclusive upper timestamp and case-number cursor.
 type CaseSearch struct {
 	From, Until time.Time
+	FromSet     bool // Distinguishes the valid date 0001-01-01 from an omitted bound.
 	Text        string
 	Before      int64
 }
@@ -17,7 +18,7 @@ type CaseSearch struct {
 func (d *DB) SearchCases(ctx context.Context, filter CaseSearch) ([]Case, string, error) {
 	query := `SELECT id, case_number, action_type, platform, target_id, moderator_id, COALESCE(reason, ''), timestamp FROM cases WHERE 1=1`
 	args := []any{}
-	if !filter.From.IsZero() {
+	if filter.FromSet || !filter.From.IsZero() {
 		query += ` AND timestamp >= ?`
 		args = append(args, filter.From.Unix())
 	}

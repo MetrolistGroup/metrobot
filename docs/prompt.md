@@ -1,6 +1,6 @@
 # Live Garmin base system prompt
 
-The backend supports live prompt editing through the authenticated dashboard API below. A browser prompt editor still needs frontend integration; the current dashboard has no prompt editing controls. Sign in as a Discord user listed in `permaadmin_discord_ids`, following the dashboard OAuth and loopback setup in [README.md](../README.md#local-admin-dashboard). Ordinary bot admins can sign in but cannot read or change this prompt. No new configuration fields or credentials are needed.
+Open **System prompt** in the dashboard to edit Garmin's live base instructions or reset them to the bundled default. Sign in as a Discord user listed in `permaadmin_discord_ids`, following the dashboard OAuth and loopback setup in [README.md](../README.md#local-admin-dashboard). Ordinary bot admins can sign in but cannot read or change this prompt. No new configuration fields or credentials are needed.
 
 Saving replaces the **base** system prompt for subsequent Garmin agent requests without rebuilding or restarting. The override is stored in the bot's existing SQLite database under one setting, `garmin_base_system_prompt`, and survives restart. Reset deletes that setting and restores the current built-in `cmd.GarminSystemPrompt()`. Back up the database to preserve an override. Concurrent saves are last-write-wins; reload before editing if another permanent admin may have changed it. Already running requests retain the prompt they started with.
 
@@ -12,7 +12,7 @@ A replacement replaces the whole base, rather than adding to the built-in text. 
 
 ## API
 
-`/api/state` is unchanged and does not include prompt content. Frontend integration should fetch `/api/prompt` lazily when opening the editor.
+`/api/state` is unchanged and does not include prompt content. The dashboard fetches `/api/prompt` lazily when opening the editor.
 
 - `GET /api/prompt` returns `{ "content": "effective base", "default_content": "built-in base", "overridden": false }`. `overridden` reports whether a stored override exists, even if its content equals the default.
 - `POST /api/prompt/replace` accepts `{ "content": "new base" }` and returns `{ "ok": true }`.

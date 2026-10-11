@@ -13,6 +13,7 @@ import (
 
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/snowflake/v2"
+	"golang.org/x/text/cases"
 )
 
 var (
@@ -124,7 +125,8 @@ func (s *Service) Search(ctx context.Context, q Query) (Result, error) {
 	// Reserve time to return the page and cursor even when attachment downloads stall.
 	attachmentCtx, cancelAttachments := context.WithDeadline(ctx, deadline.Add(-3*time.Second))
 	defer cancelAttachments()
-	needle := strings.ToLower(q.Text)
+	fold := cases.Fold()
+	needle := fold.String(q.Text)
 	partial := false
 	warn := func(message string) {
 		partial = true
@@ -223,7 +225,7 @@ func (s *Service) Search(ctx context.Context, q Query) (Result, error) {
 			if err := ctx.Err(); err != nil {
 				return result, err
 			}
-			if strings.Contains(strings.ToLower(content), needle) {
+			if strings.Contains(fold.String(content), needle) {
 				result.Items = append(result.Items, Item{ID: message.ID.String(), Timestamp: message.CreatedAt.UTC().Format(time.RFC3339Nano), Source: q.Source, Content: content, URL: fmt.Sprintf("https://discord.com/channels/%s/%s/%s", channel.GuildID, channel.ID, message.ID), Attachments: attachments})
 			}
 			if len(result.Items) == PageSize || attachmentTimeExpired {

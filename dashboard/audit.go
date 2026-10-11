@@ -131,7 +131,7 @@ func (h *Handler) cases(w http.ResponseWriter, r *http.Request, values url.Value
 		}
 		before = n
 	}
-	items, next, err := h.db.SearchCases(r.Context(), db.CaseSearch{From: from, Until: until, Text: values.Get("q"), Before: before})
+	items, next, err := h.db.SearchCases(r.Context(), db.CaseSearch{From: from, FromSet: values.Has("from"), Until: until, Text: values.Get("q"), Before: before})
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Unable to read stored cases.")
 		return

@@ -2,7 +2,9 @@ package discord
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"unicode/utf16"
@@ -12,6 +14,7 @@ import (
 	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/events"
+	"github.com/disgoorg/disgo/rest"
 	"go.uber.org/zap"
 )
 
@@ -144,11 +147,19 @@ func (b *Bot) sendNoteReply(s *bot.Client, channelID, messageID, name string, no
 		if err == nil {
 			return reply
 		}
-		if attempt == attempts-1 {
+		if !noteRequestRejected(err) || attempt == attempts-1 {
 			b.Logger.Error("failed to send note", zap.Error(err))
+			return nil
 		}
 	}
 	return nil
+}
+
+// A transport failure may follow a successful send; only retry confirmed rejections.
+func noteRequestRejected(err error) bool {
+	var rejected *rest.Error
+	return errors.As(err, &rejected) && rejected.Response != nil &&
+		(rejected.Response.StatusCode == http.StatusBadRequest || rejected.Response.StatusCode == http.StatusNotFound)
 }
 
 func (b *Bot) respondNote(s *bot.Client, i *events.ApplicationCommandInteractionCreate, name string, note notefmt.Rendered, ephemeral bool) {
@@ -160,7 +171,7 @@ func (b *Bot) respondNote(s *bot.Client, i *events.ApplicationCommandInteraction
 		message.Flags |= discord.MessageFlagEphemeral
 	}
 	err := s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{Type: discord.InteractionResponseTypeCreateMessage, Data: message})
-	if err != nil && message.Flags.Has(discord.MessageFlagIsComponentsV2) {
+	if noteRequestRejected(err) && message.Flags.Has(discord.MessageFlagIsComponentsV2) {
 		fallback := newDiscordNoteMessage(note.Text, "")
 		fallback.AllowedMentions = message.AllowedMentions
 		if ephemeral {

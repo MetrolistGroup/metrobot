@@ -2,7 +2,7 @@
 
 const archives = {
   cases: { sequence: 0, controller: null, cursor: "", loaded: false, loading: false, count: 0, ids: new Set() },
-  logs: { sequence: 0, controller: null, cursor: "", loaded: false, loading: false, count: 0, ids: new Set(), scanned: 0, warnings: new Set() },
+  logs: { sequence: 0, controller: null, cursor: "", loaded: false, loading: false, count: 0, ids: new Set(), scanned: 0, partial: false, warnings: new Set() },
 };
 
 function updateArchiveControls() {
@@ -25,6 +25,7 @@ function clearArchive(kind, message) {
   $(`${kind}-status`).textContent = message;
   if (kind === "logs") {
     view.scanned = 0;
+    view.partial = false;
     view.warnings.clear();
     $("logs-warnings").replaceChildren();
   }
@@ -142,7 +143,8 @@ async function loadArchive(kind, more = false) {
         $("logs-warnings").append(item);
       });
       const progress = `${view.scanned.toLocaleString()} messages scanned.`;
-      const complete = page.complete && !view.cursor;
+      view.partial ||= page.warnings.some((warning) => warning.startsWith("Partial search:")) || (!page.complete && !view.cursor);
+      const complete = page.complete && !view.cursor && !view.partial;
       $("logs-status").textContent = view.count
         ? `${view.count.toLocaleString()} matching logs. ${progress} ${complete ? "Search complete." : view.cursor ? "More history remains; continue search." : "Search incomplete; see warnings or retry."}`
         : `${complete ? "No logs match these dates and text." : "No matches yet in the portion scanned."} ${progress} ${!complete ? (view.cursor ? "More history remains; continue search." : "Search incomplete; see warnings or retry.") : "Search complete."}`;
