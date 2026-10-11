@@ -164,7 +164,10 @@ func (d *DB) migrate() error {
 		}
 	}
 
-	return d.migrateNoteMarkup()
+	if err := d.migrateNoteMarkup(); err != nil {
+		return err
+	}
+	return d.migrateSettings()
 }
 
 // --- GSMArena cache ---

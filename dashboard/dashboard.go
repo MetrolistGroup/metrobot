@@ -135,8 +135,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				h.state(w, s)
 			}
 		}
+	case "/api/prompt":
+		if method(w, r, http.MethodGet) {
+			if s, ok := h.authenticate(w, r); ok {
+				h.prompt(w, r, s)
+			}
+		}
 	case "/auth/logout", "/api/notes/create", "/api/notes/edit", "/api/notes/rename", "/api/notes/delete",
-		"/api/memory/replace", "/api/memory/clear", "/api/admins/add", "/api/admins/remove":
+		"/api/memory/replace", "/api/memory/clear", "/api/admins/add", "/api/admins/remove",
+		"/api/prompt/replace", "/api/prompt/reset":
 		if !method(w, r, http.MethodPost) {
 			return
 		}
@@ -448,6 +455,10 @@ type mutation struct {
 }
 
 func (h *Handler) mutate(w http.ResponseWriter, r *http.Request, s session) {
+	if r.URL.Path == "/api/prompt/replace" || r.URL.Path == "/api/prompt/reset" {
+		h.prompt(w, r, s)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/admins/") && !h.db.IsPermaAdmin("discord", s.id, h.cfg) {
 		fail(w, http.StatusForbidden, "Only permanent admins may manage bot admins.")
 		return
