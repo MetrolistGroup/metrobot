@@ -1411,7 +1411,7 @@ func (b *Bot) onGuildMemberUpdate(s *bot.Client, m *events.GuildMemberUpdate) {
 	if before.User.ID != 0 && !slices.Contains(before.RoleIDs, snowflakeID(donorRoleID)) && slices.Contains(member.RoleIDs, snowflakeID(donorRoleID)) {
 		b.sendDonorWelcome(s, member.User.ID.String())
 	}
-	if before.User.ID == 0 || value(before.Nick) == value(member.Nick) {
+	if before.User.ID != 0 && value(before.Nick) == value(member.Nick) {
 		return
 	}
 	approved, err := b.DB.ConsumeNicknameApproval(m.GuildID.String(), member.User.ID.String())

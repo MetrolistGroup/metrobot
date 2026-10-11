@@ -55,6 +55,48 @@ func TestApprovedNicknameChangePersistsAndIsConsumedOnlyByNicknameUpdate(t *test
 	}
 }
 
+func TestUncachedMemberUpdateStillDehoists(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	client := mustTestClient(t)
+	client.Caches.SetSelfUser(discord.OAuth2User{User: discord.User{ID: 900}})
+	var nickname string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/v10/guilds/300/members/900":
+			_, _ = w.Write([]byte(`{"user":{"id":"900","bot":true},"roles":["500"]}`))
+		case "GET /api/v10/guilds/300/members/400":
+			_, _ = w.Write([]byte(`{"user":{"id":"400","username":"alice"},"nick":"!!!alice","roles":[]}`))
+		case "GET /api/v10/guilds/300":
+			_, _ = w.Write([]byte(`{"id":"300","owner_id":"999","roles":[{"id":"300","position":0,"permissions":"0"},{"id":"500","position":5,"permissions":"134217728"}]}`))
+		case "PATCH /api/v10/guilds/300/members/400":
+			var update discord.MemberUpdate
+			if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+				t.Error(err)
+			}
+			nickname = value(update.Nick)
+			_, _ = w.Write([]byte(`{"user":{"id":"400"}}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client.Rest = testREST(server.Client())
+	client.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: client.Rest.HTTPClient().Transport, target: server.URL}
+	b := &Bot{Client: client, Config: &config.Config{DiscordGuildID: "300"}, DB: database, Logger: zap.NewNop(), Moderation: &cmd.ModerationHandler{DB: database}}
+	b.onGuildMemberUpdate(client, &events.GuildMemberUpdate{GenericGuildMember: &events.GenericGuildMember{
+		GuildID: 300, Member: discord.Member{GuildID: 300, User: discord.User{ID: 400}, Nick: ptr("!!!alice")},
+	}})
+	if nickname != "alice" {
+		t.Fatalf("uncached member was not dehoisted: nickname = %q", nickname)
+	}
+}
+
 func TestBlockedGuildTagBansMemberOnJoinAndUpdate(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
