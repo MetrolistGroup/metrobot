@@ -25,13 +25,12 @@ func respondEphemeral(s *bot.Client, i discord.Interaction, content string) {
 }
 
 func respondEphemeralAllowEmbeds(s *bot.Client, i discord.Interaction, content string) {
+	message := newDiscordNoteMessage(content, "")
+	message.Flags = discord.MessageFlagEphemeral
+	message.AllowedMentions = &discord.AllowedMentions{Parse: []discord.AllowedMentionType{discord.AllowedMentionTypeUsers}}
 	s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{
 		Type: discord.InteractionResponseTypeCreateMessage,
-		Data: discord.MessageCreate{
-			Content:         content,
-			Flags:           discord.MessageFlagEphemeral,
-			AllowedMentions: &discord.AllowedMentions{Parse: []discord.AllowedMentionType{discord.AllowedMentionTypeUsers}},
-		},
+		Data: message,
 	})
 }
 
@@ -54,12 +53,11 @@ func noPingMessage(content string) *discord.MessageCreate {
 }
 
 func respondPublicAllowEmbeds(s *bot.Client, i discord.Interaction, content string) {
+	message := newDiscordNoteMessage(content, "")
+	message.AllowedMentions = &discord.AllowedMentions{Parse: []discord.AllowedMentionType{discord.AllowedMentionTypeUsers}}
 	s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{
 		Type: discord.InteractionResponseTypeCreateMessage,
-		Data: discord.MessageCreate{
-			Content:         content,
-			AllowedMentions: &discord.AllowedMentions{Parse: []discord.AllowedMentionType{discord.AllowedMentionTypeUsers}},
-		},
+		Data: message,
 	})
 }
 
@@ -127,12 +125,9 @@ func sendReply(s *bot.Client, channelID, messageID, content string, autoDelete b
 }
 
 func sendReplyAllowEmbeds(s *bot.Client, channelID, messageID, content string, autoDelete bool, logger *zap.Logger) {
-	msg, err := s.Rest.CreateMessage(snowflakeID(channelID), discord.MessageCreate{
-		Content: content,
-		MessageReference: &discord.MessageReference{
-			MessageID: snowflakePtr(messageID),
-		},
-	})
+	message := newDiscordNoteMessage(content, "")
+	message.MessageReference = &discord.MessageReference{MessageID: snowflakePtr(messageID)}
+	msg, err := s.Rest.CreateMessage(snowflakeID(channelID), message)
 	if err != nil {
 		logger.Error("failed to send reply", zap.Error(err))
 		return

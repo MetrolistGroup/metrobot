@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/MetrolistGroup/metrobot/util"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"go.uber.org/zap"
 )
@@ -29,19 +30,7 @@ func sendEphemeralReply(bot *tgbotapi.BotAPI, chatID int64, replyToMsgID int, te
 }
 
 func sendEphemeralNoteReply(bot *tgbotapi.BotAPI, chatID int64, replyToMsgID int, text string, stay bool, logger *zap.Logger) {
-	msg := newTelegramNoteMessage(chatID, text)
-	msg.ReplyToMessageID = replyToMsgID
-
-	sent, err := bot.Send(msg)
-	if err != nil {
-		logger.Error("failed to send telegram message", zap.Error(err))
-		return
-	}
-
-	if !stay {
-		scheduleDelete(bot, chatID, sent.MessageID, logger)
-		scheduleDelete(bot, chatID, replyToMsgID, logger)
-	}
+	sendPublicNoteReply(bot, chatID, replyToMsgID, text, !stay, logger)
 }
 
 func sendPublicReply(bot *tgbotapi.BotAPI, chatID int64, replyToMsgID int, text string, parseMode string, autoDelete bool, logger *zap.Logger) {
@@ -81,10 +70,7 @@ func newTelegramModerationMessage(chatID int64, text string) tgbotapi.MessageCon
 }
 
 func sendPublicNoteReply(bot *tgbotapi.BotAPI, chatID int64, replyToMsgID int, text string, autoDelete bool, logger *zap.Logger) {
-	msg := newTelegramNoteMessage(chatID, text)
-	msg.ReplyToMessageID = replyToMsgID
-
-	sent, err := bot.Send(msg)
+	sent, err := bot.Send(newTelegramNoteReply(chatID, replyToMsgID, text))
 	if err != nil {
 		logger.Error("failed to send telegram message", zap.Error(err))
 		return
@@ -94,6 +80,18 @@ func sendPublicNoteReply(bot *tgbotapi.BotAPI, chatID int64, replyToMsgID int, t
 		scheduleDelete(bot, chatID, sent.MessageID, logger)
 		scheduleDelete(bot, chatID, replyToMsgID, logger)
 	}
+}
+
+func newTelegramNoteReply(chatID int64, replyToMsgID int, text string) tgbotapi.Chattable {
+	msg := newTelegramNoteMessage(chatID, text)
+	msg.ReplyToMessageID = replyToMsgID
+	// Serialized HTML is a conservative bound without reparsing tags and entities.
+	if util.UTF16Len(text) > 4096 || util.UTF16Len(msg.Text) > 4096 {
+		document := tgbotapi.NewDocument(chatID, tgbotapi.FileBytes{Name: "note.md", Bytes: []byte(text)})
+		document.ReplyToMessageID = replyToMsgID
+		return document
+	}
+	return msg
 }
 
 func newTelegramNoteMessage(chatID int64, text string) tgbotapi.MessageConfig {

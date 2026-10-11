@@ -311,8 +311,8 @@ function validateNote() {
   const kmp = $("note-name").value.trim().toLowerCase() === "kmp";
   advisory.hidden = !kmp && noteValues().content.length <= 2000;
   advisory.textContent = kmp
-    ? "KMP uses the bot's existing paginated FAQ presentation for ## question headings (up to 25 questions). Individual answers still need to fit Discord's component limits; arbitrary content is not guaranteed to display."
-    : "This note exceeds 2,000 UTF-16 units. You can save it, but chat delivery may exceed Discord's message limit. Saving does not add pagination.";
+    ? "KMP uses the bot's existing paginated FAQ presentation for ## question headings (up to 25 questions). Oversized answers are delivered as the full note.md file instead."
+    : "Long notes are delivered as a full note.md file when they exceed Discord or Telegram message limits. Saving keeps the full content.";
 }
 
 function validateMemory() {

@@ -3,7 +3,9 @@ package discord
 import (
 	"strconv"
 	"strings"
+	"unicode/utf16"
 
+	"github.com/MetrolistGroup/metrobot/util"
 	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/events"
@@ -11,6 +13,30 @@ import (
 )
 
 const kmpNoteSelectCustomID = "note:kmp:question"
+const kmpNoteHeader = "# Metrolist-KMP FAQ\nChoose a question below."
+
+func newDiscordNoteMessage(content, prefix string) discord.MessageCreate {
+	message := discord.MessageCreate{Content: prefix + content}
+	if util.UTF16Len(message.Content) > 2000 {
+		message.Content = prefix
+		message.Files = []*discord.File{{Name: "note.md", Reader: strings.NewReader(content)}}
+	}
+	return message
+}
+
+func kmpNoteOptionText(text string) string {
+	if util.UTF16Len(text) <= 100 {
+		return text
+	}
+	units := 0
+	for index, r := range text {
+		units += utf16.RuneLen(r)
+		if units > 99 {
+			return text[:index] + "…"
+		}
+	}
+	return text
+}
 
 type noteFAQItem struct {
 	question string
@@ -48,16 +74,20 @@ func kmpNoteComponents(content string, selected int) ([]discord.LayoutComponent,
 	}
 	options := make([]discord.StringSelectMenuOption, len(items))
 	for index, item := range items {
+		// Check every answer before publishing a menu that could later fail on selection.
+		if util.UTF16Len(kmpNoteHeader+"## "+item.question+"\n"+item.answer) > 4000 {
+			return nil, false
+		}
 		description := strings.NewReplacer("*", "", "`", "").Replace(strings.Join(strings.Fields(item.answer), " "))
 		options[index] = discord.StringSelectMenuOption{
-			Label:       truncateRunes(item.question, 100),
+			Label:       kmpNoteOptionText(item.question),
 			Value:       strconv.Itoa(index),
-			Description: truncateRunes(description, 100),
+			Description: kmpNoteOptionText(description),
 			Default:     index == selected,
 		}
 	}
 	body := []discord.ContainerSubComponent{
-		discord.TextDisplayComponent{Content: "# Metrolist-KMP FAQ\nChoose a question below."},
+		discord.TextDisplayComponent{Content: kmpNoteHeader},
 	}
 	if selected >= 0 && selected < len(items) {
 		body = append(body,
@@ -140,9 +170,22 @@ func (b *Bot) handleKMPNoteComponent(s *bot.Client, i *events.ComponentInteracti
 		respondEphemeral(s, i, "The KMP note is unavailable right now.")
 		return true
 	}
+	if selected < 0 || selected >= len(noteFAQItems(content)) {
+		respondEphemeral(s, i, "That KMP question is unavailable.")
+		return true
+	}
 	components, ok := kmpNoteComponents(content, selected)
 	if !ok {
-		respondEphemeral(s, i, "That KMP question is unavailable.")
+		// Send a new response: an existing Components V2 message cannot become plain text.
+		message := newDiscordNoteMessage(content, "")
+		message.Flags = discord.MessageFlagEphemeral
+		message.AllowedMentions = &discord.AllowedMentions{}
+		if err := s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{
+			Type: discord.InteractionResponseTypeCreateMessage,
+			Data: message,
+		}); err != nil {
+			b.Logger.Error("failed to send updated KMP note", zap.Error(err))
+		}
 		return true
 	}
 	if err := s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{

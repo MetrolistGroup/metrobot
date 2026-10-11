@@ -1430,10 +1430,9 @@ func (b *Bot) sendDonorWelcome(s *bot.Client, userID string) {
 		b.Logger.Error("failed to load donor welcome note", zap.Error(err))
 		return
 	}
-	_, err = s.Rest.CreateMessage(snowflakeID(donorWelcomeChannelID), discord.MessageCreate{
-		Content:         fmt.Sprintf("<@%s>\n%s", userID, text),
-		AllowedMentions: &discord.AllowedMentions{Users: []snowflake.ID{snowflakeID(userID)}},
-	})
+	message := newDiscordNoteMessage(text, fmt.Sprintf("<@%s>\n", userID))
+	message.AllowedMentions = &discord.AllowedMentions{Users: []snowflake.ID{snowflakeID(userID)}}
+	_, err = s.Rest.CreateMessage(snowflakeID(donorWelcomeChannelID), message)
 	if err != nil {
 		b.Logger.Error("failed to send donor welcome", zap.String("userID", userID), zap.Error(err))
 	}
