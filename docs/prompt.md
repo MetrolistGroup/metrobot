@@ -1,18 +1,18 @@
 # Live Garmin base system prompt
 
-Use the optional local admin dashboard's prompt editor while signed in as a Discord user listed in `permaadmin_discord_ids`. Follow the dashboard OAuth and loopback setup in [README.md](../README.md#local-admin-dashboard). Ordinary bot admins can sign in but cannot read or change this prompt. No new configuration fields or credentials are needed.
+The backend supports live prompt editing through the authenticated dashboard API below. A browser prompt editor still needs frontend integration; the current dashboard has no prompt editing controls. Sign in as a Discord user listed in `permaadmin_discord_ids`, following the dashboard OAuth and loopback setup in [README.md](../README.md#local-admin-dashboard). Ordinary bot admins can sign in but cannot read or change this prompt. No new configuration fields or credentials are needed.
 
 Saving replaces the **base** system prompt for subsequent Garmin agent requests without rebuilding or restarting. The override is stored in the bot's existing SQLite database under one setting, `garmin_base_system_prompt`, and survives restart. Reset deletes that setting and restores the current built-in `cmd.GarminSystemPrompt()`. Back up the database to preserve an override. Concurrent saves are last-write-wins; reload before editing if another permanent admin may have changed it. Already running requests retain the prompt they started with.
 
 ## Scope
 
-The editor changes the base instructions used by `runGarminAIWithMode`, including the support agent after handoff. It does **not** edit the separate silent app-support triage prompt or the conversation summarization prompt. Runtime API model identity is still appended by the model client. Shared memory stays appended as lower-priority data, never instructions. Discord context, loaded skills, tool selection, and code-enforced tool authorization are unchanged. Editing this text cannot grant tool access or change credentials/model configuration.
+The override changes the base instructions used by `runGarminAIWithMode`, including the support agent after handoff. It does **not** edit the separate silent app-support triage prompt or the conversation summarization prompt. Runtime API model identity is still appended by the model client. Shared memory stays appended as lower-priority data, never instructions. Discord context, loaded skills, tool selection, and code-enforced tool authorization are unchanged. Editing this text cannot grant tool access or change credentials/model configuration.
 
-A replacement replaces the whole base, rather than adding to the built-in text. Start from the displayed default if you want to retain its behavior and policies. Prompt text is sent to the configured AI provider as part of normal inference, so do not put passwords, tokens, or other secrets in it. A database read error stops a request instead of silently using stale/default instructions. When AI is disabled, editing and reset still work; the prompt will be used when AI is enabled again.
+A replacement replaces the whole base, rather than adding to the built-in text. Start from the `default_content` returned by `GET /api/prompt` if you want to retain its behavior and policies. Prompt text is sent to the configured AI provider as part of normal inference, so do not put passwords, tokens, or other secrets in it. A database read error stops a request instead of silently using stale/default instructions. When AI is disabled, editing and reset still work; the prompt will be used when AI is enabled again.
 
 ## API
 
-The frontend loads this data lazily; `/api/state` is unchanged.
+`/api/state` is unchanged and does not include prompt content. Frontend integration should fetch `/api/prompt` lazily when opening the editor.
 
 - `GET /api/prompt` returns `{ "content": "effective base", "default_content": "built-in base", "overridden": false }`. `overridden` reports whether a stored override exists, even if its content equals the default.
 - `POST /api/prompt/replace` accepts `{ "content": "new base" }` and returns `{ "ok": true }`.
