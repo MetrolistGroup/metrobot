@@ -71,7 +71,7 @@ func (h *NotesHandler) GetNote(name string) (string, error) {
 }
 
 func (h *NotesHandler) AddNote(name, shortDesc, content string) error {
-	name, shortDesc, content, err := validateNote(name, shortDesc, content)
+	name, shortDesc, content, err := ValidateNote(name, shortDesc, content)
 	if err != nil {
 		return err
 	}
@@ -79,7 +79,7 @@ func (h *NotesHandler) AddNote(name, shortDesc, content string) error {
 }
 
 func (h *NotesHandler) EditNote(name, shortDesc, content string) error {
-	name, shortDesc, content, err := validateNote(name, shortDesc, content)
+	name, shortDesc, content, err := ValidateNote(name, shortDesc, content)
 	if err != nil {
 		return err
 	}
@@ -98,7 +98,8 @@ func (h *NotesHandler) RenameNote(oldName, newName string) error {
 	return h.DB.RenameNote(oldName, newName)
 }
 
-func validateNote(name, shortDesc, content string) (string, string, string, error) {
+// ValidateNote applies the shared note validation and command-time normalization.
+func ValidateNote(name, shortDesc, content string) (string, string, string, error) {
 	name, err := validateNoteName(name)
 	if err != nil {
 		return "", "", "", err

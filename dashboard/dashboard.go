@@ -472,7 +472,12 @@ func (h *Handler) mutate(w http.ResponseWriter, r *http.Request, s session) {
 	case "/api/notes/create":
 		err = h.notes.AddNote(input.Name, input.ShortDesc, input.Content)
 	case "/api/notes/edit":
-		err = h.notes.EditNote(input.Name, input.ShortDesc, input.Content)
+		var name, shortDesc string
+		name, shortDesc, _, err = cmd.ValidateNote(input.Name, input.ShortDesc, input.Content)
+		if err == nil {
+			// The editor preserves stored escapes and line endings instead of command-time normalization.
+			err = h.db.EditNote(name, shortDesc, input.Content)
+		}
 	case "/api/notes/rename":
 		err = h.notes.RenameNote(input.Name, input.NewName)
 	case "/api/notes/delete":

@@ -376,6 +376,37 @@ func TestNotesRawRoundtripAndValidation(t *testing.T) {
 	checkStatus(t, request(t, h, http.MethodPost, "/api/notes/delete", `{"name":""}`, cookie, csrf), http.StatusBadRequest)
 }
 
+func TestNoteEditPreservesRawContent(t *testing.T) {
+	h := newTestHandler(t, nil)
+	cookie, csrf := seedSession(t, h, permanentID)
+	const content = "  <script>alert('xss')</script>\\nfirst\\r\\nsecond\r\nlast  "
+	if err := h.db.AddNote("legacy", "Original description", content); err != nil {
+		t.Fatal(err)
+	}
+	input := mutation{Name: " LEGACY ", ShortDesc: " Updated description ", Content: readState(t, h, cookie).Notes[0].Content}
+	body, _ := json.Marshal(input)
+	checkStatus(t, request(t, h, http.MethodPost, "/api/notes/edit", string(body), cookie, csrf), http.StatusOK)
+	if stored, err := h.db.GetNote("legacy"); err != nil || stored != content {
+		t.Fatalf("description-only edit changed raw content: %q, %v", stored, err)
+	}
+	if state := readState(t, h, cookie); state.Notes[0].ShortDesc != "Updated description" || state.Notes[0].Content != content {
+		t.Fatalf("edit did not roundtrip raw note: %+v", state.Notes[0])
+	}
+	for _, invalid := range []mutation{
+		{Name: "two words", ShortDesc: "Description", Content: "Text"},
+		{Name: "legacy", Content: "Text"},
+		{Name: "legacy", ShortDesc: "two\nlines", Content: "Text"},
+		{Name: "legacy", ShortDesc: strings.Repeat("a", 161), Content: "Text"},
+		{Name: "legacy", ShortDesc: "Description", Content: " "},
+	} {
+		body, _ := json.Marshal(invalid)
+		checkStatus(t, request(t, h, http.MethodPost, "/api/notes/edit", string(body), cookie, csrf), http.StatusBadRequest)
+	}
+	if stored, err := h.db.GetNote("legacy"); err != nil || stored != content {
+		t.Fatalf("invalid edit changed raw content: %q, %v", stored, err)
+	}
+}
+
 func TestMemorySharedInstanceLimitsAndErrors(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "memory.md")
 	memory, err := cmd.NewGarminMemory(path)
