@@ -376,15 +376,19 @@ func TestNotesRawRoundtripAndValidation(t *testing.T) {
 	checkStatus(t, request(t, h, http.MethodPost, "/api/notes/delete", `{"name":""}`, cookie, csrf), http.StatusBadRequest)
 }
 
-func TestNoteEditPreservesRawContent(t *testing.T) {
+func TestNoteCreateAndEditPreserveRawContent(t *testing.T) {
 	h := newTestHandler(t, nil)
 	cookie, csrf := seedSession(t, h, permanentID)
 	const content = "  <script>alert('xss')</script>\\nfirst\\r\\nsecond\r\nlast  "
-	if err := h.db.AddNote("legacy", "Original description", content); err != nil {
-		t.Fatal(err)
-	}
-	input := mutation{Name: " LEGACY ", ShortDesc: " Updated description ", Content: readState(t, h, cookie).Notes[0].Content}
+	input := mutation{Name: " LEGACY ", ShortDesc: " Original description ", Content: content}
 	body, _ := json.Marshal(input)
+	checkStatus(t, request(t, h, http.MethodPost, "/api/notes/create", string(body), cookie, csrf), http.StatusOK)
+	if stored, err := h.db.GetNote("legacy"); err != nil || stored != content {
+		t.Fatalf("creation changed raw content: %q, %v", stored, err)
+	}
+	input.ShortDesc = " Updated description "
+	input.Content = readState(t, h, cookie).Notes[0].Content
+	body, _ = json.Marshal(input)
 	checkStatus(t, request(t, h, http.MethodPost, "/api/notes/edit", string(body), cookie, csrf), http.StatusOK)
 	if stored, err := h.db.GetNote("legacy"); err != nil || stored != content {
 		t.Fatalf("description-only edit changed raw content: %q, %v", stored, err)

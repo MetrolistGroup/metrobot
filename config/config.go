@@ -43,6 +43,13 @@ func (d *DashboardConfig) Validate() error {
 	}
 	if d.ListenAddress == "" {
 		d.ListenAddress = "127.0.0.1:8080"
+		if u.Scheme == "http" {
+			port := u.Port()
+			if port == "" {
+				port = "80"
+			}
+			d.ListenAddress = net.JoinHostPort(u.Hostname(), port)
+		}
 	}
 	host, port, err := net.SplitHostPort(d.ListenAddress)
 	if err != nil {

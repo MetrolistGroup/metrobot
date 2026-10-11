@@ -469,14 +469,16 @@ func (h *Handler) mutate(w http.ResponseWriter, r *http.Request, s session) {
 		return
 	}
 	switch r.URL.Path {
-	case "/api/notes/create":
-		err = h.notes.AddNote(input.Name, input.ShortDesc, input.Content)
-	case "/api/notes/edit":
+	case "/api/notes/create", "/api/notes/edit":
 		var name, shortDesc string
 		name, shortDesc, _, err = cmd.ValidateNote(input.Name, input.ShortDesc, input.Content)
 		if err == nil {
-			// The editor preserves stored escapes and line endings instead of command-time normalization.
-			err = h.db.EditNote(name, shortDesc, input.Content)
+			// The editor preserves literal escapes and line endings instead of command-time normalization.
+			if r.URL.Path == "/api/notes/create" {
+				err = h.db.AddNote(name, shortDesc, input.Content)
+			} else {
+				err = h.db.EditNote(name, shortDesc, input.Content)
+			}
 		}
 	case "/api/notes/rename":
 		err = h.notes.RenameNote(input.Name, input.NewName)

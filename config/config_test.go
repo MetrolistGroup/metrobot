@@ -37,10 +37,17 @@ func TestDashboardDisabledByDefault(t *testing.T) {
 }
 
 func TestDashboardValidation(t *testing.T) {
-	for _, base := range []string{"http://127.0.0.1:8080", "http://localhost:8080", "http://[::1]:8080", "https://admin.example.com"} {
-		t.Run(base, func(t *testing.T) {
-			d := DashboardConfig{Enabled: true, BaseURL: base, ClientID: "id", ClientSecret: "secret"}
-			if err := d.Validate(); err != nil || d.ListenAddress != "127.0.0.1:8080" {
+	for _, test := range []struct{ base, listen string }{
+		{"http://127.0.0.1:8080", "127.0.0.1:8080"},
+		{"http://localhost:8080", "localhost:8080"},
+		{"http://[::1]:8080", "[::1]:8080"},
+		{"http://[::1]", "[::1]:80"},
+		{"http://127.0.0.2:9090", "127.0.0.2:9090"},
+		{"https://admin.example.com", "127.0.0.1:8080"},
+	} {
+		t.Run(test.base, func(t *testing.T) {
+			d := DashboardConfig{Enabled: true, BaseURL: test.base, ClientID: "id", ClientSecret: "secret"}
+			if err := d.Validate(); err != nil || d.ListenAddress != test.listen {
 				t.Fatalf("valid local-first config: %+v, %v", d, err)
 			}
 		})
