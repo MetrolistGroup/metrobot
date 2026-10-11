@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MetrolistGroup/metrobot/auditsearch"
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/config"
 	"github.com/MetrolistGroup/metrobot/db"
@@ -50,6 +51,8 @@ type session struct {
 }
 
 type Handler struct {
+	AuditLogs auditsearch.Searcher // Optional; stored cases remain available without Discord.
+
 	cfg      *config.Config
 	db       *db.DB
 	notes    *cmd.NotesHandler
@@ -114,6 +117,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/auth/callback":
 		if method(w, r, http.MethodGet) {
 			h.callback(w, r)
+		}
+	case "/api/cases", "/api/logs":
+		if !method(w, r, http.MethodGet) {
+			return
+		}
+		if r.Header.Get("Origin") != "" && r.Header.Get("Origin") != h.origin {
+			fail(w, http.StatusForbidden, "Invalid dashboard origin.")
+			return
+		}
+		if _, ok := h.authenticate(w, r); ok {
+			h.audit(w, r)
 		}
 	case "/api/state":
 		if method(w, r, http.MethodGet) {

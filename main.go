@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/MetrolistGroup/metrobot/auditsearch"
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/config"
 	"github.com/MetrolistGroup/metrobot/dashboard"
@@ -149,6 +150,7 @@ func run() int {
 		if err != nil {
 			logger.Fatal("failed to initialize dashboard", zap.Error(err))
 		}
+		handler.AuditLogs = auditsearch.New(discordBot.AuditHistory())
 		dashboardListener, err = net.Listen("tcp", cfg.Dashboard.ListenAddress)
 		if err != nil {
 			logger.Fatal("failed to listen for dashboard", zap.Error(err))
