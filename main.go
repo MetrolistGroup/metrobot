@@ -1,21 +1,15 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
 	"time"
 
-	"github.com/MetrolistGroup/metrobot/auditsearch"
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/config"
-	"github.com/MetrolistGroup/metrobot/dashboard"
 	"github.com/MetrolistGroup/metrobot/db"
 	"github.com/MetrolistGroup/metrobot/discord"
 	gh "github.com/MetrolistGroup/metrobot/github"
@@ -87,10 +81,6 @@ func (tm *TimerManager) Count() int {
 }
 
 func main() {
-	os.Exit(run())
-}
-
-func run() int {
 	cfg, err := config.Load("config.json")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FATAL: %s\n", err)
@@ -142,27 +132,6 @@ func run() int {
 		logger.Fatal("failed to create discord bot", zap.Error(err))
 	}
 
-	var dashboardServer *http.Server
-	var dashboardListener net.Listener
-	dashboardErrors := make(chan error, 1)
-	if cfg.Dashboard.Enabled {
-		handler, err := dashboard.New(cfg, database, discordBot.GarminMemory())
-		if err != nil {
-			logger.Fatal("failed to initialize dashboard", zap.Error(err))
-		}
-		handler.AuditLogs = auditsearch.New(discordBot.AuditHistory())
-		dashboardListener, err = net.Listen("tcp", cfg.Dashboard.ListenAddress)
-		if err != nil {
-			logger.Fatal("failed to listen for dashboard", zap.Error(err))
-		}
-		defer dashboardListener.Close()
-		dashboardServer = &http.Server{
-			Handler: handler, ReadHeaderTimeout: 5 * time.Second,
-			ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second,
-			IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024,
-		}
-	}
-
 	if err := discordBot.Start(); err != nil {
 		logger.Fatal("failed to start discord bot", zap.Error(err))
 	}
@@ -180,15 +149,6 @@ func run() int {
 		logger.Fatal("failed to start telegram bot", zap.Error(err))
 	}
 
-	if dashboardServer != nil {
-		go func() {
-			if err := dashboardServer.Serve(dashboardListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				dashboardErrors <- err
-			}
-		}()
-		logger.Info("local admin dashboard started")
-	}
-
 	logger.Info("both bots are running. Press Ctrl+C to stop.")
 
 	// Restore timed moderation after both bots are started so expiry can call the platform APIs.
@@ -197,16 +157,9 @@ func run() int {
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	exitCode := waitForShutdown(sigCh, dashboardErrors, logger)
+	<-sigCh
 	signal.Stop(sigCh)
-	if dashboardServer != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := dashboardServer.Shutdown(ctx); err != nil {
-			logger.Error("dashboard shutdown failed", zap.Error(err))
-			dashboardServer.Close()
-		}
-		cancel()
-	}
+	logger.Info("shutdown signal received")
 
 	// Stop all timers before shutting down bots
 	timerManager.StopAll()
@@ -215,18 +168,6 @@ func run() int {
 	discordBot.Stop()
 	telegramBot.Stop()
 	logger.Info("graceful shutdown complete")
-	return exitCode
-}
-
-func waitForShutdown(signals <-chan os.Signal, dashboardErrors <-chan error, logger *zap.Logger) int {
-	select {
-	case <-signals:
-		logger.Info("shutdown signal received")
-		return 0
-	case err := <-dashboardErrors:
-		logger.Error("dashboard server failed; shutting down", zap.Error(err))
-		return 1
-	}
 }
 
 func restoreTimedBans(database *db.DB, discordBot *discord.Bot, telegramBot *telegram.Bot, logger *zap.Logger, timerManager *TimerManager) {

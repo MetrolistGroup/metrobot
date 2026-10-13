@@ -4,12 +4,12 @@ Notes are Markdown. Behavior belongs to their **body**, never their name. Rename
 note to keep its behavior; remove its directive to disable it. New `donate` and
 `kmp` notes are ordinary notes unless their bodies contain directives.
 
-The editor API returns the exact stored body, without rendering or shuffling.
+Raw database reads return the exact stored body, without rendering or shuffling.
 Unconverted notes saved before this feature retain literal Markdown interpretation,
 including top-level directive examples. Renaming them does not activate markup;
 a successful validated edit does. New notes interpret directives immediately.
-Create/edit commands and the dashboard share server-side validation. Invalid
-markup cannot replace an existing note. Commands still accept legacy literal
+Create/edit commands validate markup before saving. Invalid markup cannot replace
+an existing note. Commands still accept legacy literal
 `\n` / `\r\n` newline separators outside JSON strings; JSON string escapes are
 left intact, including `\n`, `\\n`, escaped quotes and Unicode escapes.
 
@@ -137,6 +137,11 @@ user-mention behavior, without enabling role/everyone pings.
 Telegram and AI see readable Markdown with no custom directive fences: random
 entries in their retrieved order, all FAQ questions/answers, and layout text plus
 thumbnail/gallery URLs and labeled button URLs. Separators become `---`.
+
+Ordinary notes exceeding Discord's 2,000 UTF-16-unit message limit or Telegram's
+4,096-unit limit (also checked against serialized HTML) are delivered as a full
+`note.md` Markdown attachment. Saves are not blocked by these delivery limits;
+short notes retain their rendering, reply, visibility and cleanup behavior.
 
 If a rich layout cannot fit at delivery, the full readable note is sent as plain
 text, or as `note.md` when the text plus any prefix exceeds 2,000 UTF-16 units.

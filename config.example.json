@@ -1,11 +1,4 @@
 {
-  "dashboard": {
-    "enabled": false,
-    "listen_address": "127.0.0.1:8080",
-    "base_url": "http://127.0.0.1:8080",
-    "client_id": "",
-    "client_secret": ""
-  },
   "discord_token": "MTQ...",
   "telegram_token": "1234:ABCD",
   "github_token": "github_pat",

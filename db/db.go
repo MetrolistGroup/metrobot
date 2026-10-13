@@ -236,30 +236,6 @@ func (d *DB) ListNotes() ([]NoteSummary, error) {
 	return notes, rows.Err()
 }
 
-type Note struct {
-	NoteSummary
-	Content string `json:"content"`
-}
-
-// ListRawNotes returns stored content without command-time normalization or shuffling.
-func (d *DB) ListRawNotes() ([]Note, error) {
-	rows, err := d.conn.Query("SELECT name, short_desc, content FROM notes ORDER BY name")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	notes := make([]Note, 0)
-	for rows.Next() {
-		var note Note
-		if err := rows.Scan(&note.Name, &note.ShortDesc, &note.Content); err != nil {
-			return nil, err
-		}
-		notes = append(notes, note)
-	}
-	return notes, rows.Err()
-}
-
 func (d *DB) AddNote(name, shortDesc, content string) error {
 	_, err := d.conn.Exec("INSERT INTO notes (name, short_desc, content) VALUES (?, ?, ?)", name, shortDesc, content)
 	return err
@@ -323,24 +299,6 @@ func (d *DB) IsAdmin(platform, userID string, cfg PermaAdminProvider) bool {
 		return false
 	}
 	return count > 0
-}
-
-func (d *DB) ListAdmins(platform string) ([]string, error) {
-	rows, err := d.conn.Query("SELECT user_id FROM admins WHERE platform = ? ORDER BY user_id", platform)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	ids := make([]string, 0)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
 }
 
 func (d *DB) AddAdmin(platform, userID, addedBy string) error {

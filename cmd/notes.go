@@ -47,7 +47,7 @@ func (h *NotesHandler) GetNote(name string) (string, error) {
 	return note.Render().Text, nil
 }
 
-// GetNoteDocument preserves authored structure; editor APIs continue using raw DB reads.
+// GetNoteDocument preserves authored structure for Discord delivery.
 func (h *NotesHandler) GetNoteDocument(name string) (*notefmt.Note, error) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	if name == "" {

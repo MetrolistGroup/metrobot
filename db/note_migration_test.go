@@ -64,10 +64,6 @@ func TestNoteMarkupMigrationPreservesContentAndRunsOnce(t *testing.T) {
 			t.Fatalf("%s interpretation = %v, %v", name, enabled, err)
 		}
 	}
-	notes, err := d.ListRawNotes()
-	if err != nil || notes[0].Content == donate {
-		t.Fatal("raw editor reads did not expose markup")
-	}
 	if err := d.EditNote("donate", "edited", "admin removed directive"); err != nil {
 		t.Fatal(err)
 	}

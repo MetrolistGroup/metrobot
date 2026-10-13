@@ -70,13 +70,14 @@ func TestLegacyDirectiveExamplesRemainLiteralUntilEdited(t *testing.T) {
 		}
 		assertLiteral("saved-"+name, body)
 	}
-	raw, err := database.ListRawNotes()
-	if err != nil || len(raw) != len(bodies) {
-		t.Fatalf("raw notes = %#v, %v", raw, err)
+	notes, err := database.ListNotes()
+	if err != nil || len(notes) != len(bodies) {
+		t.Fatalf("notes = %#v, %v", notes, err)
 	}
-	for _, note := range raw {
-		if note.Content != bodies[strings.TrimPrefix(note.Name, "saved-")] {
-			t.Fatal("editor body changed")
+	for _, note := range notes {
+		got, err := database.GetNote(note.Name)
+		if err != nil || got != bodies[strings.TrimPrefix(note.Name, "saved-")] {
+			t.Fatalf("stored body changed: %q, %v", got, err)
 		}
 	}
 	for _, name := range []string{"invalid-random", "kmp"} {
