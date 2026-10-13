@@ -12,7 +12,6 @@ import (
 	"github.com/MetrolistGroup/metrobot/firecrawl"
 	gh "github.com/MetrolistGroup/metrobot/github"
 	"github.com/MetrolistGroup/metrobot/gsmarena"
-	"github.com/MetrolistGroup/metrobot/internal/music"
 	"github.com/MetrolistGroup/metrobot/nanoreview"
 	"github.com/MetrolistGroup/metrobot/technicalcity"
 	"github.com/disgoorg/disgo"
@@ -60,7 +59,6 @@ type Bot struct {
 	messageLogMu         sync.Mutex
 	messageLogCache      map[string][]cachedLogMessage
 	youtubeWebhookMu     sync.Mutex
-	music                *music.Player
 	TimedBanRestorer     func()
 	ready                chan struct{}
 	readyOnce            sync.Once
@@ -108,13 +106,12 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 	session, err := disgo.New(cfg.DiscordToken,
 		bot.WithEventManagerConfigOpts(bot.WithGatewayHandlers(b.gatewayHandlers())),
 		bot.WithGatewayConfigOpts(
-			gateway.WithIntents(gateway.IntentGuilds|gateway.IntentGuildMessages|gateway.IntentGuildMembers|gateway.IntentGuildModeration|gateway.IntentGuildMessageReactions|gateway.IntentMessageContent|gateway.IntentGuildVoiceStates),
+			gateway.WithIntents(gateway.IntentGuilds|gateway.IntentGuildMessages|gateway.IntentGuildMembers|gateway.IntentGuildModeration|gateway.IntentGuildMessageReactions|gateway.IntentMessageContent),
 			gateway.WithEnableRawEvents(true),
 		),
 		// Message content is kept only in the bounded, filtered audit cache.
-		bot.WithCacheConfigOpts(cache.WithCaches(cache.FlagGuilds|cache.FlagChannels|cache.FlagRoles|cache.FlagMembers|cache.FlagEmojis|cache.FlagVoiceStates)),
+		bot.WithCacheConfigOpts(cache.WithCaches(cache.FlagGuilds|cache.FlagChannels|cache.FlagRoles|cache.FlagMembers|cache.FlagEmojis)),
 		bot.WithMemberChunkingFilter(bot.MemberChunkingFilterAll),
-		bot.WithVoiceManagerConfigOpts(musicVoiceOptions()...),
 	)
 	if err != nil {
 		cancelLifecycle()
@@ -152,7 +149,6 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		cases.CaseLogger = caseLogger
 	}
 
-	b.initMusic()
 	b.installListeners()
 
 	return b, nil
@@ -184,9 +180,6 @@ func (b *Bot) Stop() {
 	b.stopOnce.Do(func() {
 		b.Logger.Info("shutting down discord bot")
 		b.cancelLifecycle()
-		if b.music != nil {
-			b.music.Close()
-		}
 		b.garminAIMu.Lock()
 		for _, requests := range b.garminAIRequests {
 			for _, cancel := range requests {
@@ -596,7 +589,6 @@ func (b *Bot) registerCommands() error {
 	},
 	}
 
-	commands = append(commands, musicCommands()...)
 	if _, err := b.Client.Rest.SetGuildCommands(b.Client.ApplicationID, snowflakeID(b.Config.DiscordGuildID), commands); err != nil {
 		return fmt.Errorf("registering slash commands: %w", err)
 	}

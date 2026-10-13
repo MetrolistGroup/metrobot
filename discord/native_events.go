@@ -37,7 +37,6 @@ func (b *Bot) installListeners() {
 		OnReady:                         func(e *events.Ready) { b.readyOnce.Do(func() { close(b.ready) }) },
 		OnApplicationCommandInteraction: func(e *events.ApplicationCommandInteractionCreate) { go b.onInteractionCreate(s, e) },
 		OnAutocompleteInteraction:       func(e *events.AutocompleteInteractionCreate) { go b.handleAutocomplete(s, e) },
-		OnGuildVoiceStateUpdate:         func(e *events.GuildVoiceStateUpdate) { b.onMusicVoiceState(s, e) },
 		OnComponentInteraction: func(e *events.ComponentInteractionCreate) {
 			if snowflakeString(e.GuildID()) != b.Config.DiscordGuildID {
 				return
