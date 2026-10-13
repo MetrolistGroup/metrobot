@@ -15,13 +15,37 @@ type Sink interface {
 }
 
 type Connector func(context.Context, uint64) (Sink, error)
-type Runner func(context.Context, Track, func(Track), func(context.Context) error, Sink) error
+type Playback struct {
+	Offset time.Duration
+	Volume int
+}
+
+type Runner func(context.Context, Track, Playback, func(Track), func(context.Context) error, Sink) error
+
+// frameSink counts audio only after the transport accepts it, never silence or paused wall time.
+type frameSink struct {
+	Sink
+	emitted func()
+}
+
+func (s frameSink) WriteFrame(ctx context.Context, packet []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := s.Sink.WriteFrame(ctx, packet); err != nil {
+		return err
+	}
+	s.emitted()
+	return nil
+}
 
 type Snapshot struct {
 	Channel   uint64
 	Current   *Track
 	Pending   []Track
 	Paused    bool
+	Elapsed   time.Duration
+	Volume    int
 	Loop      string
 	Status    string
 	LastError string
@@ -36,8 +60,15 @@ type session struct {
 	current     *Track
 	pending     []Track
 	trackCancel context.CancelFunc
+	trackCtx    context.Context
+	elapsed     time.Duration
+	volume      int
+	ready       bool
+	restart     bool
+	seek        *time.Duration
 	skipped     bool
 	paused      bool
+	pauseUntil  time.Time
 	loop        string
 	status      string
 	lastError   string
@@ -86,7 +117,7 @@ func (p *Player) Enqueue(channel uint64, query string) error {
 	}
 	if finished(p.s) {
 		ctx, cancel := context.WithCancel(p.parent)
-		p.s = &session{ctx: ctx, cancel: cancel, done: make(chan struct{}), wake: make(chan struct{}, 1), channel: channel, loop: "off", status: "starting"}
+		p.s = &session{ctx: ctx, cancel: cancel, done: make(chan struct{}), wake: make(chan struct{}, 1), channel: channel, volume: 100, loop: "off", status: "starting"}
 		go p.work(p.s)
 	}
 	s := p.s
@@ -113,15 +144,15 @@ func (p *Player) Snapshot() Snapshot {
 	defer p.mu.Unlock()
 	s := p.s
 	if s == nil {
-		return Snapshot{Loop: "off", Status: "disconnected"}
+		return Snapshot{Volume: 100, Loop: "off", Status: "disconnected"}
 	}
 	if finished(s) {
-		return Snapshot{Loop: "off", Status: "disconnected", LastError: s.lastError}
+		return Snapshot{Volume: 100, Loop: "off", Status: "disconnected", LastError: s.lastError}
 	}
 	if s.ctx.Err() != nil {
-		return Snapshot{Channel: s.channel, Loop: "off", Status: "disconnecting", LastError: s.lastError}
+		return Snapshot{Channel: s.channel, Volume: s.volume, Loop: "off", Status: "disconnecting", LastError: s.lastError}
 	}
-	out := Snapshot{Channel: s.channel, Pending: append([]Track{}, s.pending...), Paused: s.paused, Loop: s.loop, Status: s.status, LastError: s.lastError}
+	out := Snapshot{Channel: s.channel, Pending: append([]Track{}, s.pending...), Paused: s.paused, Elapsed: s.elapsed, Volume: s.volume, Loop: s.loop, Status: s.status, LastError: s.lastError}
 	if s.current != nil {
 		t := *s.current
 		out.Current = &t
@@ -130,7 +161,7 @@ func (p *Player) Snapshot() Snapshot {
 }
 
 // Control checks channel ownership and changes state atomically, never doing I/O under mu.
-func (p *Player) Control(channel uint64, action string, position int, mode string) error {
+func (p *Player) Control(channel uint64, action string, value int, mode string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	s := p.s
@@ -145,7 +176,37 @@ func (p *Player) Control(channel uint64, action string, position int, mode strin
 		if s.current == nil {
 			return errors.New("Nothing is playing yet.")
 		}
+		if action == "pause" && !s.paused {
+			s.pauseUntil = time.Now().Add(10 * time.Minute)
+		}
 		s.paused = action == "pause"
+	case "seek":
+		if value < 0 || value > int(MaxDuration/time.Second) {
+			return errors.New("Seconds must be between 0 and 10800.")
+		}
+		if s.current == nil || !s.ready || s.restart || s.skipped || s.trackCtx.Err() != nil || s.current.Duration <= 0 || s.current.Duration > MaxDuration {
+			return errors.New("Wait for the current track to start before seeking.")
+		}
+		offset := time.Duration(value) * time.Second
+		if offset >= s.current.Duration {
+			return errors.New("Seek must be before the end of the current track.")
+		}
+		s.seek = &offset
+		s.restart = true
+		s.status = "restarting"
+		s.trackCancel()
+	case "volume":
+		if value < 0 || value > 100 {
+			return errors.New("Percent must be between 0 and 100.")
+		}
+		if value != s.volume {
+			s.volume = value
+			if s.current != nil && !s.skipped {
+				s.restart = true
+				s.status = "restarting"
+				s.trackCancel()
+			}
+		}
 	case "skip":
 		if s.current != nil {
 			s.skipped = true
@@ -161,10 +222,10 @@ func (p *Player) Control(channel uint64, action string, position int, mode strin
 	case "clear":
 		s.pending = nil
 	case "remove":
-		if position < 1 || position > len(s.pending) {
+		if value < 1 || value > len(s.pending) {
 			return errors.New("Position must address a pending track shown by /queue.")
 		}
-		s.pending = append(s.pending[:position-1], s.pending[position:]...)
+		s.pending = append(s.pending[:value-1], s.pending[value:]...)
 	case "shuffle":
 		rand.Shuffle(len(s.pending), func(i, j int) { s.pending[i], s.pending[j] = s.pending[j], s.pending[i] })
 	case "loop":
@@ -213,7 +274,7 @@ func (p *Player) wait(ctx context.Context, s *session, sink Sink) error {
 			return err
 		}
 		p.mu.Lock()
-		paused := s.paused
+		paused, pauseUntil := s.paused, s.pauseUntil
 		p.mu.Unlock()
 		if !paused {
 			return nil
@@ -224,6 +285,7 @@ func (p *Player) wait(ctx context.Context, s *session, sink Sink) error {
 			}
 			stoppedSpeaking = true
 		}
+		timer.Reset(time.Until(pauseUntil))
 		select {
 		case <-s.wake:
 		case <-ctx.Done():
@@ -278,47 +340,94 @@ func (p *Player) work(s *session) {
 		}
 		track := s.pending[0]
 		s.pending = s.pending[1:]
-		ctx, cancel := context.WithTimeout(s.ctx, MaxDuration+15*time.Minute)
+		trackCtx, trackCancel := context.WithTimeout(s.ctx, MaxDuration+15*time.Minute)
+		ctx, cancel := context.WithCancel(trackCtx)
 		s.current = &track
+		s.trackCtx = ctx
 		s.trackCancel = cancel
+		s.elapsed = 0
+		s.ready = false
+		s.restart = false
+		s.seek = nil
 		s.skipped = false
 		s.status = "resolving"
+		playback := Playback{Volume: s.volume}
 		p.mu.Unlock()
 
-		var err error
-		if sink == nil {
-			connectCtx, connectCancel := context.WithTimeout(s.ctx, 20*time.Second)
-			sink, err = p.connect(connectCtx, s.channel)
-			connectCancel()
-		}
-		if err == nil {
-			err = p.run(ctx, track, func(t Track) {
-				p.mu.Lock()
-				s.current = &t
-				s.status = "playing"
-				p.mu.Unlock()
-			}, func(c context.Context) error { return p.wait(c, s, sink) }, sink)
-		}
-		cancel()
-		if sink != nil && s.ctx.Err() == nil {
-			silenceCtx, silenceCancel := context.WithTimeout(s.ctx, 2*time.Second)
-			_ = sink.Silence(silenceCtx)
-			silenceCancel()
-		}
-		p.mu.Lock()
-		if err != nil && !s.skipped && s.ctx.Err() == nil {
-			s.lastError = err.Error()
-		}
-		if err == nil && !s.skipped && s.ctx.Err() == nil {
-			switch s.loop {
-			case "track":
-				s.pending = append([]Track{*s.current}, s.pending...)
-			case "queue":
-				s.pending = append(s.pending, *s.current)
+		for {
+			// Capture this attempt's context: late callbacks must not touch a later decoder/track.
+			runCtx := ctx
+			var err error
+			if sink == nil {
+				connectCtx, connectCancel := context.WithTimeout(runCtx, 20*time.Second)
+				sink, err = p.connect(connectCtx, s.channel)
+				connectCancel()
 			}
+			if err == nil {
+				err = p.run(runCtx, track, playback, func(t Track) {
+					p.mu.Lock()
+					if s.trackCtx == runCtx && runCtx.Err() == nil {
+						s.current = &t
+						s.status = "starting"
+					}
+					p.mu.Unlock()
+				}, func(c context.Context) error { return p.wait(c, s, sink) }, frameSink{Sink: sink, emitted: func() {
+					p.mu.Lock()
+					if s.trackCtx == runCtx {
+						s.elapsed += 20 * time.Millisecond
+						if s.current.Duration > 0 {
+							s.elapsed = min(s.elapsed, s.current.Duration)
+						}
+						if runCtx.Err() == nil {
+							s.ready = true
+							s.status = "playing"
+						}
+					}
+					p.mu.Unlock()
+				}})
+			}
+			cancel() // Run has returned, so its child processes have been reaped before any restart.
+			if sink != nil && s.ctx.Err() == nil {
+				silenceCtx, silenceCancel := context.WithTimeout(s.ctx, 2*time.Second)
+				_ = sink.Silence(silenceCtx)
+				silenceCancel()
+			}
+			p.mu.Lock()
+			if s.restart && !s.skipped && s.ctx.Err() == nil && trackCtx.Err() == nil {
+				if s.seek != nil {
+					s.elapsed = *s.seek
+				}
+				s.seek = nil
+				s.restart = false
+				s.ready = false
+				s.status = "restarting"
+				track = *s.current
+				playback = Playback{Offset: s.elapsed, Volume: s.volume}
+				ctx, cancel = context.WithCancel(trackCtx)
+				s.trackCtx = ctx
+				s.trackCancel = cancel
+				p.mu.Unlock()
+				continue
+			}
+			if err != nil && !s.skipped && s.ctx.Err() == nil {
+				s.lastError = err.Error()
+			}
+			if err == nil && !s.skipped && s.ctx.Err() == nil {
+				switch s.loop {
+				case "track":
+					s.pending = append([]Track{*s.current}, s.pending...)
+				case "queue":
+					s.pending = append(s.pending, *s.current)
+				}
+			}
+			s.current = nil
+			s.trackCtx = nil
+			s.trackCancel = nil
+			s.elapsed = 0
+			s.ready = false
+			p.mu.Unlock()
+			trackCancel()
+			break
 		}
-		s.current = nil
-		s.trackCancel = nil
-		p.mu.Unlock()
 	}
 }

@@ -17,7 +17,7 @@ channels are unsupported. The bot needs Connect and Speak to join.
 | `/play query:URL-or-search` | Add one video. First search result wins. |
 | `/play` | Resume paused playback, without adding another track. |
 | `/pause` | Pause audio and apply backpressure to ffmpeg. |
-| `/queue` | Show current track, state, last playback error and pending page 1. |
+| `/queue` | Show current track, elapsed/duration, volume, state, last playback error and pending page 1. |
 | `/queue page:2` | Show another pending page (5 entries each). |
 | `/queue action:skip` | Cancel the current lookup/decoder and advance; no repeat of the skipped track. |
 | `/queue action:stop` | Clear everything, cancel tools and disconnect. |
@@ -27,6 +27,8 @@ channels are unsupported. The bot needs Connect and Speak to join.
 | `/queue action:loop mode:off` | Disable repeating (the default). |
 | `/queue action:loop mode:track` | Repeat the current successful track until skipped. |
 | `/queue action:loop mode:queue` | Append each successful track to the end. |
+| `/queue action:seek seconds:60` | Seek to absolute whole seconds, from 0 to strictly before the current track's end. Requires metadata and started playback. |
+| `/queue action:volume percent:50` | Set session volume from 0 (mute) to 100 (default); never amplify above source volume. |
 
 Videos resolve lazily at the front of the queue. Pending entries therefore
 show the submitted search/URL until resolved. `/play` acknowledges the enqueue;
@@ -35,9 +37,20 @@ EOF or a track error. Stop/disconnect cleanup runs asynchronously; new playback
 is rejected until the old session has finished closing. Bot shutdown waits for
 cleanup. There are no redundant top-level skip/stop commands.
 
-Seek and volume are intentionally omitted: they would need a decoder restart
-and additional offset/filter state. Looping is included without another
-playback pipeline.
+Seek and volume changes cancel and fully reap the current decoder before
+restarting the same track with a fresh media URL. They briefly interrupt audio,
+keep pause and pending queue order, and do not trigger looping or shuffle.
+Skip/stop during cleanup wins over the restart. Seeking is rejected during
+lookup, unresolved startup or another restart. `seconds` and `percent` are
+required for their respective actions. Volume can also be set while resolving
+or idle, and applies to subsequent tracks until the session ends.
+
+Elapsed time counts successfully emitted 20 ms audio frames, not wall time or
+Discord's silence frames; pauses and decoder startup do not advance it.
+Volume restarts at that actual offset, and seeking replaces it with the chosen
+offset. The last padded Opus frame is bounded to the finite duration in queue
+status; near-end seeks emit at most the remaining duration rounded up to 20 ms.
+There is no client-side playback/buffering latency correction.
 
 ## Bounds and lifecycle
 
@@ -59,8 +72,8 @@ playback pipeline.
 - No pending/current track for 60 seconds disconnects the bot. Pausing for
   10 minutes disconnects it. Losing the last human listener, being kicked,
   moved to another channel, or server-muted also cancels the session.
-- Queues and repeat state live in memory: **restart, disconnect and stop lose
-  the queue**. There is no persistence or recovery.
+- Queues, offsets, volume and repeat state live in memory: **bot restart,
+  disconnect and stop lose the queue**. There is no persistence or recovery.
 
 ffmpeg encodes libopus, 48 kHz stereo, 20 ms frames at 96 kbps. A small local
 Ogg parser checks stream identity, sequencing, continuation, packet bounds,
@@ -161,6 +174,9 @@ CGO_ENABLED=1 go vet -tags music ./...
 CGO_ENABLED=1 go build -tags music .
 ```
 
-Unit tests use fake voice sinks and fake playback; no real gateway, token or
-runtime database is used. Real Discord/DAVE negotiation and YouTube access
-must be checked in the intended deployment environment.
+Unit tests use fake voice sinks and fake playback, including paused restarts,
+seek bounds, stale callbacks and skip/stop cleanup races. Local ffmpeg tests
+check seek/volume arguments, bounded near-end frames and paused process reaping;
+no real gateway, token or runtime database is used. Real Discord/DAVE
+negotiation and YouTube access must be checked in the intended deployment
+environment.

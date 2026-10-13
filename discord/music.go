@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/MetrolistGroup/metrobot/internal/music"
@@ -16,7 +17,7 @@ import (
 
 func musicCommands() []discord.ApplicationCommandCreate {
 	actions := []discord.ApplicationCommandOptionChoiceString{}
-	for _, action := range []string{"show", "skip", "stop", "remove", "clear", "shuffle", "loop"} {
+	for _, action := range []string{"show", "skip", "stop", "remove", "clear", "shuffle", "loop", "seek", "volume"} {
 		actions = append(actions, discord.ApplicationCommandOptionChoiceString{Name: action, Value: action})
 	}
 	return []discord.ApplicationCommandCreate{
@@ -28,6 +29,8 @@ func musicCommands() []discord.ApplicationCommandCreate {
 			discord.ApplicationCommandOptionString{Name: "action", Description: "Default: show; stop also disconnects", Choices: actions},
 			discord.ApplicationCommandOptionInt{Name: "page", Description: "Pending queue page (5 tracks per page)", MinValue: ptr(1), MaxValue: ptr(20)},
 			discord.ApplicationCommandOptionInt{Name: "position", Description: "Absolute pending queue position for remove", MinValue: ptr(1), MaxValue: ptr(music.MaxQueue)},
+			discord.ApplicationCommandOptionInt{Name: "seconds", Description: "Required for seek: absolute seconds before the current track's end", MinValue: ptr(0), MaxValue: ptr(int(music.MaxDuration / time.Second))},
+			discord.ApplicationCommandOptionInt{Name: "percent", Description: "Required for volume: 0–100 (default volume 100; 0 mutes)", MinValue: ptr(0), MaxValue: ptr(100)},
 			discord.ApplicationCommandOptionString{Name: "mode", Description: "Required for loop", Choices: []discord.ApplicationCommandOptionChoiceString{{Name: "off", Value: "off"}, {Name: "track", Value: "track"}, {Name: "queue", Value: "queue"}}},
 		}},
 	}
@@ -118,11 +121,21 @@ func (b *Bot) handleMusic(s *bot.Client, i *events.ApplicationCommandInteraction
 			return
 		}
 	case "queue":
-		position := 0
-		if opt, ok := opts["position"]; ok {
-			position = opt.Int()
+		value := 0
+		option := "position"
+		switch action {
+		case "seek":
+			option = "seconds"
+		case "volume":
+			option = "percent"
 		}
-		err = b.music.Control(uint64(channel), action, position, getOptString(opts, "mode"))
+		if opt, ok := opts[option]; ok {
+			value = opt.Int()
+		} else if action == "seek" || action == "volume" {
+			respond("Specify " + option + " for " + action + ".")
+			return
+		}
+		err = b.music.Control(uint64(channel), action, value, getOptString(opts, "mode"))
 		if err == nil {
 			respond("Queue action applied: " + action + ".\n" + formatMusicQueue(b.music.Snapshot(), 1))
 			return
@@ -143,8 +156,8 @@ func musicText(text string) string {
 	}, text)
 	text = strings.Join(strings.Fields(text), " ")
 	runes := []rune(text)
-	if len(runes) > 60 {
-		text = string(runes[:60]) + "…"
+	if len(runes) > 55 {
+		text = string(runes[:55]) + "…"
 	}
 	return text
 }
@@ -153,7 +166,7 @@ func formatMusicQueue(s music.Snapshot, page int) string {
 	pages := max(1, (len(s.Pending)+4)/5)
 	page = max(1, min(page, pages))
 	var out strings.Builder
-	fmt.Fprintf(&out, "**Voice queue** • %s • loop: %s", s.Status, s.Loop)
+	fmt.Fprintf(&out, "**Voice queue** • %s • loop: %s • volume: %d%%", s.Status, s.Loop, s.Volume)
 	if s.Paused {
 		out.WriteString(" • paused")
 	}
@@ -163,7 +176,7 @@ func formatMusicQueue(s music.Snapshot, page int) string {
 	if s.Current != nil {
 		fmt.Fprintf(&out, "\nNow: %s", musicText(s.Current.Label()))
 		if s.Current.Duration > 0 {
-			fmt.Fprintf(&out, " (%s)", s.Current.Duration.Round(1e9))
+			fmt.Fprintf(&out, " (%s / %s)", s.Elapsed.Truncate(time.Second), s.Current.Duration.Round(time.Second))
 		}
 	} else {
 		out.WriteString("\nNow: nothing")
@@ -175,7 +188,7 @@ func formatMusicQueue(s music.Snapshot, page int) string {
 	if s.LastError != "" {
 		fmt.Fprintf(&out, "\nLast playback error: %s", musicText(s.LastError))
 	}
-	out.WriteString("\n/queue action: skip | stop | remove position:N | clear | shuffle | loop mode:off/track/queue")
+	out.WriteString("\n/queue action: skip | stop | remove position:N | clear | shuffle | loop mode:off/track/queue | seek seconds:N | volume percent:N")
 	return out.String()
 }
 

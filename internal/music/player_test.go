@@ -36,7 +36,7 @@ func testPlayer(t *testing.T) (*Player, *fakeSink, chan Track, chan error) {
 	sink := &fakeSink{}
 	started := make(chan Track, MaxQueue+5)
 	release := make(chan error)
-	p := NewPlayer(context.Background(), func(context.Context, uint64) (Sink, error) { return sink, nil }, func(ctx context.Context, track Track, info func(Track), wait func(context.Context) error, sink Sink) error {
+	p := NewPlayer(context.Background(), func(context.Context, uint64) (Sink, error) { return sink, nil }, func(ctx context.Context, track Track, playback Playback, info func(Track), wait func(context.Context) error, sink Sink) error {
 		track.Title = track.Query
 		info(track)
 		started <- track
@@ -181,7 +181,7 @@ func TestPauseBackpressureAndStopUnblocks(t *testing.T) {
 	sink := &fakeSink{}
 	ready := make(chan struct{})
 	begin := make(chan struct{})
-	p := NewPlayer(context.Background(), func(context.Context, uint64) (Sink, error) { return sink, nil }, func(ctx context.Context, track Track, info func(Track), wait func(context.Context) error, sink Sink) error {
+	p := NewPlayer(context.Background(), func(context.Context, uint64) (Sink, error) { return sink, nil }, func(ctx context.Context, track Track, playback Playback, info func(Track), wait func(context.Context) error, sink Sink) error {
 		info(track)
 		close(ready)
 		select {
@@ -233,7 +233,7 @@ func TestStopAllowsNewChannelOnlyAfterCleanup(t *testing.T) {
 	closed := make(chan struct{})
 	sink := &blockingCloseSink{fakeSink: &fakeSink{}, gate: closed}
 	started := make(chan struct{}, 1)
-	p := NewPlayer(context.Background(), func(context.Context, uint64) (Sink, error) { return sink, nil }, func(ctx context.Context, track Track, info func(Track), wait func(context.Context) error, sink Sink) error {
+	p := NewPlayer(context.Background(), func(context.Context, uint64) (Sink, error) { return sink, nil }, func(ctx context.Context, track Track, playback Playback, info func(Track), wait func(context.Context) error, sink Sink) error {
 		started <- struct{}{}
 		<-ctx.Done()
 		return ctx.Err()

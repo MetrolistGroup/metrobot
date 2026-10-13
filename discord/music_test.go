@@ -20,7 +20,7 @@ import (
 
 func TestMusicQueueOutputIsBoundedAndPaginated(t *testing.T) {
 	label := strings.Repeat("𝄞", 100) + " @everyone **[link]**"
-	s := music.Snapshot{Channel: 100, Current: &music.Track{Title: label, Duration: 3 * time.Hour}, Loop: "queue", Status: "resolving", LastError: label}
+	s := music.Snapshot{Channel: ^uint64(0), Current: &music.Track{Title: label, Duration: 3 * time.Hour}, Elapsed: 3 * time.Hour, Volume: 100, Paused: true, Loop: "queue", Status: "disconnecting", LastError: label}
 	for i := 0; i < music.MaxQueue; i++ {
 		s.Pending = append(s.Pending, music.Track{Title: label})
 	}
@@ -32,6 +32,9 @@ func TestMusicQueueOutputIsBoundedAndPaginated(t *testing.T) {
 	}
 	if out := formatMusicQueue(s, 2); !strings.Contains(out, "page 2/20") || !strings.Contains(out, "\n6. ") || strings.Contains(out, "\n1. ") {
 		t.Fatal("pagination lost absolute positions")
+	}
+	if out := formatMusicQueue(s, 1); !strings.Contains(out, "volume: 100%") || !strings.Contains(out, "3h0m0s / 3h0m0s") || !strings.Contains(out, "seek seconds:N") || !strings.Contains(out, "volume percent:N") {
+		t.Fatal("queue omitted playback controls/status")
 	}
 }
 
@@ -77,7 +80,7 @@ func TestMusicVoiceKickMoveAndEmptyCleanup(t *testing.T) {
 			client := mustTestClient(t)
 			client.Caches.SetSelfUser(discord.OAuth2User{User: discord.User{ID: 900}})
 			started := make(chan struct{})
-			p := music.NewPlayer(context.Background(), func(context.Context, uint64) (music.Sink, error) { return musicTestSink{}, nil }, func(ctx context.Context, track music.Track, info func(music.Track), wait func(context.Context) error, sink music.Sink) error {
+			p := music.NewPlayer(context.Background(), func(context.Context, uint64) (music.Sink, error) { return musicTestSink{}, nil }, func(ctx context.Context, track music.Track, playback music.Playback, info func(music.Track), wait func(context.Context) error, sink music.Sink) error {
 				close(started)
 				<-ctx.Done()
 				return ctx.Err()

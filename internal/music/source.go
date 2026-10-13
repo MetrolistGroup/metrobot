@@ -113,6 +113,9 @@ func ytOutput(ctx context.Context, limit int, args ...string) ([]byte, error) {
 	out := &limitedBuffer{limit: limit}
 	c.Stdout = out
 	if err := c.Run(); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, fmt.Errorf("YouTube lookup failed: %w", err)
 	}
 	return out.Bytes(), nil
@@ -170,7 +173,10 @@ func parseMetadata(data []byte, query string) (Track, error) {
 }
 
 // Run resolves expiring media URLs only when a track is about to play.
-func Run(ctx context.Context, track Track, info func(Track), wait func(context.Context) error, sink Sink) error {
+func Run(ctx context.Context, track Track, playback Playback, info func(Track), wait func(context.Context) error, sink Sink) error {
+	if playback.Volume < 0 || playback.Volume > 100 || playback.Offset < 0 || playback.Offset > MaxDuration {
+		return errors.New("Invalid playback offset or volume.")
+	}
 	if track.ID == "" {
 		var err error
 		track, err = Lookup(ctx, track.Query)
@@ -178,7 +184,13 @@ func Run(ctx context.Context, track Track, info func(Track), wait func(context.C
 			return err
 		}
 	}
+	if track.Duration <= 0 || track.Duration > MaxDuration || playback.Offset > track.Duration {
+		return errors.New("Invalid track duration or playback offset.")
+	}
 	info(track)
+	if playback.Offset == track.Duration {
+		return nil
+	}
 	data, err := ytOutput(ctx, 8192, "--format", "bestaudio[protocol=https]", "--get-url", "--", "https://www.youtube.com/watch?v="+track.ID)
 	if err != nil {
 		return err
@@ -187,7 +199,15 @@ func Run(ctx context.Context, track Track, info func(Track), wait func(context.C
 	if err != nil {
 		return err
 	}
-	c := command(ctx, "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-protocol_whitelist", "https,tls,tcp", "-rw_timeout", "15000000", "-i", stream, "-vn", "-sn", "-dn", "-ac", "2", "-ar", "48000", "-c:a", "libopus", "-b:a", "96k", "-frame_duration", "20", "-application", "audio", "-t", fmt.Sprint(MaxDuration.Seconds()), "-f", "ogg", "-page_duration", "20000", "pipe:1")
+	c := command(ctx, "ffmpeg", decoderArgs(stream, track.Duration, playback)...)
+	return runDecoder(ctx, c, track.Duration-playback.Offset, wait, sink)
+}
+
+func decoderArgs(stream string, duration time.Duration, playback Playback) []string {
+	return []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-protocol_whitelist", "https,tls,tcp", "-rw_timeout", "15000000", "-ss", fmt.Sprint(playback.Offset.Seconds()), "-i", stream, "-vn", "-sn", "-dn", "-af", fmt.Sprintf("volume=%f", float64(playback.Volume)/100), "-ac", "2", "-ar", "48000", "-c:a", "libopus", "-b:a", "96k", "-frame_duration", "20", "-application", "audio", "-t", fmt.Sprint((duration - playback.Offset).Seconds()), "-f", "ogg", "-page_duration", "20000", "pipe:1"}
+}
+
+func runDecoder(ctx context.Context, c *exec.Cmd, remaining time.Duration, wait func(context.Context) error, sink Sink) error {
 	stdout, err := c.StdoutPipe()
 	if err != nil {
 		return err
@@ -206,7 +226,8 @@ func Run(ctx context.Context, track Track, info func(Track), wait func(context.C
 	}()
 	ogg := newOggReader(stdout)
 	next := time.Now()
-	for {
+	// Ogg/Opus adds encoder padding; emit at most the remaining track's rounded-up frame count.
+	for emitted := time.Duration(0); emitted < remaining; emitted += 20 * time.Millisecond {
 		if err = wait(ctx); err != nil {
 			return err
 		}
@@ -214,12 +235,18 @@ func Run(ctx context.Context, track Track, info func(Track), wait func(context.C
 		if readErr == io.EOF {
 			err = c.Wait()
 			waited = true
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			if err != nil {
 				return fmt.Errorf("ffmpeg failed: %w", err)
 			}
 			return nil
 		}
 		if readErr != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			return fmt.Errorf("Invalid ffmpeg audio: %w", readErr)
 		}
 		if err = wait(ctx); err != nil {
@@ -242,4 +269,5 @@ func Run(ctx context.Context, track Track, info func(Track), wait func(context.C
 			next = time.Now().Add(20 * time.Millisecond)
 		}
 	}
+	return nil
 }
