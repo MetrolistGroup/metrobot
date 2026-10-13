@@ -104,7 +104,7 @@ func TestNativeStartupRegistersCommandsAfterReadyAndCleansFailures(t *testing.T)
 					t.Fatal("commands registered without readiness")
 				}
 			} else {
-				want := strings.Fields("help gsm nanoreview technicalcity gsmcompare nanoreviewcompare technicalcitycompare ctx-reset quote Clip notes note addnote editnote renamenote delnote version latest actions ban dban tban sban kick mute timeout warn warnings unwarn dehoist approvenick bulkrole addadmin removeadmin memory ping purge scanreactions refreshstarboard")
+				want := strings.Fields("help gsm nanoreview technicalcity gsmcompare nanoreviewcompare technicalcitycompare ctx-reset quote Clip notes note addnote editnote renamenote delnote version latest actions ban dban tban sban kick mute timeout warn warnings unwarn dehoist approvenick bulkrole addadmin removeadmin memory ping purge scanreactions refreshstarboard play pause queue")
 				if !slices.Equal(commandNames, want) {
 					t.Fatalf("command set changed: %v", commandNames)
 				}
