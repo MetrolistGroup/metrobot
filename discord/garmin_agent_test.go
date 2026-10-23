@@ -528,18 +528,33 @@ func TestGarminWebSearchRouting(t *testing.T) {
 		t.Fatal("look it up was not recognized as explicit search")
 	}
 	query = garminWebSearchQuery([]cmd.GarminAIMessage{{Role: "assistant", Content: "Install the Kotlin Multiplatform plugin."}, {Role: "user", Content: "give me a link to that plugin"}})
-	if query != "give me a link to that plugin" {
-		t.Fatalf("query copied retained assistant text: %q", query)
+	if query != "" {
+		t.Fatalf("subjectless plugin lookup should ask for a subject: %q", query)
 	}
 	query = garminWebSearchQuery([]cmd.GarminAIMessage{{Role: "user", Content: "get me an image of a moai"}, {Role: "assistant", Content: "I cannot search."}, {Role: "user", Content: "use google images yourself"}})
-	if query != "use google images yourself" {
-		t.Fatalf("query copied an earlier user message: %q", query)
+	if query != "" {
+		t.Fatalf("subjectless image lookup should ask for a subject: %q", query)
 	}
 	if query := garminWebSearchQuery([]cmd.GarminAIMessage{{Role: "assistant", Content: "private channel details"}, {Role: "user", Content: "look this up"}}); query != "" {
 		t.Fatalf("context-only lookup should ask for a public subject: %q", query)
 	}
 	if !garminWebSearchRequested("search the web for Discord messages API documentation") || garminWebSearchRequested("summarize the last 100 messages") {
 		t.Fatal("explicit public search was confused with channel history")
+	}
+}
+
+func TestGarminWebSearchQueryRequiresNamedSubject(t *testing.T) {
+	for _, prompt := range []string{
+		"give me a link to that plugin", "give me a link to that plugin, please", "get me a URL for this app", "find a website for the project", "give me a link to it", "use google images yourself",
+	} {
+		if query := garminWebSearchQuery([]cmd.GarminAIMessage{{Role: "user", Content: prompt}}); query != "" {
+			t.Errorf("context-only query %q should ask for a subject, got %q", prompt, query)
+		}
+	}
+	for _, prompt := range []string{"give me a link to the Kotlin Multiplatform plugin", "search the web for cat care tips", "find documentation for Go modules"} {
+		if query := garminWebSearchQuery([]cmd.GarminAIMessage{{Role: "user", Content: prompt}}); query != prompt {
+			t.Errorf("self-contained query %q was lost: %q", prompt, query)
+		}
 	}
 }
 

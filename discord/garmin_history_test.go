@@ -56,12 +56,18 @@ func garminHistoryTestSession(t *testing.T, handler func(*http.Request) (string,
 	}, Members: []discord.Member{{User: discord.User{ID: snowflakeID("100000"), Username: "cached"}, Nick: ptr("Cached Nick"), RoleIDs: []snowflake.ID{snowflakeID("42")}}}})
 	session.Caches.AddChannel(testChannel(t, map[string]any{"id": garminHistoryTestChannel, "guild_id": "100000000000000012", "name": "chat"}))
 	session.Rest = testREST(&http.Client{Transport: garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
-		if request.Method != http.MethodGet || !strings.HasSuffix(request.URL.Path, "/channels/"+garminHistoryTestChannel+"/messages") {
-			t.Fatalf("unexpected REST lookup (or identity/attachment fan-out): %s %s", request.Method, request.URL.Path)
-		}
-		body, err := handler(request)
-		if err != nil {
-			return nil, err
+		var body string
+		if request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/guilds/100000000000000012/members/100000000000000056") {
+			body = `{"user":{"id":"100000000000000056","username":"speaker"},"roles":[]}`
+		} else {
+			if request.Method != http.MethodGet || !strings.HasSuffix(request.URL.Path, "/channels/"+garminHistoryTestChannel+"/messages") {
+				t.Fatalf("unexpected REST lookup (or identity/attachment fan-out): %s %s", request.Method, request.URL.Path)
+			}
+			var err error
+			body, err = handler(request)
+			if err != nil {
+				return nil, err
+			}
 		}
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
 	})})
@@ -90,6 +96,14 @@ func TestGarminHistoryPasses100MessagesToCompletion(t *testing.T) {
 			t.Fatalf("unexpected fetch limit: %d", limit)
 		}
 		return mustJSON(messages[:limit]), nil
+	})
+	permissionChecks := 0
+	transport := session.Rest.HTTPClient().Transport
+	session.Rest.HTTPClient().Transport = garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if strings.Contains(request.URL.Path, "/members/") {
+			permissionChecks++
+		}
+		return transport.RoundTrip(request)
 	})
 	b := &Bot{garminFirecrawl: firecrawl.NewClient([]string{"fake"})}
 	calls := 0
@@ -143,8 +157,8 @@ func TestGarminHistoryPasses100MessagesToCompletion(t *testing.T) {
 	})
 	message := garminHistoryTestMessage()
 	result, err := b.runGarminAI(context.Background(), session, message, []cmd.GarminAIMessage{garminAIUserMessage(message, "summarize the last 100 messages")})
-	if err != nil || result.Answer != "summary grounded in 100 messages" || calls != 2 || restCalls != 1 {
-		t.Fatalf("history run = %#v, error=%v, AI=%d, REST=%d", result, err, calls, restCalls)
+	if err != nil || result.Answer != "summary grounded in 100 messages" || calls != 2 || restCalls != 1 || permissionChecks != 3 {
+		t.Fatalf("history run = %#v, error=%v, AI=%d, message fetches=%d, requester checks=%d", result, err, calls, restCalls, permissionChecks)
 	}
 }
 
@@ -570,6 +584,128 @@ func TestGarminHistoryRechecksPermissionAtExecution(t *testing.T) {
 	}
 }
 
+func TestGarminHistoryChecksLiveMembership(t *testing.T) {
+	for _, phase := range []string{"before fetch", "during fetch", "before answer", "lookup error", "wrong member"} {
+		t.Run(phase, func(t *testing.T) {
+			const privateText = "live-membership-private-canary"
+			memberChecks, messageFetches := 0, 0
+			allowed := phase != "before fetch"
+			message := garminHistoryTestMessage()
+			message.Member.RoleIDs = []snowflake.ID{snowflakeID("42")}
+			session := garminHistoryTestSession(t, func(*http.Request) (string, error) {
+				messageFetches++
+				if phase == "during fetch" {
+					allowed = false
+				}
+				return mustJSON(garminHistoryTestMessages(1, privateText)), nil
+			})
+			guildID := *message.GuildID
+			session.Caches.AddRole(discord.Role{ID: guildID, GuildID: guildID, Permissions: discord.PermissionViewChannel | discord.PermissionSendMessages})
+			session.Caches.AddRole(discord.Role{ID: snowflakeID("42"), GuildID: guildID, Permissions: discord.PermissionReadMessageHistory})
+			session.Caches.AddMember(discord.Member{GuildID: guildID, User: message.Author, RoleIDs: message.Member.RoleIDs})
+			transport := session.Rest.HTTPClient().Transport
+			session.Rest.HTTPClient().Transport = garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+				if !strings.HasSuffix(request.URL.Path, "/members/"+message.Author.ID.String()) {
+					return transport.RoundTrip(request)
+				}
+				memberChecks++
+				status := http.StatusOK
+				roles := []string{}
+				if allowed {
+					roles = []string{"42"}
+				}
+				userID := message.Author.ID.String()
+				if phase == "wrong member" {
+					userID = "100000000000000099"
+				}
+				body := mustJSON(map[string]any{"user": map[string]string{"id": userID, "username": "speaker"}, "roles": roles})
+				if phase == "lookup error" {
+					status, body = http.StatusForbidden, `{"code":50001,"message":"Missing Access"}`
+				}
+				return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+			})
+			b := &Bot{}
+			calls := 0
+			b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+				calls++
+				if calls == 1 {
+					return garminHistoryTestCall("read_channel_history", `{"limit":100}`), nil
+				}
+				output := request.Messages[len(request.Messages)-1].Content
+				if phase == "before answer" {
+					if !strings.Contains(output, privateText) {
+						t.Fatal("authorized retrieval fixture did not reach synthesis")
+					}
+					allowed = false
+					return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: privateText}}, nil
+				}
+				if !strings.Contains(garminToolResultError(output), "permissions") || strings.Contains(output, privateText) {
+					t.Fatalf("live permission failure exposed history: %s", output)
+				}
+				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "history unavailable"}}, nil
+			})
+			result, err := b.runGarminAI(context.Background(), session, message, []cmd.GarminAIMessage{{Role: "user", Content: "summarize the last 100 messages"}})
+			if err != nil || calls != 2 || strings.Contains(result.Answer, privateText) {
+				t.Fatalf("revoked live membership disclosed history: result=%#v, error=%v, calls=%d", result, err, calls)
+			}
+			wantChecks, wantFetches := 1, 0
+			if phase == "during fetch" {
+				wantChecks, wantFetches = 2, 1
+			} else if phase == "before answer" {
+				wantChecks, wantFetches = 3, 1
+			}
+			if memberChecks != wantChecks || messageFetches != wantFetches || !garminCanReadChannelHistory(session, message) {
+				t.Fatalf("must ignore stale granting snapshots: checks=%d, fetches=%d", memberChecks, messageFetches)
+			}
+		})
+	}
+}
+
+func TestGarminExplicitWebSearchPrecedesCommunityRetrieval(t *testing.T) {
+	const prompt = "search the web for cat care tips and summarize the minky channel"
+	const channelText = "private-community-canary: minky changed food"
+	var order []string
+	originalTransport := http.DefaultTransport
+	http.DefaultTransport = garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		order = append(order, "web")
+		var args garminToolArgs
+		if err := json.NewDecoder(request.Body).Decode(&args); err != nil || args.Query != prompt || strings.Contains(args.Query, channelText) {
+			t.Fatalf("public prefetch query=%q, error=%v", args.Query, err)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"success":true,"data":{"web":[{"url":"https://example.org/cat-care","markdown":"Public cat care advice"}]}}`))}, nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = originalTransport })
+	session := garminHistoryTestSession(t, func(*http.Request) (string, error) {
+		t.Fatal("mixed request should read only the approved minky channel")
+		return "[]", nil
+	})
+	session.Rest = testREST(&http.Client{Transport: garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodGet || !strings.HasSuffix(request.URL.Path, "/channels/"+garminMinkyID+"/messages") {
+			t.Fatalf("unexpected community lookup: %s %s", request.Method, request.URL.Path)
+		}
+		order = append(order, "community")
+		messages := garminHistoryTestMessages(1, channelText)
+		messages[0]["channel_id"] = garminMinkyID
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(mustJSON(messages))), Request: request}, nil
+	})})
+	b := &Bot{garminFirecrawl: firecrawl.NewClient([]string{"fake"})}
+	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		if !reflect.DeepEqual(order, []string{"web", "community"}) || !strings.Contains(request.Context, channelText) || !strings.Contains(request.Context, "A live web search succeeded") {
+			t.Fatalf("mixed request lost a source or leaked ordering: order=%v, context=%s", order, request.Context)
+		}
+		if garminToolAvailable(request.Tools, "search_web") || !strings.Contains(request.Messages[len(request.Messages)-1].Content, "https://example.org/cat-care") {
+			t.Fatal("must supply the public source, then disable search after private retrieval")
+		}
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "sourced cat care and the minky update"}}, nil
+	})
+	message := garminHistoryTestMessage()
+	message.Content = "garmin, " + prompt
+	result, err := b.runGarminAI(context.Background(), session, message, []cmd.GarminAIMessage{garminAIUserMessage(message, prompt)})
+	if err != nil || result.ToolCalls != 2 || result.Answer != "sourced cat care and the minky update" {
+		t.Fatalf("mixed request=%#v, error=%v", result, err)
+	}
+}
+
 func TestGarminRetrievedHistoryCannotReachWebSearch(t *testing.T) {
 	for _, mode := range []string{"next round", "same batch", "resumed history"} {
 		t.Run(mode, func(t *testing.T) {
@@ -629,7 +765,7 @@ func TestGarminRetrievedHistoryCannotReachWebSearch(t *testing.T) {
 }
 
 func TestGarminHistorySummaryCannotBecomeNextTurnSearchText(t *testing.T) {
-	for _, prompt := range []string{"look this up", "who coined the term quark?", "search the web for Discord messages API documentation"} {
+	for _, prompt := range []string{"look this up", "give me a link to that plugin", "who coined the term quark?", "search the web for Discord messages API documentation"} {
 		t.Run(prompt, func(t *testing.T) {
 			const privateText = "private-history-canary: confidential staff discussion"
 			var queries []string
@@ -689,6 +825,9 @@ func TestGarminHistorySummaryCannotBecomeNextTurnSearchText(t *testing.T) {
 					t.Fatal("current-request query authorization was not explained")
 				}
 				if calls == 1 {
+					if prompt == "give me a link to that plugin" && (garminToolAvailable(request.Tools, "search_web") || !strings.Contains(request.Context, "No self-contained public search subject is named")) {
+						t.Fatal("subjectless plugin follow-up must ask for the subject, not search")
+					}
 					return garminHistoryTestCall("search_web", mustJSON(map[string]string{"query": privateText})), nil
 				}
 				if calls == 2 {
@@ -709,7 +848,7 @@ func TestGarminHistorySummaryCannotBecomeNextTurnSearchText(t *testing.T) {
 			if err != nil || result.Answer != "a safe response" {
 				t.Fatalf("follow-up failed: result=%#v, error=%v", result, err)
 			}
-			if prompt == "look this up" {
+			if prompt == "look this up" || prompt == "give me a link to that plugin" {
 				if len(queries) != 0 {
 					t.Fatalf("ambiguous private-history follow-up triggered a search: %v", queries)
 				}
