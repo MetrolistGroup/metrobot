@@ -433,13 +433,18 @@ func TestGarminHistoryRequiresRequesterPermissions(t *testing.T) {
 		name            string
 		base, role      discord.Permissions
 		overwrites      []discord.PermissionOverwrite
+		cachedRoles     []snowflake.ID
 		thread, unknown bool
+		revoked         bool
 		want            bool
 	}{
 		{name: "allowed", base: allowed, want: true},
 		{name: "send without history", base: allowed &^ discord.PermissionReadMessageHistory},
 		{name: "history without view", base: allowed &^ discord.PermissionViewChannel},
 		{name: "role grants history", base: allowed &^ discord.PermissionReadMessageHistory, role: discord.PermissionReadMessageHistory, want: true},
+		{name: "revoked cached role", base: allowed &^ discord.PermissionReadMessageHistory, role: discord.PermissionReadMessageHistory, cachedRoles: []snowflake.ID{snowflakeID("42")}, revoked: true},
+		{name: "revoked cached administrator", base: allowed &^ discord.PermissionReadMessageHistory, role: discord.PermissionAdministrator, cachedRoles: []snowflake.ID{snowflakeID("42")}, revoked: true},
+		{name: "fresh embedded role grant", base: allowed &^ discord.PermissionReadMessageHistory, role: discord.PermissionReadMessageHistory, cachedRoles: []snowflake.ID{}, want: true},
 		{name: "role denies history", base: allowed, overwrites: []discord.PermissionOverwrite{discord.RolePermissionOverwrite{RoleID: snowflakeID("42"), Deny: discord.PermissionReadMessageHistory}}},
 		{name: "member deny beats role allow", base: allowed &^ discord.PermissionReadMessageHistory, overwrites: []discord.PermissionOverwrite{
 			discord.RolePermissionOverwrite{RoleID: snowflakeID("42"), Allow: discord.PermissionReadMessageHistory},
@@ -467,6 +472,12 @@ func TestGarminHistoryRequiresRequesterPermissions(t *testing.T) {
 			session.Caches.AddRole(discord.Role{ID: guildID, GuildID: guildID, Permissions: test.base})
 			session.Caches.AddRole(discord.Role{ID: snowflakeID("42"), GuildID: guildID, Permissions: test.role})
 			message.Member.RoleIDs = []snowflake.ID{snowflakeID("42")}
+			if test.cachedRoles != nil {
+				session.Caches.AddMember(discord.Member{GuildID: guildID, User: message.Author, RoleIDs: test.cachedRoles})
+			}
+			if test.revoked {
+				message.Member.RoleIDs = nil
+			}
 			if test.unknown {
 				message.Member.RoleIDs = append(message.Member.RoleIDs, snowflakeID("777"))
 			}
@@ -614,6 +625,126 @@ func TestGarminRetrievedHistoryCannotReachWebSearch(t *testing.T) {
 				t.Fatalf("private history escaped to Firecrawl: result=%#v, error=%v, searches=%d", result, err, searches)
 			}
 		})
+	}
+}
+
+func TestGarminHistorySummaryCannotBecomeNextTurnSearchText(t *testing.T) {
+	for _, prompt := range []string{"look this up", "who coined the term quark?", "search the web for Discord messages API documentation"} {
+		t.Run(prompt, func(t *testing.T) {
+			const privateText = "private-history-canary: confidential staff discussion"
+			var queries []string
+			originalTransport := http.DefaultTransport
+			http.DefaultTransport = garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+				var args garminToolArgs
+				if err := json.NewDecoder(request.Body).Decode(&args); err != nil {
+					t.Fatal(err)
+				}
+				queries = append(queries, args.Query)
+				if strings.Contains(args.Query, privateText) {
+					t.Error("history-derived private text was sent to Firecrawl")
+				}
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"success":true,"data":{"web":[{"url":"https://example.org/source","markdown":"Public source"}]}}`))}, nil
+			})
+			t.Cleanup(func() { http.DefaultTransport = originalTransport })
+			session := garminHistoryTestSession(t, func(*http.Request) (string, error) {
+				return mustJSON(garminHistoryTestMessages(1, privateText)), nil
+			})
+			b := &Bot{garminFirecrawl: firecrawl.NewClient([]string{"fake"})}
+			message := garminHistoryTestMessage()
+			original := []cmd.GarminAIMessage{garminAIUserMessage(message, "summarize the last 100 messages")}
+			historyCalls := 0
+			b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+				historyCalls++
+				if historyCalls == 1 {
+					return garminHistoryTestCall("read_channel_history", `{"limit":100}`), nil
+				}
+				if !strings.Contains(request.Messages[len(request.Messages)-1].Content, privateText) {
+					t.Fatal("fixture did not retrieve the private history")
+				}
+				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: privateText}}, nil
+			})
+			summary, err := b.runGarminAI(context.Background(), session, message, original)
+			if err != nil || historyCalls != 2 || len(queries) != 0 {
+				t.Fatalf("history setup failed: result=%#v, error=%v, calls=%d, queries=%v", summary, err, historyCalls, queries)
+			}
+			// Match handleGarminAIWithMode: only original messages and the answer survive.
+			retained := append(copyGarminAIMessages(original), cmd.GarminAIMessage{Role: "assistant", Content: summary.Answer})
+			b.rememberGarminAIContext("1001", message, retained)
+			followup := garminHistoryTestMessage()
+			followup.ID = snowflakeID("1002")
+			followup.Content = "garmin, " + prompt
+			messages := b.garminAITriggeredConversation(followup, prompt)
+			if len(messages) != 3 || messages[1].Content != privateText {
+				t.Fatalf("production-shaped retained summary missing: %#v", messages)
+			}
+			for _, retainedMessage := range messages {
+				if len(retainedMessage.ToolCalls) != 0 {
+					t.Fatal("regression fixture accidentally retained history tool provenance")
+				}
+			}
+			calls := 0
+			b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+				calls++
+				if !strings.Contains(request.Context, "web search query must exactly match") {
+					t.Fatal("current-request query authorization was not explained")
+				}
+				if calls == 1 {
+					return garminHistoryTestCall("search_web", mustJSON(map[string]string{"query": privateText})), nil
+				}
+				if calls == 2 {
+					output := request.Messages[len(request.Messages)-1].Content
+					if garminToolResultError(output) == "" {
+						t.Fatal("private query was not rejected")
+					}
+					if prompt == "who coined the term quark?" {
+						if !garminToolAvailable(request.Tools, "search_web") {
+							t.Fatal("autonomous search should still allow a self-contained current request")
+						}
+						return garminHistoryTestCall("search_web", mustJSON(map[string]string{"query": prompt})), nil
+					}
+				}
+				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "a safe response"}}, nil
+			})
+			result, err := b.runGarminAI(context.Background(), session, followup, messages)
+			if err != nil || result.Answer != "a safe response" {
+				t.Fatalf("follow-up failed: result=%#v, error=%v", result, err)
+			}
+			if prompt == "look this up" {
+				if len(queries) != 0 {
+					t.Fatalf("ambiguous private-history follow-up triggered a search: %v", queries)
+				}
+			} else if !reflect.DeepEqual(queries, []string{prompt}) {
+				t.Fatalf("public searches must use only the current request: %v", queries)
+			}
+		})
+	}
+}
+
+func TestGarminReplyTextCannotBecomeSearchQuery(t *testing.T) {
+	message := garminHistoryTestMessage()
+	message.Content = "garmin, who coined the term quark?"
+	message.ReferencedMessage = &discord.Message{
+		ID: snowflakeID("999"), Content: "private-reply-canary", Author: discord.User{ID: snowflakeID("100000"), Username: "someone"}, Member: &discord.Member{},
+	}
+	session := garminHistoryTestSession(t, func(*http.Request) (string, error) {
+		t.Fatal("reply-context search must not fetch channel history")
+		return "[]", nil
+	})
+	b := &Bot{garminFirecrawl: firecrawl.NewClient(nil)}
+	calls := 0
+	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		calls++
+		if calls == 1 {
+			return garminHistoryTestCall("search_web", `{"query":"private-reply-canary"}`), nil
+		}
+		if !strings.Contains(garminToolResultError(request.Messages[len(request.Messages)-1].Content), "current user request") {
+			t.Fatal("reply text was not rejected before calling Firecrawl")
+		}
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "safe answer"}}, nil
+	})
+	result, err := b.runGarminAI(context.Background(), session, message, []cmd.GarminAIMessage{garminAIUserMessage(message, "who coined the term quark?")})
+	if err != nil || calls != 2 || result.Answer != "safe answer" {
+		t.Fatalf("reply-context query escaped validation: result=%#v, error=%v, calls=%d", result, err, calls)
 	}
 }
 

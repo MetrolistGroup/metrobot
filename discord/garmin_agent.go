@@ -137,6 +137,12 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 	}
 	discordContext := b.garminDiscordContextForConversation(s, m, messages)
 	discordContext += "\nRequest time (UTC): " + time.Now().UTC().Format(time.RFC3339)
+	webQuery := garminWebSearchQuery(messages)
+	// Retention drops tool provenance, so prior chat is never authorized search text.
+	restrictWebQuery := len(messages) > 1 || m.ReferencedMessage != nil
+	if restrictWebQuery {
+		discordContext += "\n\nFor privacy, any web search query must exactly match this current user request, without text from earlier messages: " + mustJSON(webQuery) + ". If the subject is only in prior chat, ask the user to restate a self-contained public search subject."
+	}
 	if ambient {
 		discordContext += "\n\nThis is an unprefixed message during an active Metrobot conversation. Default to do_not_respond: most ambient channel messages are not for you. Never answer merely because Metrobot is mentioned in the third person. Short reactions or commentary get at most react_to_message. Send text only for a direct follow-up question or clear direct address to you."
 	}
@@ -237,14 +243,14 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 		}
 		finalOnly = true
 	}
-	if webToolRequired && !historyRetrieved {
+	if webToolRequired && !historyRetrieved && webQuery != "" {
 		call := cmd.GarminAIToolCall{
 			ID:   "required-web-search",
 			Type: "function",
 			Function: cmd.GarminAIFunctionCall{
 				Name: "search_web",
 				Arguments: mustJSON(map[string]any{
-					"query":  garminWebSearchQuery(messages),
+					"query":  webQuery,
 					"limit":  5,
 					"source": garminWebSearchSource(garminUserText(messages)),
 				}),
@@ -279,7 +285,7 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 		if !garminCanReadChannelHistory(s, m) {
 			requestTools = withoutGarminTools(requestTools, "read_channel_history")
 		}
-		if historyRetrieved {
+		if historyRetrieved || webQuery == "" {
 			requestTools = withoutGarminTools(requestTools, "search_web")
 		}
 		if calculationUsed {
@@ -397,6 +403,13 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 			if !garminToolAvailable(requestTools, toolCall.Function.Name) || (historyRetrieved && toolCall.Function.Name == "search_web") {
 				conversation = append(conversation, cmd.GarminAIMessage{Role: "tool", ToolCallID: toolCall.ID, Content: toolError(fmt.Errorf("tool %q is unavailable for this request", toolCall.Function.Name))})
 				continue
+			}
+			if restrictWebQuery && toolCall.Function.Name == "search_web" {
+				var args garminToolArgs
+				if json.Unmarshal([]byte(toolCall.Function.Arguments), &args) != nil || args.Query != webQuery {
+					conversation = append(conversation, cmd.GarminAIMessage{Role: "tool", ToolCallID: toolCall.ID, Content: toolError(fmt.Errorf("web search must use the current user request exactly, without retained conversation text"))})
+					continue
+				}
 			}
 			result.ToolCalls++
 			visible, handled, actionErr := b.handleGarminAIMessageActionIfVisible(s, m, toolCall, ambientToken)
@@ -1038,12 +1051,15 @@ func garminCanReadChannelHistory(s *bot.Client, m *discord.Message) bool {
 			return false
 		}
 	}
-	member, cached := s.Caches.Member(guildID, m.Author.ID)
-	if !cached {
-		if m.Member == nil {
+	var member discord.Member
+	if m.Member != nil {
+		member = *m.Member
+	} else {
+		var cached bool
+		member, cached = s.Caches.Member(guildID, m.Author.ID)
+		if !cached {
 			return false
 		}
-		member = *m.Member
 	}
 	member.GuildID = guildID
 	member.User = m.Author
@@ -1686,12 +1702,12 @@ func garminMathRequested(prompt string) bool {
 
 func garminWebSearchRequested(prompt string) bool {
 	prompt = strings.ToLower(prompt)
+	if garminExplicitWebSearchRequested(prompt) {
+		return true
+	}
 	// Channel retrieval and incidental words like "find" or "latest" are not public-search requests.
 	if containsAnyGarminPhrase(prompt, "messages", "channel history", "conversation", "chat history", "who said", "what did we", "what we discussed") {
 		return false
-	}
-	if garminExplicitWebSearchRequested(prompt) {
-		return true
 	}
 	if !strings.Contains(prompt, "?") && !containsAnyGarminPhrase(prompt, "what ", "what's ", "whats ", "who ", "when ", "where ", "how ", "tell me ", "show me ", "give me ", "get me ", "find ", "any news", "news about", "weather in") {
 		return false
@@ -1726,20 +1742,9 @@ func garminWebSearchSource(prompt string) string {
 
 func garminWebSearchQuery(messages []cmd.GarminAIMessage) string {
 	query := strings.TrimSpace(garminUserText(messages))
-	padded := " " + strings.ToLower(query) + " "
-	contextRole := ""
-	if containsAnyGarminPhrase(padded, " that ", " this ", " it ", " those ", " these ") {
-		contextRole = "assistant"
-	} else if containsAnyGarminPhrase(padded, " look it up ", " look this up ", " google images ", " search yourself ", " look online ") {
-		contextRole = "user"
-	}
-	if contextRole != "" {
-		for index := len(messages) - 2; index >= 0; index-- {
-			if messages[index].Role == contextRole && strings.TrimSpace(messages[index].Content) != "" {
-				query = truncateRunes(strings.TrimSpace(messages[index].Content), 300) + " " + query
-				break
-			}
-		}
+	switch strings.Trim(strings.ToLower(query), " .,?!") {
+	case "look it up", "look this up", "look that up":
+		return ""
 	}
 	if strings.Contains(strings.ToLower(query), "tenor") && !strings.Contains(strings.ToLower(query), "site:tenor.com") {
 		query = "site:tenor.com " + query

@@ -528,12 +528,18 @@ func TestGarminWebSearchRouting(t *testing.T) {
 		t.Fatal("look it up was not recognized as explicit search")
 	}
 	query = garminWebSearchQuery([]cmd.GarminAIMessage{{Role: "assistant", Content: "Install the Kotlin Multiplatform plugin."}, {Role: "user", Content: "give me a link to that plugin"}})
-	if !strings.Contains(query, "Kotlin Multiplatform plugin") {
-		t.Fatalf("contextual query = %q", query)
+	if query != "give me a link to that plugin" {
+		t.Fatalf("query copied retained assistant text: %q", query)
 	}
 	query = garminWebSearchQuery([]cmd.GarminAIMessage{{Role: "user", Content: "get me an image of a moai"}, {Role: "assistant", Content: "I cannot search."}, {Role: "user", Content: "use google images yourself"}})
-	if !strings.Contains(query, "image of a moai") {
-		t.Fatalf("generic follow-up query = %q", query)
+	if query != "use google images yourself" {
+		t.Fatalf("query copied an earlier user message: %q", query)
+	}
+	if query := garminWebSearchQuery([]cmd.GarminAIMessage{{Role: "assistant", Content: "private channel details"}, {Role: "user", Content: "look this up"}}); query != "" {
+		t.Fatalf("context-only lookup should ask for a public subject: %q", query)
+	}
+	if !garminWebSearchRequested("search the web for Discord messages API documentation") || garminWebSearchRequested("summarize the last 100 messages") {
+		t.Fatal("explicit public search was confused with channel history")
 	}
 }
 
