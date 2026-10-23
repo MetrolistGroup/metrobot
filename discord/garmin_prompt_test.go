@@ -19,7 +19,7 @@ func TestGarminPromptSupportsSporadicDetailedConversation(t *testing.T) {
 			t.Errorf("conversation prompts missing %q", expected)
 		}
 	}
-	for _, expected := range []string{"tracked_message_timestamps", "1900 characters", "Explicit summary, conversation-history, or detail requests", "Use web search proactively", "read_channel_history", "Per-user memory is disabled"} {
+	for _, expected := range []string{"tracked_message_timestamps", "1900 characters", "Explicit summary, conversation-history, or detail requests", "Use web search proactively", "Be explicit about missing history", "Per-user memory is disabled"} {
 		if !strings.Contains(cmd.GarminSystemPrompt(), expected) {
 			t.Errorf("base prompt missing %q", expected)
 		}
