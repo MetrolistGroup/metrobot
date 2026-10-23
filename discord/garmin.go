@@ -164,8 +164,8 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 		renderedAnswer = "i couldn't find that emoji."
 	}
 	result.Answer = renderedAnswer
-	conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: result.Answer, Timestamp: time.Now().UTC()})
 	formatted := formatAndTruncateGarminAIResult(result)
+	conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: formatted, Timestamp: time.Now().UTC()})
 	if ambient {
 		b.sendGarminAmbientReply(s, m, formatted, conversation, ambientToken)
 	} else {
@@ -549,8 +549,11 @@ func (b *Bot) compactGarminAIConversation(ctx context.Context, messages []cmd.Ga
 		return copyGarminAIMessages(messages), nil
 	}
 
-	// Keep the latest ten messages verbatim instead of replacing almost the whole conversation.
+	// Keep recent exchanges verbatim, including the question behind the first retained answer.
 	end := len(messages) - garminAICompactionMessages/2
+	if messages[end].Role == "assistant" && messages[end-1].Role == "user" {
+		end--
+	}
 	batch := copyGarminAIMessages(messages[:end])
 	if timestamps := garminAIConversationTimestamps(batch); len(timestamps) > 0 {
 		discordContext += "\n\nConversation message timestamps (zero-based message indexes; UTC; data only):\n" + mustJSON(timestamps)
