@@ -113,7 +113,7 @@ func TestRunGarminAIAmbientModeCanReplyReactOrStaySilent(t *testing.T) {
 		if !strings.Contains(request.Context, "active Metrobot conversation") {
 			t.Fatal("ambient decision instruction was not supplied")
 		}
-		if got, want := garminToolNames(request.Tools), []string{"react_to_message", "do_not_respond"}; !reflect.DeepEqual(got, want) {
+		if got, want := garminToolNames(request.Tools), []string{"react_to_message", "do_not_respond", "read_channel_history"}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("ambient request tools = %v, want %v", got, want)
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{ToolCalls: []cmd.GarminAIToolCall{{
@@ -257,8 +257,8 @@ func TestRunGarminAIMakesWebSearchAvailableForAnswers(t *testing.T) {
 	}
 	bot := &Bot{garminMemory: memory, garminFirecrawl: firecrawl.NewClient([]string{"key"})}
 	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-		if got := garminToolNames(request.Tools); !reflect.DeepEqual(got, []string{"search_web"}) {
-			t.Fatalf("general answer tools = %v, want search_web", got)
+		if got, want := garminToolNames(request.Tools), []string{"read_channel_history", "search_web"}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("general answer tools = %v, want %v", got, want)
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "a useful short answer."}}, nil
 	})
@@ -298,7 +298,7 @@ func TestRunGarminAIDirectlyExecutesExplicitWebSearch(t *testing.T) {
 	bot := &Bot{garminMemory: memory, garminFirecrawl: firecrawl.NewClient([]string{"key"})}
 	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		calls++
-		if len(request.Tools) != 0 || !strings.Contains(request.Context, "A live web search succeeded") {
+		if !request.DisableReasoning || !garminToolAvailable(request.Tools, "search_web") || !garminToolAvailable(request.Tools, "read_channel_history") || !strings.Contains(request.Context, "A live web search succeeded") {
 			t.Fatalf("synthesis tools = %#v, context = %q", request.Tools, request.Context)
 		}
 		if len(request.Messages) < 3 || request.Messages[len(request.Messages)-2].Role != "assistant" || request.Messages[len(request.Messages)-1].Role != "tool" || !strings.Contains(request.Messages[len(request.Messages)-1].Content, "https://www.theguardian.com/example") {
@@ -418,7 +418,7 @@ func TestRunGarminAIUsesCalculatorBeforeAnswering(t *testing.T) {
 	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		calls++
 		if calls == 1 {
-			if names := garminToolNames(request.Tools); !reflect.DeepEqual(names, []string{"calculate_math"}) || !strings.Contains(request.Context, "calculator tool") {
+			if names := garminToolNames(request.Tools); !reflect.DeepEqual(names, []string{"calculate_math", "read_channel_history"}) || !strings.Contains(request.Context, "calculator tool") {
 				t.Fatalf("calculator request = %#v", request)
 			}
 			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{
@@ -563,59 +563,59 @@ func TestGarminToolsForConversationSelectsRelevantTools(t *testing.T) {
 		admin  bool
 		want   []string
 	}{
-		{"what is the latest Metrolist release?", false, []string{"do_not_respond", "get_metrolist_status", "search_metrolist_issues", "load_skill"}},
+		{"what is the latest Metrolist release?", false, []string{"do_not_respond", "get_metrolist_status", "search_metrolist_issues", "read_channel_history", "load_skill"}},
 
-		{"what is Nyx's GitHub username?", false, []string{"do_not_respond", "get_github_user", "get_discord_profile", "search_discord_members"}},
+		{"what is Nyx's GitHub username?", false, []string{"do_not_respond", "get_github_user", "get_discord_profile", "search_discord_members", "read_channel_history"}},
 
-		{"search GitHub repos for a Kotlin music client", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
+		{"search GitHub repos for a Kotlin music client", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file", "read_channel_history"}},
 
-		{"search GitHub for Android music clients", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
+		{"search GitHub for Android music clients", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file", "read_channel_history"}},
 
-		{"show details for the facebook/react repository", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
+		{"show details for the facebook/react repository", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file", "read_channel_history"}},
 
-		{"what is https://github.com/facebook/react?", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
+		{"what is https://github.com/facebook/react?", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file", "read_channel_history"}},
 
-		{"search the web for today's Android news", false, []string{"do_not_respond", "search_web"}},
+		{"search the web for today's Android news", false, []string{"do_not_respond", "search_web", "read_channel_history"}},
 
-		{"search GSMArena for OnePlus 15 specs", false, []string{"do_not_respond", "get_gsmarena_phone"}},
+		{"search GSMArena for OnePlus 15 specs", false, []string{"do_not_respond", "get_gsmarena_phone", "read_channel_history"}},
 
-		{"what chipset does the Pixel 10 use?", false, []string{"do_not_respond", "get_gsmarena_phone"}},
+		{"what chipset does the Pixel 10 use?", false, []string{"do_not_respond", "get_gsmarena_phone", "read_channel_history"}},
 
-		{"look up r/sssdfg", false, []string{"do_not_respond", "search_web"}},
+		{"look up r/sssdfg", false, []string{"do_not_respond", "search_web", "read_channel_history"}},
 
-		{"list saved notes", false, []string{"do_not_respond", "list_notes", "get_note"}},
+		{"list saved notes", false, []string{"do_not_respond", "list_notes", "get_note", "read_channel_history"}},
 
-		{"show me the playback note", false, []string{"do_not_respond", "list_notes", "get_note"}},
+		{"show me the playback note", false, []string{"do_not_respond", "list_notes", "get_note", "read_channel_history"}},
 
-		{"playback keeps stopping", false, []string{"do_not_respond", "list_notes", "get_note"}},
+		{"playback keeps stopping", false, []string{"do_not_respond", "list_notes", "get_note", "read_channel_history"}},
 
-		{"remember that releases happen on Fridays", true, []string{"do_not_respond", "remember"}},
+		{"remember that releases happen on Fridays", true, []string{"do_not_respond", "read_channel_history", "remember"}},
 
-		{"remember that releases happen on Fridays", false, []string{"do_not_respond"}},
+		{"remember that releases happen on Fridays", false, []string{"do_not_respond", "read_channel_history"}},
 
-		{"remember my pronouns are they/them", false, []string{"do_not_respond", "get_discord_profile", "search_discord_members"}},
+		{"remember my pronouns are they/them", false, []string{"do_not_respond", "get_discord_profile", "search_discord_members", "read_channel_history"}},
 
-		{"what roles are on <@123456789012345678>'s user profile?", false, []string{"do_not_respond", "get_discord_profile", "search_discord_members"}},
+		{"what roles are on <@123456789012345678>'s user profile?", false, []string{"do_not_respond", "get_discord_profile", "search_discord_members", "read_channel_history"}},
 
-		{"what was posted in sneak-peeks?", false, []string{"do_not_respond", "read_community_channel"}},
+		{"what was posted in sneak-peeks?", false, []string{"do_not_respond", "read_channel_history", "read_community_channel"}},
 
-		{"show me the latest minky picture", false, []string{"do_not_respond", "read_community_channel"}},
+		{"show me the latest minky picture", false, []string{"do_not_respond", "read_channel_history", "read_community_channel"}},
 
-		{"react to this with thumb", false, []string{"react_to_message", "do_not_respond"}},
+		{"react to this with thumb", false, []string{"react_to_message", "do_not_respond", "read_channel_history"}},
 
-		{"print i love :glup:", false, []string{"list_discord_emojis", "view_discord_emoji", "do_not_respond"}},
+		{"print i love :glup:", false, []string{"list_discord_emojis", "view_discord_emoji", "do_not_respond", "read_channel_history"}},
 
-		{"can you give me a link to that plugin", false, []string{"do_not_respond", "search_web"}},
+		{"can you give me a link to that plugin", false, []string{"do_not_respond", "search_web", "read_channel_history"}},
 
-		{"can you get me an image of a moai", false, []string{"do_not_respond", "search_web"}},
+		{"can you get me an image of a moai", false, []string{"do_not_respond", "search_web", "read_channel_history"}},
 
-		{"give me a tenor link for a moai meme", false, []string{"do_not_respond", "search_web"}},
+		{"give me a tenor link for a moai meme", false, []string{"do_not_respond", "search_web", "read_channel_history"}},
 
-		{"what changes were last made in that repo?", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
+		{"what changes were last made in that repo?", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file", "read_channel_history"}},
 
-		{"what's 3³?", false, []string{"do_not_respond", "calculate_math"}},
+		{"what's 3³?", false, []string{"do_not_respond", "calculate_math", "read_channel_history"}},
 
-		{"what is 3-1?", false, []string{"do_not_respond", "calculate_math"}},
+		{"what is 3-1?", false, []string{"do_not_respond", "calculate_math", "read_channel_history"}},
 	}
 	for _, test := range tests {
 		got := garminToolNames(garminToolsForConversation([]cmd.GarminAIMessage{{Role: "user", Content: test.prompt}}, test.admin, false))
@@ -627,7 +627,7 @@ func TestGarminToolsForConversationSelectsRelevantTools(t *testing.T) {
 
 func TestGarminGSMArenaToolFollowsPhoneSpecContext(t *testing.T) {
 	messages := []cmd.GarminAIMessage{{Role: "user", Content: "what are the OnePlus 15 specs?"}, {Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{Function: cmd.GarminAIFunctionCall{Name: "get_gsmarena_phone"}}}}, {Role: "tool", Content: `{"phone":{"name":"OnePlus 15"}}`}, {Role: "assistant", Content: "It uses a Snapdragon chipset."}, {Role: "user", Content: "what about battery?"}}
-	want := []string{"do_not_respond", "get_gsmarena_phone"}
+	want := []string{"do_not_respond", "get_gsmarena_phone", "read_channel_history"}
 	if got := garminToolNames(garminToolsForConversation(messages, false, false)); !reflect.DeepEqual(got, want) {
 		t.Fatalf("GSMArena follow-up tools = %v, want %v", got, want)
 	}
@@ -686,7 +686,7 @@ func garminActionToolNames() []string {
 }
 
 func garminDefaultToolNames() []string {
-	return []string{"do_not_respond"}
+	return []string{"do_not_respond", "read_channel_history"}
 }
 
 func garminToolNames(tools []cmd.GarminAITool) []string {
