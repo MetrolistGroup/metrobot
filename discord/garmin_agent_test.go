@@ -113,7 +113,7 @@ func TestRunGarminAIAmbientModeCanReplyReactOrStaySilent(t *testing.T) {
 		if !strings.Contains(request.Context, "active Metrobot conversation") {
 			t.Fatal("ambient decision instruction was not supplied")
 		}
-		if got, want := garminToolNames(request.Tools), []string{"react_to_message", "do_not_respond", "read_channel_history"}; !reflect.DeepEqual(got, want) {
+		if got, want := garminToolNames(request.Tools), []string{"react_to_message", "do_not_respond"}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("ambient request tools = %v, want %v", got, want)
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{ToolCalls: []cmd.GarminAIToolCall{{
@@ -185,41 +185,21 @@ func TestRunGarminAIAutomaticallyLoadsRelevantSkills(t *testing.T) {
 	}
 }
 
-func TestRunGarminAIDoesNotAttachBacklogImages(t *testing.T) {
-	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	session, err := newTestClient(t)
-
-	if err != nil {
-		t.Fatal(err)
-	}
-	cacheTestGuild(session, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: snowflakeID("100000000000000012")}, Roles: []discord.Role{{ID: snowflakeID("100000000000000010"), Name: "@everyone"}}}})
-	session.Caches.AddChannel(testChannel(t, map[string]any{"id": "100000000000000005", "guild_id": "100000000000000012", "name": "chat"}))
-	session.Rest = testREST(&http.Client{Transport: garminRoundTripFunc(func(*http.Request) (*http.Response,
-		error) {
-		body := `[{"id":"199","channel_id":"100000000000000005","content":"","author":{"id":"100000000000000047","username":"someone"},"attachments":[{"filename":"old.png","content_type":"image/png","url":"https://cdn.example/old.png"}]}]`
-
-		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
-	})})
-
-	bot := &Bot{Config: &config.Config{DiscordGuildID: "100000000000000012"}, garminMemory: memory}
-	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-		if !strings.Contains(request.Context, "old.png") {
-			t.Fatal("backlog attachment metadata was not supplied")
-		}
-		for _, message := range request.Messages {
-			if len(message.Images) > 0 {
-				t.Fatalf("backlog image was attached to %q", message.Content)
-			}
-		}
-		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "hey"}}, nil
+func TestRunGarminAIDoesNotPrefetchChannelHistory(t *testing.T) {
+	session := garminHistoryTestSession(t, func(*http.Request) (string, error) {
+		t.Fatal("casual chat fetched channel history before the model requested it")
+		return "[]", nil
 	})
-	message := &discord.Message{
-		ID: snowflakeID("200"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Author: discord.User{ID: snowflakeID("123456789012345678"), Username: "user"}, Member: &discord.Member{RoleIDs: []snowflake.ID{snowflakeID("100000000000000010")}}, Content: "garmin, hey",
-	}
-	if _, err := bot.runGarminAI(context.Background(), session, message, []cmd.GarminAIMessage{garminAIUserMessage(message, "hey")}); err != nil {
+	b := &Bot{}
+	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		if !garminToolAvailable(request.Tools, "read_channel_history") || strings.Contains(request.Context, "Recent channel conversation") {
+			t.Fatal("history should be available on demand, not prefetched")
+		}
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "hey"}}, nil
+	})
+	message := garminHistoryTestMessage()
+	message.Content = "garmin, hey"
+	if _, err := b.runGarminAI(context.Background(), session, message, []cmd.GarminAIMessage{garminAIUserMessage(message, "hey")}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -257,7 +237,7 @@ func TestRunGarminAIMakesWebSearchAvailableForAnswers(t *testing.T) {
 	}
 	bot := &Bot{garminMemory: memory, garminFirecrawl: firecrawl.NewClient([]string{"key"})}
 	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-		if got, want := garminToolNames(request.Tools), []string{"read_channel_history", "search_web"}; !reflect.DeepEqual(got, want) {
+		if got, want := garminToolNames(request.Tools), []string{"search_web"}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("general answer tools = %v, want %v", got, want)
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "a useful short answer."}}, nil
@@ -298,7 +278,7 @@ func TestRunGarminAIDirectlyExecutesExplicitWebSearch(t *testing.T) {
 	bot := &Bot{garminMemory: memory, garminFirecrawl: firecrawl.NewClient([]string{"key"})}
 	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		calls++
-		if !request.DisableReasoning || !garminToolAvailable(request.Tools, "search_web") || !garminToolAvailable(request.Tools, "read_channel_history") || !strings.Contains(request.Context, "A live web search succeeded") {
+		if !request.DisableReasoning || !garminToolAvailable(request.Tools, "search_web") || garminToolAvailable(request.Tools, "read_channel_history") || !strings.Contains(request.Context, "A live web search succeeded") {
 			t.Fatalf("synthesis tools = %#v, context = %q", request.Tools, request.Context)
 		}
 		if len(request.Messages) < 3 || request.Messages[len(request.Messages)-2].Role != "assistant" || request.Messages[len(request.Messages)-1].Role != "tool" || !strings.Contains(request.Messages[len(request.Messages)-1].Content, "https://www.theguardian.com/example") {
@@ -418,7 +398,7 @@ func TestRunGarminAIUsesCalculatorBeforeAnswering(t *testing.T) {
 	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		calls++
 		if calls == 1 {
-			if names := garminToolNames(request.Tools); !reflect.DeepEqual(names, []string{"calculate_math", "read_channel_history"}) || !strings.Contains(request.Context, "calculator tool") {
+			if names := garminToolNames(request.Tools); !reflect.DeepEqual(names, []string{"calculate_math"}) || !strings.Contains(request.Context, "calculator tool") {
 				t.Fatalf("calculator request = %#v", request)
 			}
 			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{
