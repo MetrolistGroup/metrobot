@@ -42,12 +42,8 @@ func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http
 		},
 		func(request *chatCompletionRequest) {
 			if useDefaultRoute {
-				if request.DisableReasoning {
-					disabled := false
-					request.Reasoning = &chatReasoning{Enabled: &disabled}
-				} else {
-					request.Reasoning = &chatReasoning{MaxTokens: 128}
-				}
+				disabled := false
+				request.Reasoning = &chatReasoning{Enabled: &disabled}
 				request.SessionID = openRouterSessionID
 				if len(request.Messages) > 0 {
 					request.Messages[0].Cache = true
@@ -56,7 +52,7 @@ func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http
 					DataCollection:    "deny",
 					RequireParameters: true,
 					Sort: chatProviderSort{
-						By:        "throughput",
+						By:        "latency",
 						Partition: "none",
 					},
 				}

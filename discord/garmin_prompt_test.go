@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -11,6 +12,19 @@ import (
 	"github.com/MetrolistGroup/metrobot/db"
 	"github.com/disgoorg/disgo/discord"
 )
+
+func TestGarminPromptSupportsSporadicDetailedConversation(t *testing.T) {
+	for _, expected := range []string{"Prioritize the newest user question", "message dates or time gaps", "at most 350 words", "Never retain individual profiles"} {
+		if !strings.Contains(cmd.GarminSystemPrompt()+garminAIConversationSummaryPrompt, expected) {
+			t.Errorf("conversation prompts missing %q", expected)
+		}
+	}
+	for _, expected := range []string{"tracked_message_timestamps", "1900 characters", "Explicit summary, conversation-history, or detail requests", "Use web search proactively", "read_channel_history", "Per-user memory is disabled"} {
+		if !strings.Contains(cmd.GarminSystemPrompt(), expected) {
+			t.Errorf("base prompt missing %q", expected)
+		}
+	}
+}
 
 func TestRunGarminAILoadsLivePersistentBasePrompt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bot.db")
@@ -38,6 +52,7 @@ func TestRunGarminAILoadsLivePersistentBasePrompt(t *testing.T) {
 	messages := []cmd.GarminAIMessage{{Role: "user", Content: "metrolist playback keeps stopping"}}
 	b := &Bot{DB: database, garminMemory: memory}
 	var requests []cmd.GarminAIRequest
+	currentTime := regexp.MustCompile(`"current_utc_time":"[^"]+"`)
 	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		requests = append(requests, request)
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "answer"}}, nil
@@ -56,7 +71,7 @@ func TestRunGarminAILoadsLivePersistentBasePrompt(t *testing.T) {
 			t.Fatal("Discord identity context was lost")
 		}
 		if len(requests) > 1 {
-			if !reflect.DeepEqual(request.Tools, requests[0].Tools) || request.Context != requests[0].Context || !reflect.DeepEqual(request.Messages, requests[0].Messages) {
+			if !reflect.DeepEqual(request.Tools, requests[0].Tools) || currentTime.ReplaceAllString(request.Context, "") != currentTime.ReplaceAllString(requests[0].Context, "") || !reflect.DeepEqual(request.Messages, requests[0].Messages) {
 				t.Fatal("prompt edit changed context, messages or tool enforcement")
 			}
 		}

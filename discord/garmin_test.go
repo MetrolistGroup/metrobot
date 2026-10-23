@@ -95,7 +95,7 @@ func TestGarminAIConversationCompactsEveryTwentyMessages(t *testing.T) {
 				name = "discord_lamp"
 			}
 		}
-		messages = append(messages, cmd.GarminAIMessage{Role: role, Name: name, Content: fmt.Sprintf("message %d", index), Images: []string{"https://example.com/image.png"}})
+		messages = append(messages, cmd.GarminAIMessage{Role: role, Name: name, Content: fmt.Sprintf("message %d", index), Images: []string{"https://example.com/image.png"}, Timestamp: time.Date(2026, 6, 20, 12, index, 0, 0, time.UTC)})
 	}
 	messages = append(messages, cmd.GarminAIMessage{Role: "user", Name: "discord_100000000000000027", Content: "continue"})
 
@@ -103,10 +103,14 @@ func TestGarminAIConversationCompactsEveryTwentyMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].Name != garminAIConversationSummaryName || got[1].Content != "continue" || !strings.Contains(got[0].Content, model.summary) || !strings.Contains(got[0].Content, "discord_lamp") {
+	recent := garminAICompactionMessages / 2
+	if len(got) != recent+1 || got[0].Name != garminAIConversationSummaryName || !reflect.DeepEqual(got[1:], messages[len(messages)-recent:]) || !strings.Contains(got[0].Content, model.summary) || !strings.Contains(got[0].Content, "discord_lamp") {
 		t.Fatalf("compacted conversation = %#v", got)
 	}
-	if len(model.request.Messages) != garminAICompactionMessages || !model.request.DisableReasoning || model.request.Context == "" {
+	if got[0].Timestamp != messages[len(messages)-recent-1].Timestamp || !strings.Contains(model.request.Context, "2026-06-20T12:00:00Z") {
+		t.Fatalf("compaction lost message times: %#v, context %s", got[0], model.request.Context)
+	}
+	if len(model.request.Messages) != len(messages)-recent || !model.request.DisableReasoning || model.request.Context == "" {
 		t.Fatalf("summary request = %#v", model.request)
 	}
 	for _, message := range model.request.Messages {
@@ -119,7 +123,7 @@ func TestGarminAIConversationCompactsEveryTwentyMessages(t *testing.T) {
 	secondCycle := append(copyGarminAIMessages(got[:1]), messages[:garminAICompactionMessages]...)
 	secondCycle = append(secondCycle, cmd.GarminAIMessage{Role: "user", Name: "discord_100000000000000027", Content: "next cycle"})
 	got, err = bot.compactGarminAIConversation(context.Background(), secondCycle, "context")
-	if err != nil || len(got) != 2 || got[1].Content != "next cycle" || len(model.request.Messages) != garminAICompactionMessages+1 || model.request.Messages[0].Name != garminAIConversationSummaryName {
+	if err != nil || len(got) != recent+1 || got[len(got)-1].Content != "next cycle" || len(model.request.Messages) != len(secondCycle)-recent || model.request.Messages[0].Name != garminAIConversationSummaryName {
 		t.Fatalf("second compaction = %#v, request %#v, error %v", got, model.request, err)
 	}
 
@@ -208,6 +212,98 @@ func TestGarminAITriggeredConversationUsesActiveHistory(t *testing.T) {
 	want := append(history, cmd.GarminAIMessage{Role: "user", Name: "discord_100000000000000018", Content: "you forgot"})
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("triggered conversation = %#v, want %#v", got, want)
+	}
+}
+
+func TestGarminAISporadicRetentionIsSeparateFromAmbient(t *testing.T) {
+	for _, age := range []time.Duration{3 * time.Minute, 6 * time.Hour, 23 * time.Hour, 25 * time.Hour} {
+		t.Run(age.String(), func(t *testing.T) {
+			b := &Bot{garminAI: &fakeGarminAI{}}
+			message := &discord.Message{GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Author: discord.User{ID: snowflakeID("100000000000000056")}}
+			history := []cmd.GarminAIMessage{{Role: "user", Content: "we chose option B", Timestamp: time.Now().UTC().Add(-age)}}
+			b.storeGarminAIContextLocked("150", message, history, time.Now().Add(-age))
+			retained := age < 24*time.Hour
+			if _, ok := b.garminAIAmbientContinuation(message, "still here?"); ok {
+				t.Fatal("sporadic history reopened ambient replies")
+			}
+			got := b.garminAITriggeredConversation(message, "what did we choose?")
+			if (len(got) == 2) != retained || retained && !reflect.DeepEqual(got[:1], history) {
+				t.Fatalf("addressed conversation after ambient probe = %#v, retained = %v", got, retained)
+			}
+			if _, exists := b.garminAIUserContexts[garminAIUserContextKey(message)]; exists != retained {
+				t.Fatalf("user history retained = %v, want %v", exists, retained)
+			}
+			message.MessageReference = &discord.MessageReference{MessageID: snowflakePtr("150")}
+			if _, ok := b.garminAIContinuation(message, "continue"); ok != retained {
+				t.Fatalf("referenced conversation retained = %v, want %v", ok, retained)
+			}
+		})
+	}
+}
+
+func TestGarminAITriggeredConversationPrefersReferencedHistoryAndStaysIsolated(t *testing.T) {
+	b := &Bot{garminAI: &fakeGarminAI{}}
+	message := &discord.Message{GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Author: discord.User{ID: snowflakeID("100000000000000056")}}
+	b.rememberGarminAIContext("150", message, []cmd.GarminAIMessage{{Role: "user", Content: "the original topic"}})
+	b.rememberGarminAIContext("160", message, []cmd.GarminAIMessage{{Role: "user", Content: "an unrelated newer topic"}})
+	for _, reference := range []bool{true, false} {
+		reply := *message
+		if reference {
+			reply.MessageReference = &discord.MessageReference{MessageID: snowflakePtr("150")}
+		} else {
+			reply.ReferencedMessage = &discord.Message{ID: snowflakeID("150")}
+		}
+		if got := b.garminAITriggeredConversation(&reply, "continue"); len(got) != 2 || got[0].Content != "the original topic" {
+			t.Fatalf("referenced history lost to latest user context: %#v", got)
+		}
+	}
+	for _, scope := range []string{"user", "guild", "channel"} {
+		other := *message
+		switch scope {
+		case "user":
+			other.Author.ID = snowflakeID("100000000000000057")
+		case "guild":
+			other.GuildID = snowflakePtr("100000000000000013")
+		case "channel":
+			other.ChannelID = snowflakeID("100000000000000006")
+		}
+		if got := b.garminAITriggeredConversation(&other, "hello"); len(got) != 1 {
+			t.Fatalf("cross-%s addressed history exposed: %#v", scope, got)
+		}
+	}
+}
+
+func TestGarminAIStorageLeavesOldestBatchForCompactionAndStaysBounded(t *testing.T) {
+	model := &summaryGarminAI{summary: "the first decision was option B"}
+	b := &Bot{garminAI: model}
+	message := &discord.Message{ChannelID: snowflakeID("5"), Author: discord.User{ID: snowflakeID("56")}}
+	history := make([]cmd.GarminAIMessage, garminAICompactionMessages+2)
+	for index := range history {
+		history[index] = cmd.GarminAIMessage{Role: "user", Content: fmt.Sprintf("detail %d", index)}
+	}
+	b.rememberGarminAIUserContext(message, history)
+	stored, _ := b.garminAIHistory(message, "", false)
+	if !reflect.DeepEqual(stored, history) {
+		t.Fatal("storage dropped details before compaction could summarize them")
+	}
+	if _, err := b.compactGarminAIConversation(context.Background(), stored, ""); err != nil || model.request.Messages[0].Content != "detail 0" {
+		t.Fatalf("oldest detail missed compaction: %#v, %v", model.request, err)
+	}
+	now := time.Now()
+	for index := range garminAIContextMax + 1 {
+		message.Author.ID = snowflakeID(fmt.Sprint(index + 1000))
+		b.storeGarminAIContextLocked(fmt.Sprint(index), message, make([]cmd.GarminAIMessage, 100), now.Add(time.Duration(index)*time.Millisecond))
+	}
+	if len(b.garminAIContexts) != garminAIContextMax || len(b.garminAIUserContexts) != garminAIContextMax {
+		t.Fatalf("context limits = %d replies, %d users", len(b.garminAIContexts), len(b.garminAIUserContexts))
+	}
+	if _, exists := b.garminAIContexts["0"]; exists {
+		t.Fatal("oldest context was not evicted")
+	}
+	for _, context := range b.garminAIContexts {
+		if len(context.messages) > 2*garminAICompactionMessages {
+			t.Fatalf("stored conversation is unbounded: %d messages", len(context.messages))
+		}
 	}
 }
 
@@ -437,7 +533,7 @@ func TestGarminEmojiToolsListAndViewLiveGuildEmojis(t *testing.T) {
 }
 
 func TestEnforceGarminGeneralReplyIsShortWithoutRedirect(t *testing.T) {
-	got := enforceGarminChannelReply(garminGeneralID, "the setting is under Settings > Playback. here's some extra detail.")
+	got := enforceGarminChannelReply(garminGeneralID, "the setting is under Settings > Playback. here's some extra detail.", "where is the setting?")
 	want := "the setting is under Settings > Playback."
 	if got != want {
 		t.Fatalf("enforceGarminChannelReply() = %q, want %q", got, want)
@@ -445,8 +541,20 @@ func TestEnforceGarminGeneralReplyIsShortWithoutRedirect(t *testing.T) {
 	if strings.Contains(got, "#bots") || strings.Contains(got, garminBotsID) {
 		t.Fatalf("general reply redirected to #bots: %q", got)
 	}
-	if got := enforceGarminChannelReply("another-channel", "yeah, sure. what's on your mind?"); got != "yeah, sure. what's on your mind?" {
+	if got := enforceGarminChannelReply("another-channel", "yeah, sure. what's on your mind?", "hello"); got != "yeah, sure. what's on your mind?" {
 		t.Fatalf("non-general reply changed to %q", got)
+	}
+}
+
+func TestEnforceGarminGeneralReplyAllowsRequestedDetail(t *testing.T) {
+	answer := "we chose option B.\n- Lamp corrected the date.\n- the release is still undecided."
+	for _, prompt := range []string{"Summarize this conversation", "give me a recap", "more details please", "explain in detail", "what did we talk about?", "who said what?", "show our conversation history"} {
+		if got := enforceGarminChannelReply(garminGeneralID, answer, prompt); got != answer {
+			t.Errorf("requested detail %q was truncated: %q", prompt, got)
+		}
+	}
+	if got := enforceGarminChannelReply(garminGeneralID, answer, "hello"); got != "we chose option B." {
+		t.Fatalf("ordinary general policy changed: %q", got)
 	}
 }
 
@@ -457,7 +565,7 @@ func TestEnforceGarminThreadUnderGeneralStaysShort(t *testing.T) {
 	state.Caches.AddChannel(testChannel(t, map[string]any{"id": "100000000000000011", "guild_id": "100000000000000012", "parent_id": garminGeneralID, "name": "thread", "type": discord.ChannelTypeGuildPublicThread}))
 
 	session := state
-	got := enforceGarminChannelReply(garminRedirectChannelID(session, "100000000000000011"), "the answer is 42. here's some extra detail.")
+	got := enforceGarminChannelReply(garminRedirectChannelID(session, "100000000000000011"), "the answer is 42. here's some extra detail.", "what is the answer?")
 	if got != "the answer is 42." {
 		t.Fatalf("thread reply = %q", got)
 	}
@@ -471,7 +579,7 @@ func TestGarminChatThreadUnderGeneralAllowsNormalReplies(t *testing.T) {
 
 	session := state
 	answer := "yeah, sure. what's on your mind?"
-	if got := enforceGarminChannelReply(garminRedirectChannelID(session, garminChatThreadID), answer); got != answer {
+	if got := enforceGarminChannelReply(garminRedirectChannelID(session, garminChatThreadID), answer, "hello"); got != answer {
 		t.Fatalf("allowed thread reply = %q, want %q", got, answer)
 	}
 	message := &discord.Message{
@@ -553,6 +661,55 @@ func TestGarminAIUserMessageDefaultsImageOnlyPrompt(t *testing.T) {
 	got := garminAIUserMessage(message, "")
 	if got.Content != "what is in this image?" || len(got.Images) != 1 {
 		t.Fatalf("image-only message = %#v", got)
+	}
+}
+
+func TestHandleGarminAIBuildsDiscordContextOnlyOnce(t *testing.T) {
+	for _, count := range []int{1, garminAICompactionMessages + 1} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			session := mustTestClient(t)
+			cacheTestGuild(session, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: snowflakeID("12")}, Roles: []discord.Role{{ID: snowflakeID("13"), Name: "member"}}}})
+			session.Caches.AddChannel(testChannel(t, map[string]any{"id": "5", "guild_id": "12", "name": "bots"}))
+			memberLookups, completions := 0, 0
+			session.Rest = testREST(&http.Client{Transport: garminRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+				body := ""
+				switch {
+				case strings.Contains(r.URL.Path, "/members/"):
+					memberLookups++
+					body = `{"user":{"id":"56","username":"speaker"},"roles":[]}`
+				case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages"):
+					body = `[]`
+				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/messages"):
+					body = `{"id":"150","channel_id":"5","content":"hello"}`
+				case strings.HasSuffix(r.URL.Path, "/typing"):
+				default:
+					t.Errorf("unexpected REST request: %s %s", r.Method, r.URL)
+				}
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+			})})
+			b := &Bot{Logger: zap.NewNop(), garminAISlots: make(chan struct{}, 1), garminAILastUsed: make(map[string]time.Time)}
+			b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+				completions++
+				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "hello"}}, nil
+			})
+			message := &discord.Message{ID: snowflakeID("100"), GuildID: snowflakePtr("12"), ChannelID: snowflakeID("5"), Content: "garmin, hello", Author: discord.User{ID: snowflakeID("56"), Username: "speaker"}, CreatedAt: time.Now().UTC()}
+			messages := make([]cmd.GarminAIMessage, count)
+			for index := range messages {
+				messages[index] = garminAIUserMessage(message, "hello")
+			}
+			b.handleGarminAI(session, message, messages)
+			wantCompletions := 1
+			if count > garminAICompactionMessages {
+				wantCompletions++
+			}
+			if memberLookups != 1 || completions != wantCompletions {
+				t.Fatalf("member lookups = %d, completions = %d; want 1 and %d", memberLookups, completions, wantCompletions)
+			}
+			stored, ok := b.garminAIHistory(message, "150", false)
+			if !ok || stored[len(stored)-1].Timestamp.IsZero() {
+				t.Fatal("reply did not retain its timestamp")
+			}
+		})
 	}
 }
 

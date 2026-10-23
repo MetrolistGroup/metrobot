@@ -1,13 +1,42 @@
 package discord
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/config"
+	"github.com/disgoorg/disgo/discord"
 )
+
+func TestGarminDiscordContextIncludesDatesAndConversationGaps(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	previous := now.Add(-6 * time.Hour)
+	message := &discord.Message{CreatedAt: now, Author: discord.User{ID: snowflakeID("56"), Username: "speaker"}, ReferencedMessage: &discord.Message{ID: snowflakeID("150"), CreatedAt: previous, Author: discord.User{ID: snowflakeID("57"), Username: "other"}}}
+	tracked := []cmd.GarminAIMessage{garminAIUserMessage(&discord.Message{CreatedAt: previous, Author: message.Author}, "earlier plan"), garminAIUserMessage(message, "what did we decide?")}
+	_, data, _ := strings.Cut(garminDiscordContext(nil, nil, message, tracked), "\n")
+	var context struct {
+		Now        string            `json:"current_utc_time"`
+		Current    string            `json:"current_message_timestamp"`
+		Timestamps map[string]string `json:"tracked_message_timestamps"`
+		Reference  struct {
+			Timestamp string `json:"timestamp"`
+		} `json:"replied_to_message"`
+	}
+	if err := json.Unmarshal([]byte(data), &context); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := time.Parse(time.RFC3339, context.Now); err != nil {
+		t.Fatalf("current time lacks full date: %q", context.Now)
+	}
+	if context.Current != now.Format(time.RFC3339) || context.Timestamps["0"] != previous.Format(time.RFC3339) || context.Timestamps["1"] != context.Current || context.Reference.Timestamp != context.Timestamps["0"] {
+		t.Fatalf("conversation timestamps = %#v", context)
+	}
+}
 
 func TestGetGarminDiscordProfileUsesOnlyDiscordData(t *testing.T) {
 	const targetID = "123456789012345678"

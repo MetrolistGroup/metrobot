@@ -32,8 +32,8 @@ func TestOpenRouterClientUsesCapableRouteByDefault(t *testing.T) {
 	if request.Model != openRouterDefaultModel || len(request.Models) != 0 {
 		t.Errorf("model route = (%q, %v), want %q", request.Model, request.Models, openRouterDefaultModel)
 	}
-	if request.Reasoning == nil || request.Reasoning.Enabled != nil || request.Reasoning.MaxTokens != 128 || request.Reasoning.Exclude || request.MaxTokens != 1024 {
-		t.Errorf("reasoning = %#v with %d output tokens, want 128 reasoning and 1024 output", request.Reasoning, request.MaxTokens)
+	if request.Reasoning == nil || request.Reasoning.Enabled == nil || *request.Reasoning.Enabled || request.Reasoning.MaxTokens != 0 || request.Reasoning.Exclude || request.MaxTokens != 1024 {
+		t.Errorf("reasoning = %#v with %d output tokens, want disabled reasoning and 1024 output", request.Reasoning, request.MaxTokens)
 	}
 	if request.SessionID != openRouterSessionID {
 		t.Errorf("session ID = %q, want %q", request.SessionID, openRouterSessionID)
@@ -41,7 +41,7 @@ func TestOpenRouterClientUsesCapableRouteByDefault(t *testing.T) {
 	if len(request.Messages) == 0 || !request.Messages[0].Cache {
 		t.Errorf("stable system prompt was not marked for provider caching: %#v", request.Messages)
 	}
-	if request.Provider == nil || request.Provider.ZDR || request.Provider.DataCollection != "deny" || !request.Provider.RequireParameters || request.Provider.Sort.By != "throughput" || request.Provider.Sort.Partition != "none" {
+	if request.Provider == nil || request.Provider.ZDR || request.Provider.DataCollection != "deny" || !request.Provider.RequireParameters || request.Provider.Sort.By != "latency" || request.Provider.Sort.Partition != "none" {
 		t.Errorf("provider routing = %#v", request.Provider)
 	}
 	if referer != "https://github.com/MetrolistGroup/metrobot" || title != "Metrobot" {
@@ -121,7 +121,7 @@ func TestOpenRouterClientMigratesPreviousQwenDefault(t *testing.T) {
 	if _, err := client.Ask(context.Background(), testGarminMessages("hi")); err != nil {
 		t.Fatalf("Ask() error = %v", err)
 	}
-	if request.Model != openRouterDefaultModel || request.Reasoning == nil || request.Reasoning.MaxTokens != 128 || request.Reasoning.Exclude {
+	if request.Model != openRouterDefaultModel || request.Reasoning == nil || request.Reasoning.Enabled == nil || *request.Reasoning.Enabled || request.Reasoning.MaxTokens != 0 || request.Reasoning.Exclude {
 		t.Fatalf("previous default migration = model %q, reasoning %#v", request.Model, request.Reasoning)
 	}
 }

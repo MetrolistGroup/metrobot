@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -102,42 +101,55 @@ func TestChatCompletionClientRoundTripsToolCalls(t *testing.T) {
 	}
 }
 
-func TestChatCompletionClientSerializesConcurrentRequests(t *testing.T) {
-	var active atomic.Int32
-	var overlapped atomic.Bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if active.Add(1) > 1 {
-			overlapped.Store(true)
+func TestChatCompletionClientAllowsConcurrentRequestsAndRotatesKeys(t *testing.T) {
+	entered := make(chan string, 2)
+	release := make(chan struct{}, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		entered <- r.Header.Get("Authorization")
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
 		}
-		defer active.Add(-1)
-		time.Sleep(20 * time.Millisecond)
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
 	}))
 	defer server.Close()
+	defer close(release)
 
-	client := newChatCompletionClient([]string{"key"}, server.URL, "model", "test provider", nil, nil, server.Client())
-	start := make(chan struct{})
+	client := newChatCompletionClient([]string{"first", "second"}, server.URL, "model", "test provider", nil, nil, server.Client())
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
 	errs := make(chan error, 2)
 	for range 2 {
 		go func() {
-			<-start
-			_, err := client.Ask(context.Background(), testGarminMessages("hi"))
+			_, err := client.Ask(ctx, testGarminMessages("hi"))
 			errs <- err
 		}()
 	}
-	close(start)
+	keys := make(map[string]bool)
+	for range 2 {
+		select {
+		case key := <-entered:
+			keys[key] = true
+		case <-ctx.Done():
+			t.Fatal("second request waited for the first provider response")
+		}
+	}
+	if !keys["Bearer first"] || !keys["Bearer second"] {
+		t.Fatalf("concurrent key rotation = %v", keys)
+	}
+	// Both requests have reached the provider before either response is released.
+	release <- struct{}{}
+	release <- struct{}{}
 	for range 2 {
 		if err := <-errs; err != nil {
 			t.Fatal(err)
 		}
 	}
-	if overlapped.Load() {
-		t.Fatal("concurrent provider requests overlapped")
-	}
 }
 
 func TestGarminAIMessageMarshalsVisionContent(t *testing.T) {
-	message := GarminAIMessage{Role: "user", Name: "discord_123456789012345678", Content: "what is this?", Images: []string{"https://cdn.discordapp.com/image.png"}}
+	message := GarminAIMessage{Role: "user", Name: "discord_123456789012345678", Content: "what is this?", Images: []string{"https://cdn.discordapp.com/image.png"}, Timestamp: time.Now().UTC()}
 	data, err := json.Marshal(message)
 	if err != nil {
 		t.Fatal(err)
@@ -145,6 +157,12 @@ func TestGarminAIMessageMarshalsVisionContent(t *testing.T) {
 	var payload map[string]any
 	if err := json.Unmarshal(data, &payload); err != nil {
 		t.Fatal(err)
+	}
+	if _, ok := payload["Timestamp"]; ok {
+		t.Fatal("local timestamp leaked into provider message protocol")
+	}
+	if err := json.Unmarshal(data, &message); err != nil || !message.Timestamp.IsZero() {
+		t.Fatalf("provider message retained a local timestamp: %#v, %v", message, err)
 	}
 	parts, ok := payload["content"].([]any)
 	if !ok || len(parts) != 2 || payload["name"] != "discord_123456789012345678" {
