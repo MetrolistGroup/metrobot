@@ -664,16 +664,32 @@ func TestGarminAIUserMessageDefaultsImageOnlyPrompt(t *testing.T) {
 	}
 }
 
-func TestHandleGarminAIBuildsDiscordContextOnlyOnce(t *testing.T) {
-	for _, count := range []int{1, garminAICompactionMessages + 1} {
-		t.Run(fmt.Sprint(count), func(t *testing.T) {
+func TestHandleGarminAIOnlyBuildsCompactionContextWhenNeeded(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		count   int
+		summary bool
+	}{
+		{name: "short", count: 1},
+		{name: "boundary", count: garminAICompactionMessages},
+		{name: "summary boundary", count: garminAICompactionMessages + 1, summary: true},
+		{name: "compaction", count: garminAICompactionMessages + 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			needsCompaction := test.count > garminAICompactionMessages && !test.summary
 			session := mustTestClient(t)
 			cacheTestGuild(session, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: snowflakeID("12")}, Roles: []discord.Role{{ID: snowflakeID("13"), Name: "member"}}}})
 			session.Caches.AddChannel(testChannel(t, map[string]any{"id": "5", "guild_id": "12", "name": "bots"}))
-			memberLookups, completions := 0, 0
+			memberLookups, pastMemberLookups, completions := 0, 0, 0
 			session.Rest = testREST(&http.Client{Transport: garminRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 				body := ""
 				switch {
+				case strings.HasSuffix(r.URL.Path, "/members/57"):
+					pastMemberLookups++
+					if pastMemberLookups > 1 {
+						return &http.Response{StatusCode: http.StatusNotFound, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"message":"Unknown Member","code":10007}`)), Request: r}, nil
+					}
+					body = `{"user":{"id":"57","username":"former"},"nick":"Former Speaker","roles":[]}`
 				case strings.Contains(r.URL.Path, "/members/"):
 					memberLookups++
 					body = `{"user":{"id":"56","username":"speaker"},"roles":[]}`
@@ -690,20 +706,36 @@ func TestHandleGarminAIBuildsDiscordContextOnlyOnce(t *testing.T) {
 			b := &Bot{Logger: zap.NewNop(), garminAISlots: make(chan struct{}, 1), garminAILastUsed: make(map[string]time.Time)}
 			b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 				completions++
+				if request.SystemPrompt == garminAIConversationSummaryPrompt {
+					for _, expected := range []string{`"tracked_conversation_users"`, `"discord_57"`, `"display_name":"Former Speaker"`} {
+						if !strings.Contains(request.Context, expected) {
+							t.Errorf("compaction lost participant identity %s: %s", expected, request.Context)
+						}
+					}
+					return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: `{"summary":"Former Speaker (discord_57) chose option B","shared_memory":[]}`}}, nil
+				}
+				if needsCompaction && (!strings.Contains(request.Messages[0].Content, "Former Speaker") || strings.Contains(request.Context, "Former Speaker")) {
+					t.Fatal("speaker name was not retained independently of live member lookup")
+				}
 				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "hello"}}, nil
 			})
 			message := &discord.Message{ID: snowflakeID("100"), GuildID: snowflakePtr("12"), ChannelID: snowflakeID("5"), Content: "garmin, hello", Author: discord.User{ID: snowflakeID("56"), Username: "speaker"}, CreatedAt: time.Now().UTC()}
-			messages := make([]cmd.GarminAIMessage, count)
+			messages := make([]cmd.GarminAIMessage, test.count)
 			for index := range messages {
 				messages[index] = garminAIUserMessage(message, "hello")
 			}
-			b.handleGarminAI(session, message, messages)
-			wantCompletions := 1
-			if count > garminAICompactionMessages {
-				wantCompletions++
+			if test.summary {
+				messages[0] = cmd.GarminAIMessage{Role: "assistant", Name: garminAIConversationSummaryName, Content: "earlier discussion"}
+			} else if needsCompaction {
+				messages[0] = cmd.GarminAIMessage{Role: "user", Name: "discord_57", Content: "choose option B"}
 			}
-			if memberLookups != 1 || completions != wantCompletions {
-				t.Fatalf("member lookups = %d, completions = %d; want 1 and %d", memberLookups, completions, wantCompletions)
+			b.handleGarminAI(session, message, messages)
+			wantRequests, wantPastLookups := 1, 0
+			if needsCompaction {
+				wantRequests, wantPastLookups = 2, 2
+			}
+			if memberLookups != wantRequests || completions != wantRequests || pastMemberLookups != wantPastLookups {
+				t.Fatalf("member lookups = %d, completions = %d, past member lookups = %d; want %d, %d, %d", memberLookups, completions, pastMemberLookups, wantRequests, wantRequests, wantPastLookups)
 			}
 			stored, ok := b.garminAIHistory(message, "150", false)
 			if !ok || stored[len(stored)-1].Timestamp.IsZero() {

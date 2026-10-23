@@ -103,9 +103,13 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 	}
 	defer b.unregisterGarminAIRequest(m)
 
-	if len(messages) > garminAICompactionMessages {
+	messageCount := len(messages)
+	if messages[0].Name == garminAIConversationSummaryName {
+		messageCount--
+	}
+	if messageCount > garminAICompactionMessages {
 		compactionCtx, cancelCompaction := context.WithTimeout(requestCtx, garminAICompactionTimeout)
-		compacted, err := b.compactGarminAIConversation(compactionCtx, messages, "")
+		compacted, err := b.compactGarminAIConversation(compactionCtx, messages, b.garminDiscordContextForConversation(s, m, messages))
 		cancelCompaction()
 		if err != nil {
 			b.Logger.Warn("failed to compact Metrobot AI conversation", zap.Error(err))
