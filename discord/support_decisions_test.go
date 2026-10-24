@@ -513,6 +513,81 @@ func TestConfiguredSupportDecisionsUsedByMessageHandler(t *testing.T) {
 	}
 }
 
+func TestSupportDecisionAgentFailedHandoffCanRetry(t *testing.T) {
+	for _, failure := range []string{"busy", "cooldown", "model", "reply", "note"} {
+		t.Run(failure, func(t *testing.T) {
+			b, client, sent := newSupportDecisionTestBot(t)
+			decisionCalls := 0
+			b.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+				decisionCalls++
+				return supportTestDecision(request, "agent", .99, .99), nil
+			})
+			failed := true
+			b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+				if failure == "model" && failed {
+					return nil, errors.New("synthetic model failure")
+				}
+				if failure == "note" {
+					return garminHistoryTestCall("get_note", `{"name":"nightly"}`), nil
+				}
+				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "Verified support answer"}}, nil
+			})
+			m := supportTestMessage(20)
+			messages := []cmd.GarminAIMessage{{Role: "user", Content: m.Content}}
+			switch failure {
+			case "busy":
+				for i := 0; i < cap(b.garminAISlots); i++ {
+					b.garminAISlots <- struct{}{}
+				}
+			case "cooldown":
+				b.garminAILastUsed[m.Author.ID.String()] = time.Now()
+			case "reply", "note":
+				sent.fail.Store(true)
+			}
+			b.handleGarminAutomaticAppSupport(client, m, messages)
+			if _, seen := b.supportSeen[m.ID.String()]; seen || len(b.supportNotes) != 0 {
+				t.Fatal("failed handoff retained seen state or a note cooldown")
+			}
+			attempts := sent.count()
+			failed = false
+			sent.fail.Store(false)
+			if failure == "busy" {
+				for i := 0; i < cap(b.garminAISlots); i++ {
+					<-b.garminAISlots
+				}
+			}
+			b.garminAILastUsed[m.Author.ID.String()] = time.Now().Add(-garminAICooldown)
+			b.handleGarminAutomaticAppSupport(client, m, messages)
+			if state, seen := b.supportSeen[m.ID.String()]; !seen || state.busy || sent.count() != attempts+1 || decisionCalls != 2 {
+				t.Fatalf("retry did not complete: seen=%v state=%+v sends=%d decisions=%d", seen, state, sent.count(), decisionCalls)
+			}
+			b.handleGarminAutomaticAppSupport(client, m, messages)
+			if sent.count() != attempts+1 || decisionCalls != 2 {
+				t.Fatal("successful handoff was not deduplicated")
+			}
+		})
+	}
+}
+
+func TestSupportDecisionAgentIntentionalSilenceIsRemembered(t *testing.T) {
+	b, client, sent := newSupportDecisionTestBot(t)
+	decisionCalls := 0
+	b.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+		decisionCalls++
+		return supportTestDecision(request, "agent", .99, .99), nil
+	})
+	b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		return garminHistoryTestCall("do_not_respond", `{}`), nil
+	})
+	m := supportTestMessage(20)
+	messages := []cmd.GarminAIMessage{{Role: "user", Content: m.Content}}
+	b.handleGarminAutomaticAppSupport(client, m, messages)
+	b.handleGarminAutomaticAppSupport(client, m, messages)
+	if state, seen := b.supportSeen[m.ID.String()]; !seen || state.busy || sent.count() != 0 || decisionCalls != 1 {
+		t.Fatalf("intentional silence was not deduplicated: seen=%v state=%+v sends=%d decisions=%d", seen, state, sent.count(), decisionCalls)
+	}
+}
+
 func TestSupportDecisionAgentHandoffRestrictsManualNotes(t *testing.T) {
 	b, client, sent := newSupportDecisionTestBot(t)
 	if err := b.DB.AddNote("manual", "", "Private manual-only body"); err != nil {

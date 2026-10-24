@@ -223,26 +223,26 @@ func (b *Bot) handleGarminSupportDecision(s *bot.Client, m *discord.Message, mes
 		// The agent registers its own cancellable request; keep message dedup claimed until it finishes.
 		b.unregisterGarminAIRequest(m)
 		registered = false
-		b.runSupportDecisionAgent(s, m, messages)
+		remember = b.runSupportDecisionAgent(s, m, messages)
 	}
 }
 
 type automaticSupportContextKey struct{}
 
-func (b *Bot) runSupportDecisionAgent(s *bot.Client, m *discord.Message, messages []cmd.GarminAIMessage) {
+func (b *Bot) runSupportDecisionAgent(s *bot.Client, m *discord.Message, messages []cmd.GarminAIMessage) bool {
 	if !b.claimGarminAICooldown(m.Author.ID.String()) {
-		return
+		return false
 	}
 	select {
 	case b.garminAISlots <- struct{}{}:
 		defer func() { <-b.garminAISlots }()
 	default:
-		return
+		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), garminAITimeout)
 	defer cancel()
 	if !b.registerGarminAIRequest(m, cancel) {
-		return
+		return false
 	}
 	defer b.unregisterGarminAIRequest(m)
 	ctx = context.WithValue(ctx, automaticSupportContextKey{}, true)
@@ -253,26 +253,31 @@ func (b *Bot) runSupportDecisionAgent(s *bot.Client, m *discord.Message, message
 	result, err := b.runGarminAI(ctx, s, m, messages)
 	if err != nil {
 		b.Logger.Warn("app-support decision agent failed", zap.String("message_id", m.ID.String()))
-		return
+		return false
 	}
-	if ctx.Err() != nil || result.Silent || strings.TrimSpace(result.Answer) == "" {
-		return
+	if ctx.Err() != nil {
+		return false
+	}
+	if result.Silent {
+		return true
+	}
+	if strings.TrimSpace(result.Answer) == "" {
+		return false
 	}
 	if result.NoteName != "" {
 		notes, err := b.Notes.DB.ListNotes()
 		if err != nil {
-			return
+			return false
 		}
 		for _, note := range notes {
 			if note.Name == result.NoteName && strings.TrimSpace(note.ShortDesc) != "" {
-				b.deliverSupportDecisionNote(s, m, note, messages, ctx)
-				return
+				return b.deliverSupportDecisionNote(s, m, note, messages, ctx)
 			}
 		}
-		return
+		return false
 	}
 	conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: result.Answer, Timestamp: time.Now().UTC()})
-	b.sendGarminAppSupportReplyAndRememberIfVisible(s, m, result.Answer, conversation, "")
+	return b.sendGarminAppSupportReplyAndRememberIfVisible(s, m, result.Answer, conversation, "") != nil
 }
 
 func (b *Bot) deliverSupportDecisionNote(s *bot.Client, m *discord.Message, note db.NoteSummary, messages []cmd.GarminAIMessage, ctx context.Context) bool {
