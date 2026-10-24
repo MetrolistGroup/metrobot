@@ -65,6 +65,13 @@ type Bot struct {
 	stopOnce             sync.Once
 	lifecycle            context.Context
 	cancelLifecycle      context.CancelFunc
+
+	garminDecisions       cmd.Decisions
+	supportMu             sync.Mutex
+	supportSlots          chan struct{}
+	supportSeen           map[string]supportRequestState
+	supportNotes          map[string]supportRequestState
+	garminDeletedMessages map[string]time.Time
 }
 
 func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
@@ -120,6 +127,10 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 	b.Client = session
 	if len(cfg.OpenRouterAPIKeys) > 0 {
 		b.garminAI = cmd.NewOpenRouterClient(cfg.OpenRouterAPIKeys, cfg.OpenRouterModel)
+		if cfg.OpenRouterDecisionModel != "" {
+			b.garminDecisions = cmd.NewDecisionsClient(cfg.OpenRouterAPIKeys, cfg.OpenRouterDecisionModel)
+			b.supportSlots = make(chan struct{}, 2)
+		}
 	}
 	if b.garminAI != nil {
 		memoryPath := cfg.GarminMemoryFile

@@ -12,6 +12,7 @@ do you want to selfhost this bot? don't. it's pretty custom-made for us, it won'
 The bot has no web interface or inbound HTTP listener.
 
 - [Note markup](docs/notes.md): explicit randomized groups, interactive FAQs and authored Components V2 layouts; existing donate/KMP behavior is migrated once and follows the content, not the name.
+- [Automatic app-support routing](docs/support-routing.md): opt-in OpenRouter Decisions routing, note eligibility, privacy and rollout checks.
 - [Garmin base prompt](docs/prompt.md): persisted base-prompt overrides remain supported by the bot's storage and inference code.
 
 Admins manage shared AI memory with `/memory view|append|replace|clear` when AI is enabled. Shared memory is limited to 16 KiB including its trailing newline.

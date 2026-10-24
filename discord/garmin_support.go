@@ -32,6 +32,10 @@ var garminAppSupportTerms = map[string]struct{}{
 }
 
 func (b *Bot) handleGarminAutomaticAppSupport(s *bot.Client, m *discord.Message, messages []cmd.GarminAIMessage) {
+	if b.garminDecisions != nil {
+		b.handleGarminSupportDecision(s, m, messages)
+		return
+	}
 	if b.garminAI == nil {
 		return
 	}

@@ -748,6 +748,9 @@ func (b *Bot) garminMessageVisible(channelID, messageID string) bool {
 }
 
 func (b *Bot) garminMessageVisibleLocked(channelID, messageID string) bool {
+	if expiry := b.garminDeletedMessages[channelID+"\x00"+messageID]; time.Now().Before(expiry) {
+		return false
+	}
 	cutoff, loaded := b.garminContextCutoffs[channelID]
 	if !loaded {
 		if b.DB == nil {

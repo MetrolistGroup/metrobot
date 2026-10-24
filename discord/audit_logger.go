@@ -288,6 +288,7 @@ func (b *Bot) onMessageUpdateLog(s *bot.Client, event *events.MessageUpdate) {
 }
 
 func (b *Bot) onMessageDeleteLog(s *bot.Client, event *events.MessageDelete) {
+	b.cancelDeletedGarminMessage(event.ChannelID.String(), event.MessageID.String())
 	if b.eventLogExcluded(s, snowflakeString(event.GuildID), event.ChannelID.String()) {
 		return
 	}
@@ -312,6 +313,9 @@ func (b *Bot) onMessageDeleteLog(s *bot.Client, event *events.MessageDelete) {
 }
 
 func (b *Bot) onMessageDeleteBulkLog(s *bot.Client, event *gateway.EventMessageDeleteBulk) {
+	for _, id := range event.IDs {
+		b.cancelDeletedGarminMessage(event.ChannelID.String(), id.String())
+	}
 	if b.eventLogExcluded(s, snowflakeString(event.GuildID), event.ChannelID.String()) {
 		return
 	}

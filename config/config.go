@@ -8,13 +8,14 @@ import (
 )
 
 type Config struct {
-	DiscordToken      string   `json:"discord_token"`
-	TelegramToken     string   `json:"telegram_token"`
-	GitHubToken       string   `json:"github_token"`
-	OpenRouterAPIKeys []string `json:"openrouter_api_keys"`
-	OpenRouterModel   string   `json:"openrouter_model"`
-	FirecrawlAPIKeys  []string `json:"firecrawl_api_keys"`
-	GarminMemoryFile  string   `json:"garmin_memory_file"`
+	DiscordToken            string   `json:"discord_token"`
+	TelegramToken           string   `json:"telegram_token"`
+	GitHubToken             string   `json:"github_token"`
+	OpenRouterAPIKeys       []string `json:"openrouter_api_keys"`
+	OpenRouterModel         string   `json:"openrouter_model"`
+	OpenRouterDecisionModel string   `json:"openrouter_decision_model"`
+	FirecrawlAPIKeys        []string `json:"firecrawl_api_keys"`
+	GarminMemoryFile        string   `json:"garmin_memory_file"`
 
 	DiscordGuildID string `json:"discord_guild_id"`
 	TelegramChatID int64  `json:"telegram_chat_id"`
@@ -59,6 +60,7 @@ func Load(path string) (*Config, error) {
 }
 
 func (c *Config) validate() error {
+	c.OpenRouterDecisionModel = strings.TrimSpace(c.OpenRouterDecisionModel)
 	checks := []struct {
 		name  string
 		value string
@@ -90,6 +92,9 @@ func (c *Config) validate() error {
 	}
 	if len(c.PermaAdminTelegramIDs) == 0 {
 		return fmt.Errorf("permaadmin_telegram_ids must contain at least one ID")
+	}
+	if c.OpenRouterDecisionModel != "" && len(c.OpenRouterAPIKeys) == 0 {
+		return fmt.Errorf("openrouter_decision_model requires openrouter_api_keys")
 	}
 	for i, key := range c.OpenRouterAPIKeys {
 		if strings.TrimSpace(key) == "" {

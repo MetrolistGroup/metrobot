@@ -25,6 +25,21 @@ func TestValidateRejectsEmptyFirecrawlKey(t *testing.T) {
 	}
 }
 
+func TestOptionalDecisionModel(t *testing.T) {
+	cfg := validConfig()
+	if cfg.OpenRouterDecisionModel != "" || cfg.validate() != nil {
+		t.Fatal("empty decision model must keep existing configuration valid")
+	}
+	cfg.OpenRouterDecisionModel = "perplexity/pplx-decider-flash-v1.2"
+	if err := cfg.validate(); err == nil || !strings.Contains(err.Error(), "requires openrouter_api_keys") {
+		t.Fatalf("missing key validation = %v", err)
+	}
+	cfg.OpenRouterAPIKeys = []string{"key"}
+	if err := cfg.validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func validConfig() Config {
 	config := Config{
 		DiscordToken:          "discord",

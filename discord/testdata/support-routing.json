@@ -1,0 +1,18 @@
+[
+  {"name":"nightly installation","message":"How do I install the nightly build without building it myself?","route":"nightly","should_answer":0.99,"probability":0.98,"expected":"note"},
+  {"name":"rpc help","message":"How can I turn on Discord rich presence in Metrolist?","route":"rpc","should_answer":0.99,"probability":0.96,"expected":"note"},
+  {"name":"lyrics help","message":"Metrolist lyrics are out of sync. Is there a way to adjust their timing?","route":"lyrics","should_answer":0.98,"probability":0.95,"expected":"note"},
+  {"name":"bot followup","message":"Where do I get that nightly build?","reply_to":"bot","route":"nightly","should_answer":0.99,"probability":0.97,"expected":"note"},
+  {"name":"keyword chatter","message":"the new lyrics look insane","route":"lyrics","should_answer":0.03,"probability":0.99,"expected":"none"},
+  {"name":"rpc chatter","message":"rpc finally works for me lol","route":"rpc","should_answer":0.02,"probability":0.96,"expected":"none"},
+  {"name":"staff advice","message":"Try the nightly and let us know if it still happens.","route":"nightly","should_answer":0.04,"probability":0.97,"expected":"none"},
+  {"name":"staff coordination","message":"I will check their tester role once the donation is confirmed.","route":"none","should_answer":0.01,"probability":0.99,"expected":"none"},
+  {"name":"donation proof","message":"Here is my donation receipt, can a mod give me tester access?","route":"none","should_answer":0.01,"probability":0.99,"expected":"none"},
+  {"name":"human-directed reply","message":"How did you fix lyrics on your phone?","reply_to":"human","route":"lyrics","should_answer":0.99,"probability":0.99,"expected":"guard"},
+  {"name":"thanks to bot","message":"thanks, that worked!","reply_to":"bot","route":"none","should_answer":0.01,"probability":0.99,"expected":"none"},
+  {"name":"short reaction","message":"insane","route":"none","should_answer":0.01,"probability":0.99,"expected":"none"},
+  {"name":"manual command","message":".lyrics","route":"lyrics","should_answer":0.99,"probability":0.99,"expected":"guard"},
+  {"name":"unknown command","message":"/help lyrics","route":"lyrics","should_answer":0.99,"probability":0.99,"expected":"guard"},
+  {"name":"uncertain help","message":"is this the one?","route":"nightly","should_answer":0.60,"probability":0.88,"expected":"none"},
+  {"name":"uncertain route","message":"How do I get the version that supports this?","route":"nightly","should_answer":0.97,"probability":0.65,"expected":"none"}
+]

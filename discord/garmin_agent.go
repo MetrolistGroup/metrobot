@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
+	"github.com/MetrolistGroup/metrobot/db"
 	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/rest"
@@ -937,10 +938,27 @@ func (b *Bot) executeGarminAITool(ctx context.Context, s *bot.Client, m *discord
 		notes, listErr := b.DB.ListNotes()
 		err = listErr
 		if err == nil {
+			if automatic, _ := ctx.Value(automaticSupportContextKey{}).(bool); automatic {
+				notes = slices.DeleteFunc(notes, func(note db.NoteSummary) bool { return strings.TrimSpace(note.ShortDesc) == "" })
+			}
 			output = mustJSON(map[string]any{"notes": notes})
 		}
 	case "get_note":
-		output, err = b.Notes.GetNote(args.Name)
+		if automatic, _ := ctx.Value(automaticSupportContextKey{}).(bool); automatic {
+			var notes []db.NoteSummary
+			notes, err = b.Notes.DB.ListNotes()
+			if err == nil {
+				eligible := slices.ContainsFunc(notes, func(note db.NoteSummary) bool {
+					return note.Name == strings.ToLower(strings.TrimSpace(args.Name)) && strings.TrimSpace(note.ShortDesc) != ""
+				})
+				if !eligible {
+					err = fmt.Errorf("note is unavailable for automatic support")
+				}
+			}
+		}
+		if err == nil {
+			output, err = b.Notes.GetNote(args.Name)
+		}
 	case "get_discord_profile":
 		output, err = b.getGarminDiscordProfile(s, args.UserID)
 	case "search_discord_members":
