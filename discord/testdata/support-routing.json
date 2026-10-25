@@ -14,5 +14,5 @@
   {"name":"manual command","message":".lyrics","route":"lyrics","should_answer":0.99,"probability":0.99,"expected":"guard"},
   {"name":"unknown command","message":"/help lyrics","route":"lyrics","should_answer":0.99,"probability":0.99,"expected":"guard"},
   {"name":"uncertain help","message":"is this the one?","route":"nightly","should_answer":0.60,"probability":0.88,"expected":"none"},
-  {"name":"uncertain route","message":"How do I get the version that supports this?","route":"nightly","should_answer":0.97,"probability":0.65,"expected":"none"}
+  {"name":"uncertain route","message":"How do I get the version that supports this?","route":"nightly","should_answer":0.97,"probability":0.65,"expected":"agent"}
 ]

@@ -153,17 +153,20 @@ func TestSupportDecisionSyntheticFixtures(t *testing.T) {
 					b.rememberGarminAIContext("10", m, messages[:1])
 				}
 			}
-			calls := 0
+			calls, agentCalls := 0, 0
 			b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-				t.Error("unexpected chat-model fallback")
-				return nil, errors.New("no fallback")
+				agentCalls++
+				if fixture.Expected != "agent" {
+					t.Error("unexpected chat-model fallback")
+				}
+				return garminHistoryTestCall("do_not_respond", `{}`), nil
 			})
 			b.garminDecisions = supportDecisionTestFunc(func(ctx context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
 				calls++
 				if request.Questions["should_answer"].Type != "noul" || request.Questions["route"].Type != "choice" || strings.Contains(request.Questions["route"].Instructions, "should_answer") {
 					t.Error("questions must be independent Noul and Choice evaluations")
 				}
-				for _, exclusion := range []string{"chatter", "thanks", "advice to others", "staff coordination", "human-directed", "donation proof"} {
+				for _, exclusion := range []string{"chatter", "thanks", "staff coordination", "commands", "secrets", "grant access"} {
 					if !strings.Contains(request.Questions["should_answer"].Instructions, exclusion) || !strings.Contains(request.Questions["route"].Instructions, exclusion) {
 						t.Errorf("missing routing policy: %s", exclusion)
 					}
@@ -181,6 +184,9 @@ func TestSupportDecisionSyntheticFixtures(t *testing.T) {
 			}
 			if sent.count() != want || (fixture.Expected == "guard" && calls != 0) || (fixture.Expected != "guard" && calls != 1) {
 				t.Fatalf("sends=%d want=%d calls=%d", sent.count(), want, calls)
+			}
+			if (fixture.Expected == "agent") != (agentCalls > 0) {
+				t.Fatalf("agent calls=%d expected=%s", agentCalls, fixture.Expected)
 			}
 		})
 	}
