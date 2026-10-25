@@ -246,18 +246,20 @@ func (b *Bot) runSupportDecisionAgent(s *bot.Client, m *discord.Message, message
 	default:
 		return false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), garminAITimeout)
+	requestCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if !b.registerGarminAIRequest(m, cancel) {
 		return false
 	}
 	defer b.unregisterGarminAIRequest(m)
-	ctx = context.WithValue(ctx, automaticSupportContextKey{}, true)
+	requestCtx = context.WithValue(requestCtx, automaticSupportContextKey{}, true)
 	messages = copyGarminAIMessages(messages)
 	for i := range messages {
 		messages[i].Images = nil
 	}
-	messages = b.prepareGarminAIConversation(ctx, s, m, messages)
+	messages = b.prepareGarminAIConversation(requestCtx, s, m, messages)
+	ctx, cancelAgent := context.WithTimeout(requestCtx, garminAITimeout)
+	defer cancelAgent()
 	result, err := b.runGarminAI(ctx, s, m, messages)
 	if err != nil {
 		b.Logger.Warn("app-support decision agent failed", zap.String("message_id", m.ID.String()))
