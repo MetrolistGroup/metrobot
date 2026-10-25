@@ -53,6 +53,7 @@ type Bot struct {
 	garminAIUserContexts map[string]garminAIContext
 	garminContextCutoffs map[string]string
 	garminAIRequests     map[string]map[string]context.CancelFunc
+	garminAIParents      map[string]map[string]garminAIContext
 	garminAIAmbientBusy  map[string]uint64
 	garminAIAmbientSeq   uint64
 	garminAISlots        chan struct{}

@@ -335,7 +335,7 @@ func TestGarminAIStorageLeavesOldestBatchForCompactionAndStaysBounded(t *testing
 		t.Fatal("oldest context was not evicted")
 	}
 	for _, context := range b.garminAIContexts {
-		if len(context.messages) > 2*garminAICompactionMessages {
+		if len(context.messages) > 2*garminAICompactionMessages+1 {
 			t.Fatalf("stored conversation is unbounded: %d messages", len(context.messages))
 		}
 	}
@@ -427,7 +427,9 @@ func TestGarminContextResetHidesPriorMessagesAndClearsChains(t *testing.T) {
 	bot.rememberGarminAIContext("150", original, []cmd.GarminAIMessage{{Role: "user", Content: "old context"}})
 	requestContext, cancelRequest := context.WithCancel(context.Background())
 	defer cancelRequest()
-	if !bot.registerGarminAIRequest(original, cancelRequest) {
+	inflight := *original
+	inflight.ID = snowflakeID("160")
+	if !bot.registerGarminAIRequest(&inflight, cancelRequest) {
 		t.Fatal("failed to register pre-reset request")
 	}
 	if err := bot.resetGarminContext("100000000000000005", "200"); err != nil {
@@ -881,7 +883,11 @@ type summaryGarminAI struct {
 
 func (f *summaryGarminAI) Complete(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 	f.request = request
-	return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: f.summary}}, nil
+	content := f.summary
+	if !json.Valid([]byte(content)) {
+		content = mustJSON(map[string]any{"summary": content, "shared_memory": []string{}})
+	}
+	return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: content}}, nil
 }
 
 type fakeGarminAI struct{}

@@ -23,6 +23,7 @@ func (b *Bot) gatewayHandlers() map[gateway.EventType]bot.GatewayEventHandler {
 			}
 			b.onMessageDeleteBulkLog(client, &event)
 			for _, id := range event.IDs {
+				b.forgetDeletedGarminContexts(event.ChannelID.String(), id.String())
 				go b.handleMessageDelete(client, &events.MessageDelete{GenericMessage: &events.GenericMessage{
 					MessageID: id, ChannelID: event.ChannelID, GuildID: event.GuildID,
 				}})
@@ -76,6 +77,7 @@ func (b *Bot) installListeners() {
 		},
 		OnMessageDelete: func(e *events.MessageDelete) {
 			b.onMessageDeleteLog(s, e)
+			b.forgetDeletedGarminContexts(e.ChannelID.String(), e.MessageID.String())
 			go b.handleMessageDelete(s, e)
 		},
 		OnRaw: func(e *events.Raw) {
