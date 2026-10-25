@@ -442,11 +442,24 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 	keyAttempts := 0
 	rateLimitRetries := 0
 	transportRetries := 0
+	retryAt := make([]time.Time, len(c.keys))
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("calling %s: %w", c.provider, err)
 		}
 		keyIndex := (start + keyAttempts) % len(c.keys)
+		if keyAttempts >= len(c.keys) {
+			// Reuse an available key before waiting for a throttled one.
+			for offset := 1; offset < len(c.keys); offset++ {
+				candidate := (start + keyAttempts + offset) % len(c.keys)
+				if retryAt[candidate].Before(retryAt[keyIndex]) {
+					keyIndex = candidate
+				}
+			}
+		}
+		if err := waitForChatCompletionRetry(ctx, time.Until(retryAt[keyIndex])); err != nil {
+			return nil, fmt.Errorf("calling %s: %w", c.provider, err)
+		}
 		keyAttempts++
 		attemptCtx, cancel := context.WithTimeout(ctx, c.attemptTimeout)
 		completion, retry, err := c.askWithKey(attemptCtx, payload, c.keys[keyIndex])
@@ -461,19 +474,29 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 		if attemptErr != nil {
 			return nil, err
 		}
-		if chatCompletionStatus(err) == http.StatusTooManyRequests {
-			if rateLimitRetries >= chatCompletionRateLimitRetries {
-				return nil, err
-			}
-			rateLimitRetries++
+		rateLimited := chatCompletionStatus(err) == http.StatusTooManyRequests
+		if rateLimited {
 			delay := c.rateLimitDelay
 			var httpErr *chatCompletionHTTPError
 			if errors.As(err, &httpErr) && httpErr.retryAfter > delay {
 				delay = httpErr.retryAfter
 			}
-			if err := waitForChatCompletionRetry(ctx, delay); err != nil {
-				return nil, fmt.Errorf("calling %s: %w", c.provider, err)
+			retryAt[keyIndex] = time.Now().Add(delay)
+		}
+		// Exhausted retry budgets must not suppress an untouched key.
+		if retry && keyAttempts < len(c.keys) {
+			if rateLimited {
+				rateLimitRetries++
+			} else if isChatCompletionTransportError(err) {
+				transportRetries++
 			}
+			continue
+		}
+		if rateLimited {
+			if rateLimitRetries >= chatCompletionRateLimitRetries {
+				return nil, err
+			}
+			rateLimitRetries++
 			continue
 		}
 		if isChatCompletionTransportError(err) {

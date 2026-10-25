@@ -132,6 +132,7 @@ func TestDecisionsBoundedRetryAndKeyRotation(t *testing.T) {
 					t.Errorf("key failover failed")
 				}
 				if n == 1 {
+					w.Header().Set("Retry-After", "60")
 					w.WriteHeader(status)
 					_, _ = io.WriteString(w, "private text private-key https://private.example")
 					return
@@ -216,7 +217,7 @@ func TestDecisionsTransportBudgetAndRedaction(t *testing.T) {
 
 func TestDecisionsHonorsRetryAfterWithinParentDeadline(t *testing.T) {
 	calls := 0
-	client := newDecisionsClient([]string{"one", "two"}, "model", "https://example.com", &http.Client{Transport: decisionTestTransport(func(*http.Request) (*http.Response, error) {
+	client := newDecisionsClient([]string{"one"}, "model", "https://example.com", &http.Client{Transport: decisionTestTransport(func(*http.Request) (*http.Response, error) {
 		calls++
 		return &http.Response{StatusCode: 429, Header: http.Header{"Retry-After": {"60"}}, Body: io.NopCloser(strings.NewReader(""))}, nil
 	})})

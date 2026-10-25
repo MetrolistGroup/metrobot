@@ -269,24 +269,72 @@ func TestChatCompletionClientPreservesSharedInput(t *testing.T) {
 	}
 }
 
-func TestChatCompletionClientRetryBudgetsWithManyKeys(t *testing.T) {
+func TestChatCompletionClientTriesUntouchedKeysBeforeRetrying(t *testing.T) {
 	for _, transport := range []bool{false, true} {
-		calls := 0
-		client := newChatCompletionClient([]string{"1", "2", "3", "4", "5", "6"}, "https://example.com", "model", "test", nil, nil, &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
-			calls++
-			if transport {
-				return nil, errors.New("private transport error")
+		var authorizations []string
+		client := newChatCompletionClient([]string{"1", "2", "3", "4", "5"}, "https://example.com", "model", "test", nil, nil, &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			authorizations = append(authorizations, r.Header.Get("Authorization"))
+			if r.Header.Get("Authorization") == "Bearer 5" {
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))}, nil
 			}
-			return &http.Response{StatusCode: 429, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("private error"))}, nil
+			if transport {
+				return nil, errors.New("transport failed")
+			}
+			return &http.Response{StatusCode: 429, Header: http.Header{"Retry-After": {"60"}}, Body: io.NopCloser(strings.NewReader(""))}, nil
 		})})
-		client.rateLimitDelay = 0
-		_, err := client.Ask(context.Background(), testGarminMessages("hi"))
-		want := 4
-		if transport {
-			want = 2
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		answer, err := client.Ask(ctx, testGarminMessages("hi"))
+		cancel()
+		want := []string{"Bearer 1", "Bearer 2", "Bearer 3", "Bearer 4", "Bearer 5"}
+		if err != nil || answer != "ok" || !reflect.DeepEqual(authorizations, want) {
+			t.Fatalf("transport=%v: answer=%q error=%v authorizations=%v", transport, answer, err, authorizations)
 		}
-		if err == nil || calls != want || strings.Contains(err.Error(), "private") {
-			t.Fatalf("transport=%v: calls=%d want %d, error=%v", transport, calls, want, err)
+	}
+}
+
+func TestChatCompletionClientRetriesAvailableKeyBeforeThrottledKey(t *testing.T) {
+	var authorizations []string
+	client := newChatCompletionClient([]string{"limited", "available"}, "https://example.com", "model", "test", nil, nil, &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		authorizations = append(authorizations, r.Header.Get("Authorization"))
+		if r.Header.Get("Authorization") == "Bearer limited" {
+			return &http.Response{StatusCode: 429, Header: http.Header{"Retry-After": {"60"}}, Body: io.NopCloser(strings.NewReader(""))}, nil
+		}
+		if len(authorizations) == 2 {
+			return nil, errors.New("transient transport failure")
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))}, nil
+	})})
+	client.rateLimitDelay = 0
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	answer, err := client.Ask(ctx, testGarminMessages("hi"))
+	want := []string{"Bearer limited", "Bearer available", "Bearer available"}
+	if err != nil || answer != "ok" || !reflect.DeepEqual(authorizations, want) {
+		t.Fatalf("answer=%q error=%v authorizations=%v", answer, err, authorizations)
+	}
+}
+
+func TestChatCompletionClientRetryBudgetsWithManyKeys(t *testing.T) {
+	for _, keyCount := range []int{1, 2, 6} {
+		for _, transport := range []bool{false, true} {
+			calls := 0
+			keys := []string{"1", "2", "3", "4", "5", "6"}
+			client := newChatCompletionClient(keys[:keyCount], "https://example.com", "model", "test", nil, nil, &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+				calls++
+				if transport {
+					return nil, errors.New("private transport error")
+				}
+				return &http.Response{StatusCode: 429, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("private error"))}, nil
+			})})
+			client.rateLimitDelay = 0
+			_, err := client.Ask(context.Background(), testGarminMessages("hi"))
+			want := max(keyCount, chatCompletionRateLimitRetries+1)
+			if transport {
+				want = max(keyCount, chatCompletionTransportRetries+1)
+			}
+			if err == nil || calls != want || strings.Contains(err.Error(), "private") {
+				t.Fatalf("keys=%d transport=%v: calls=%d want %d, error=%v", keyCount, transport, calls, want, err)
+			}
 		}
 	}
 }
@@ -294,7 +342,7 @@ func TestChatCompletionClientRetryBudgetsWithManyKeys(t *testing.T) {
 func TestChatCompletionClientCancellationAndRetryAfter(t *testing.T) {
 	for _, status := range []int{200, 429} {
 		calls := 0
-		client := newChatCompletionClient([]string{"one", "two"}, "https://example.com", "model", "test", nil, nil, &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		client := newChatCompletionClient([]string{"one"}, "https://example.com", "model", "test", nil, nil, &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 			calls++
 			if status == 200 {
 				<-r.Context().Done()

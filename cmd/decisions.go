@@ -111,7 +111,8 @@ func (c *DecisionsClient) Decide(ctx context.Context, request DecisionRequest) (
 		}
 		delay := 100 * time.Millisecond
 		var httpErr *chatCompletionHTTPError
-		if errors.As(err, &httpErr) && httpErr.retryAfter > delay {
+		// Retry-After limits reuse of this key, not failover to another key.
+		if c.keys[start] == c.keys[(start+1)%len(c.keys)] && errors.As(err, &httpErr) && httpErr.retryAfter > delay {
 			delay = httpErr.retryAfter
 		}
 		if err := waitForChatCompletionRetry(ctx, delay); err != nil {
