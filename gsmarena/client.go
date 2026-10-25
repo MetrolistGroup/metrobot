@@ -84,6 +84,9 @@ func newClient(database *db.DB, root string, httpClient *http.Client) *Client {
 }
 
 func (c *Client) Search(ctx context.Context, query string, limit int) ([]Phone, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	query = normalizeSearch(query)
 	if query == "" {
 		return nil, errors.New("GSMArena search query is required")
@@ -130,6 +133,9 @@ func (c *Client) Lookup(ctx context.Context, query string) (Phone, error) {
 }
 
 func (c *Client) Phone(ctx context.Context, slugOrID string) (Phone, error) {
+	if err := ctx.Err(); err != nil {
+		return Phone{}, err
+	}
 	value := strings.TrimSpace(slugOrID)
 	if value == "" {
 		return Phone{}, errors.New("GSMArena phone is required")
@@ -165,11 +171,9 @@ func (c *Client) Phone(ctx context.Context, slugOrID string) (Phone, error) {
 		cacheKey = "phone:" + strconv.FormatInt(fallback.ID, 10)
 	}
 	if c.db != nil {
-		if cached, found, err := c.db.GetGSMArenaCache(cacheKey, phoneCacheTTL); err != nil {
-			return Phone{}, fmt.Errorf("read GSMArena cache: %w", err)
-		} else if found {
+		if cached, found, err := c.db.GetGSMArenaCache(cacheKey, phoneCacheTTL); err == nil && found {
 			var phone Phone
-			if json.Unmarshal(cached, &phone) == nil && phone.ID != 0 && len(phone.Specs) > 0 {
+			if json.Unmarshal(cached, &phone) == nil && phone.ID == fallback.ID && phone.Name != "" && strings.HasPrefix(phone.URL, c.baseURL) && len(phone.Specs) > 0 {
 				return phone, nil
 			}
 		}
@@ -185,9 +189,8 @@ func (c *Client) Phone(ctx context.Context, slugOrID string) (Phone, error) {
 	}
 	if c.db != nil {
 		encoded, _ := json.Marshal(phone)
-		if err := c.db.SetGSMArenaCache(cacheKey, encoded); err != nil {
-			return Phone{}, fmt.Errorf("write GSMArena cache: %w", err)
-		}
+		// Cache availability must not discard a successful source response.
+		_ = c.db.SetGSMArenaCache(cacheKey, encoded)
 	}
 	return phone, nil
 }
@@ -199,12 +202,10 @@ func (c *Client) loadIndex(ctx context.Context) (quickSearchIndex, error) {
 		return *c.index, nil
 	}
 	if c.db != nil {
-		if cached, found, err := c.db.GetGSMArenaCache("index", indexCacheTTL); err != nil {
-			return quickSearchIndex{}, fmt.Errorf("read GSMArena cache: %w", err)
-		} else if found {
+		if cached, found, err := c.db.GetGSMArenaCache("index", indexCacheTTL); err == nil && found {
 			var index quickSearchIndex
-			if json.Unmarshal(cached, &index) == nil && len(index.Records) > 0 {
-				c.index, c.indexAt = &index, time.Now()
+			if json.Unmarshal(cached, &index) == nil && len(index.Records) > 0 && len(index.Brands) > 0 {
+				// Do not restart a persisted entry's TTL in memory.
 				return index, nil
 			}
 		}
@@ -228,9 +229,7 @@ func (c *Client) loadIndex(ctx context.Context) (quickSearchIndex, error) {
 	}
 	if c.db != nil {
 		encoded, _ := json.Marshal(index)
-		if err := c.db.SetGSMArenaCache("index", encoded); err != nil {
-			return quickSearchIndex{}, fmt.Errorf("write GSMArena cache: %w", err)
-		}
+		_ = c.db.SetGSMArenaCache("index", encoded)
 	}
 	c.index, c.indexAt = &index, time.Now()
 	return index, nil

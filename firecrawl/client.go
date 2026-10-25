@@ -38,7 +38,15 @@ type scrapeOptions struct {
 }
 
 func NewClient(keys []string) *Client {
-	return newClient(keys, apiEndpoint, &http.Client{Timeout: 20 * time.Second})
+	return newClient(keys, apiEndpoint, &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 || req.URL.Scheme != via[0].URL.Scheme || !strings.EqualFold(req.URL.Host, via[0].URL.Host) {
+				return fmt.Errorf("refusing Firecrawl redirect")
+			}
+			return nil
+		},
+	})
 }
 
 func newClient(keys []string, endpoint string, httpClient *http.Client) *Client {
@@ -52,6 +60,9 @@ func newClient(keys []string, endpoint string, httpClient *http.Client) *Client 
 }
 
 func (c *Client) Search(ctx context.Context, query string, limit int, source string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return "", fmt.Errorf("web search query is required")
@@ -158,9 +169,13 @@ func (c *Client) searchWithKey(ctx context.Context, payload []byte, key string) 
 		return nil, 0, fmt.Errorf("calling Firecrawl: %w", err)
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+	const maxResponseBytes = 4 << 20
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 	if err != nil {
 		return nil, 0, fmt.Errorf("reading Firecrawl response: %w", err)
+	}
+	if len(body) > maxResponseBytes {
+		return nil, 0, fmt.Errorf("Firecrawl response exceeded 4 MiB")
 	}
 	return body, response.StatusCode, nil
 }

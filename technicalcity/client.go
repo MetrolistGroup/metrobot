@@ -53,6 +53,9 @@ func New(database *db.DB) *Client {
 
 // Search returns site search results in site order, capped at 25 for autocomplete.
 func (c *Client) Search(ctx context.Context, query string, limit int) ([]Device, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	query = strings.Join(strings.Fields(query), " ")
 	if query == "" || len([]rune(query)) > 100 {
 		return nil, errors.New("Technical City search requires 1 to 100 characters")
@@ -62,9 +65,16 @@ func (c *Client) Search(ctx context.Context, query string, limit int) ([]Device,
 	}
 	key := "tc:search:" + strings.ToLower(query)
 	var devices []Device
-	found, err := c.readCache(key, searchTTL, &devices)
-	if err != nil {
-		return nil, err
+	found := c.readCache(key, searchTTL, &devices)
+	if found {
+		found = devices != nil
+		for _, device := range devices {
+			target, err := detailTarget(device.Slug)
+			if err != nil || device.Name == "" || device.URL != target.URL {
+				found = false
+				break
+			}
+		}
 	}
 	if !found {
 		body, err := c.fetch(ctx, baseURL+"/en/search?q="+url.QueryEscape(query))
@@ -107,6 +117,9 @@ func (c *Client) Lookup(ctx context.Context, query string) (Device, error) {
 
 // Device accepts a site URL, a category-qualified slug, or an exact bare slug.
 func (c *Client) Device(ctx context.Context, slugOrURL string) (Device, error) {
+	if err := ctx.Err(); err != nil {
+		return Device{}, err
+	}
 	value := strings.TrimSpace(slugOrURL)
 	if slugPattern.MatchString(value) && !strings.Contains(value, "..") {
 		devices, err := c.Search(ctx, strings.ReplaceAll(value, "-", " "), 25)
@@ -130,11 +143,8 @@ func (c *Client) Device(ctx context.Context, slugOrURL string) (Device, error) {
 	}
 	key := "tc:device:" + device.Slug
 	var cached Device
-	found, err := c.readCache(key, detailTTL, &cached)
-	if err != nil {
-		return Device{}, err
-	}
-	if found && cached.Slug == device.Slug && cached.Name != "" && len(cached.Specs) > 0 {
+	found := c.readCache(key, detailTTL, &cached)
+	if found && cached.Slug == device.Slug && cached.URL == device.URL && cached.Name != "" && len(cached.Specs) > 0 {
 		return cached, nil
 	}
 	body, err := c.fetch(ctx, device.URL)
@@ -232,15 +242,12 @@ func (c *Client) fetch(ctx context.Context, target string) ([]byte, error) {
 	return body, nil
 }
 
-func (c *Client) readCache(key string, ttl time.Duration, value any) (bool, error) {
+func (c *Client) readCache(key string, ttl time.Duration, value any) bool {
 	if c.db == nil {
-		return false, nil
+		return false
 	}
 	body, found, err := c.db.GetGSMArenaCache(key, ttl)
-	if err != nil {
-		return false, fmt.Errorf("read Technical City cache: %w", err)
-	}
-	return found && json.Unmarshal(body, value) == nil, nil
+	return err == nil && found && json.Unmarshal(body, value) == nil
 }
 
 func (c *Client) writeCache(key string, value any) error {
@@ -248,11 +255,10 @@ func (c *Client) writeCache(key string, value any) error {
 		return nil
 	}
 	body, err := json.Marshal(value)
-	if err == nil {
-		err = c.db.SetGSMArenaCache(key, body)
-	}
 	if err != nil {
-		return fmt.Errorf("write Technical City cache: %w", err)
+		return err
 	}
+	// Cache availability must not discard a successful source response.
+	_ = c.db.SetGSMArenaCache(key, body)
 	return nil
 }

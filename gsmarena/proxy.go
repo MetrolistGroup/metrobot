@@ -41,9 +41,12 @@ func (p *proxyPool) do(request *http.Request, base *http.Client) (*http.Response
 		return nil, errors.New("no GSMArena proxies configured")
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), 6*time.Second)
-	defer cancel()
 	start := p.next.Add(1) - 1
 	for attempt := range min(6, len(p.urls)) {
+		if err := ctx.Err(); err != nil {
+			cancel()
+			return nil, err
+		}
 		transport, err := proxyTransport(p.urls[(int(start)+attempt)%len(p.urls)])
 		if err != nil {
 			continue
@@ -55,11 +58,29 @@ func (p *proxyPool) do(request *http.Request, base *http.Client) (*http.Response
 			continue
 		}
 		if response.StatusCode != http.StatusForbidden && response.StatusCode != http.StatusTooManyRequests {
+			// The request context must remain alive until the caller finishes the body.
+			response.Body = &cancelReadCloser{ReadCloser: response.Body, cancel: cancel}
 			return response, nil
 		}
 		response.Body.Close()
 	}
+	err := ctx.Err()
+	cancel()
+	if err != nil {
+		return nil, err
+	}
 	return nil, errors.New("no GSMArena proxy succeeded")
+}
+
+type cancelReadCloser struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *cancelReadCloser) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel()
+	return err
 }
 
 func proxyTransport(proxyURL *url.URL) (*http.Transport, error) {

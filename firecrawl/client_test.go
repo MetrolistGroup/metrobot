@@ -3,9 +3,12 @@ package firecrawl
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -63,6 +66,44 @@ func TestClientSkipsAllCoolingKeys(t *testing.T) {
 	_, err := client.Search(context.Background(), "query", 1, "web")
 	if err == nil || err.Error() != "all Firecrawl API keys are cooling down" || requests != 0 {
 		t.Fatalf("Search() error = %v after %d requests", err, requests)
+	}
+}
+
+type transportFunc func(*http.Request) (*http.Response, error)
+
+func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestClientRejectsOversizedResponsesAndUnsafeRedirects(t *testing.T) {
+	for _, redirect := range []bool{false, true} {
+		client := NewClient([]string{"key"})
+		calls := 0
+		client.httpClient.Transport = transportFunc(func(r *http.Request) (*http.Response, error) {
+			calls++
+			response := &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"success":true}` + strings.Repeat(" ", 4<<20))), Request: r}
+			if redirect {
+				response.StatusCode = 307
+				response.Header.Set("Location", "https://sub.api.firecrawl.dev/v2/search")
+			}
+			return response, nil
+		})
+		if _, err := client.Search(context.Background(), "query", 1, "web"); err == nil || calls != 1 {
+			t.Fatalf("redirect=%v: calls=%d err=%v", redirect, calls, err)
+		}
+		if client.failedUntil[0].Load() != 0 {
+			t.Fatal("response failure disabled the API key")
+		}
+	}
+}
+
+func TestCancelledSearchDoesNotRotateOrDisableKeys(t *testing.T) {
+	client := NewClient([]string{"one", "two"})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := client.Search(ctx, "query", 1, "web"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if client.nextKey.Load() != 0 || client.failedUntil[0].Load() != 0 || client.failedUntil[1].Load() != 0 {
+		t.Fatal("cancelled request changed key state")
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,8 @@ func NewActionsClient(token, owner, repo, workflowFile string) *ActionsClient {
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
 	tc := oauth2.NewClient(context.Background(), ts)
 	tc.Timeout = 15 * time.Second
+	tc.CheckRedirect = sameOriginRedirect
+	tc.Transport = boundedGitHubTransport{base: tc.Transport}
 	client := github.NewClient(tc)
 
 	return &ActionsClient{
@@ -51,15 +54,22 @@ func NewActionsClient(token, owner, repo, workflowFile string) *ActionsClient {
 }
 
 func (a *ActionsClient) FetchRuns(ctx context.Context) (*ActionsResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	a.mu.Lock()
 	if a.cached != nil && time.Since(a.fetchedAt) < 20*time.Minute {
-		result := a.cached
+		result := &ActionsResult{Runs: slices.Clone(a.cached.Runs)}
 		a.mu.Unlock()
 		return result, nil
 	}
 	a.mu.Unlock()
 
-	runs, _, err := a.client.Actions.ListWorkflowRunsByFileName(
+	client, err := publicRepositoryClient(ctx, a.client, a.owner, a.repo)
+	if err != nil {
+		return nil, err
+	}
+	runs, _, err := client.Actions.ListWorkflowRunsByFileName(
 		ctx, a.owner, a.repo, a.workflowFile,
 		&github.ListWorkflowRunsOptions{
 			Branch:      "main",
@@ -110,7 +120,7 @@ func (a *ActionsClient) FetchRuns(ctx context.Context) (*ActionsResult, error) {
 	result := &ActionsResult{Runs: infos}
 
 	a.mu.Lock()
-	a.cached = result
+	a.cached = &ActionsResult{Runs: slices.Clone(result.Runs)}
 	a.fetchedAt = time.Now()
 	a.mu.Unlock()
 
@@ -146,6 +156,8 @@ func NewReleasesClient(token, owner, repo string) *ReleasesClient {
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
 	tc := oauth2.NewClient(context.Background(), ts)
 	tc.Timeout = 15 * time.Second
+	tc.CheckRedirect = sameOriginRedirect
+	tc.Transport = boundedGitHubTransport{base: tc.Transport}
 	client := github.NewClient(tc)
 
 	return &ReleasesClient{
@@ -156,15 +168,22 @@ func NewReleasesClient(token, owner, repo string) *ReleasesClient {
 }
 
 func (r *ReleasesClient) FetchReleases(ctx context.Context) ([]*ReleaseInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	r.mu.Lock()
 	if r.cached != nil && time.Since(r.fetchedAt) < 5*time.Minute {
-		result := r.cached
+		result := cloneReleases(r.cached)
 		r.mu.Unlock()
 		return result, nil
 	}
 	r.mu.Unlock()
 
-	releases, _, err := r.client.Repositories.ListReleases(
+	client, err := publicRepositoryClient(ctx, r.client, r.owner, r.repo)
+	if err != nil {
+		return nil, err
+	}
+	releases, _, err := client.Repositories.ListReleases(
 		ctx, r.owner, r.repo,
 		&github.ListOptions{PerPage: 50},
 	)
@@ -178,7 +197,7 @@ func (r *ReleasesClient) FetchReleases(ctx context.Context) ([]*ReleaseInfo, err
 		return nil, fmt.Errorf("fetching releases: %w", err)
 	}
 
-	var infos []*ReleaseInfo
+	infos := make([]*ReleaseInfo, 0, len(releases))
 	for _, rel := range releases {
 		info := &ReleaseInfo{
 			TagName:     rel.GetTagName(),
@@ -198,11 +217,36 @@ func (r *ReleasesClient) FetchReleases(ctx context.Context) ([]*ReleaseInfo, err
 	}
 
 	r.mu.Lock()
-	r.cached = infos
+	r.cached = cloneReleases(infos)
 	r.fetchedAt = time.Now()
 	r.mu.Unlock()
 
 	return infos, nil
+}
+
+func publicRepositoryClient(ctx context.Context, client *github.Client, owner, repo string) (*github.Client, error) {
+	repository, _, err := client.Repositories.Get(ctx, owner, repo)
+	if isForbiddenGitHubError(err) {
+		client = newPublicGitHubClient()
+		repository, _, err = client.Repositories.Get(ctx, owner, repo)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("checking repository visibility: %w", err)
+	}
+	if repository.GetPrivate() {
+		return nil, fmt.Errorf("private repository details are not allowed")
+	}
+	return client, nil
+}
+
+func cloneReleases(releases []*ReleaseInfo) []*ReleaseInfo {
+	result := make([]*ReleaseInfo, len(releases))
+	for i, release := range releases {
+		copy := *release
+		copy.Assets = slices.Clone(release.Assets)
+		result[i] = &copy
+	}
+	return result
 }
 
 func isForbiddenGitHubError(err error) bool {
@@ -213,8 +257,23 @@ func isForbiddenGitHubError(err error) bool {
 	return responseError.Response.StatusCode == http.StatusUnauthorized || responseError.Response.StatusCode == http.StatusForbidden
 }
 
+type boundedGitHubTransport struct {
+	base http.RoundTripper
+}
+
+func (t boundedGitHubTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	response, err := t.base.RoundTrip(req)
+	if err == nil {
+		response.Body = http.MaxBytesReader(nil, response.Body, 8<<20)
+	}
+	return response, err
+}
+
 func newPublicGitHubClient() *github.Client {
-	return github.NewClient(&http.Client{Timeout: 15 * time.Second})
+	return github.NewClient(&http.Client{
+		Timeout: 15 * time.Second, CheckRedirect: sameOriginRedirect,
+		Transport: boundedGitHubTransport{base: http.DefaultTransport},
+	})
 }
 
 func firstLine(s string) string {

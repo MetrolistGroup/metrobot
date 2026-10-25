@@ -71,9 +71,16 @@ func (c *Client) Search(ctx context.Context, query string, limit int) ([]Device,
 	}
 	key := "nano:search:" + query
 	var devices []Device
-	found, err := c.cached(key, searchTTL, &devices)
-	if err != nil {
-		return nil, err
+	found := c.cached(key, searchTTL, &devices)
+	if found {
+		found = devices != nil && len(devices) <= maxResults
+		for _, device := range devices {
+			target, err := detailTarget(device.Slug)
+			if err != nil || device.Name == "" || device.URL != target.URL {
+				found = false
+				break
+			}
+		}
 	}
 	if !found {
 		params := url.Values{"q": {query}, "limit": {"25"}}
@@ -129,10 +136,7 @@ func (c *Client) Device(ctx context.Context, slugOrURL string) (Device, error) {
 	}
 	key := "nano:detail:" + device.Slug
 	var cached Device
-	found, err := c.cached(key, detailTTL, &cached)
-	if err != nil {
-		return Device{}, err
-	}
+	found := c.cached(key, detailTTL, &cached)
 	if found && cached.Slug == device.Slug && cached.URL == device.URL && cached.Name != "" && len(cached.Specs) > 0 {
 		return cached, nil
 	}
@@ -214,15 +218,12 @@ func (c *Client) fetch(ctx context.Context, target, accept string) ([]byte, erro
 	return body, nil
 }
 
-func (c *Client) cached(key string, ttl time.Duration, value any) (bool, error) {
+func (c *Client) cached(key string, ttl time.Duration, value any) bool {
 	if c.db == nil {
-		return false, nil
+		return false
 	}
 	body, found, err := c.db.GetGSMArenaCache(key, ttl)
-	if err != nil {
-		return false, fmt.Errorf("read NanoReview cache: %w", err)
-	}
-	return found && json.Unmarshal(body, value) == nil, nil
+	return err == nil && found && json.Unmarshal(body, value) == nil
 }
 
 func (c *Client) store(key string, value any) error {
@@ -233,8 +234,7 @@ func (c *Client) store(key string, value any) error {
 	if err != nil {
 		return err
 	}
-	if err := c.db.SetGSMArenaCache(key, body); err != nil {
-		return fmt.Errorf("write NanoReview cache: %w", err)
-	}
+	// Cache availability must not discard a successful source response.
+	_ = c.db.SetGSMArenaCache(key, body)
 	return nil
 }

@@ -66,7 +66,7 @@ func NewAssistantClient(token, owner, repo string) *AssistantClient {
 		token:      strings.TrimSpace(token),
 		owner:      strings.TrimSpace(owner),
 		repo:       strings.TrimSpace(repo),
-		httpClient: &http.Client{Timeout: 12 * time.Second},
+		httpClient: &http.Client{Timeout: 12 * time.Second, CheckRedirect: sameOriginRedirect},
 		apiBase:    githubAPIBase,
 	}
 }
@@ -165,15 +165,18 @@ func (c *AssistantClient) SearchIssues(ctx context.Context, query string) (strin
 			} `json:"labels"`
 		} `json:"items"`
 	}
-	if err := c.get(ctx, "/search/issues?"+values.Encode(), &search); err != nil {
+	// Search qualifiers can escape the configured repository; never search with private access.
+	public := *c
+	public.token = ""
+	if err := public.get(ctx, "/search/issues?"+values.Encode(), &search); err != nil {
 		return "", err
 	}
 	return marshalToolResult(search)
 }
 
 func (c *AssistantClient) User(ctx context.Context, username string) (string, error) {
-	username = strings.TrimSpace(strings.TrimPrefix(username, "@"))
-	if username == "" {
+	username = strings.TrimPrefix(strings.TrimSpace(username), "@")
+	if !validGitHubName(username) {
 		return "", fmt.Errorf("GitHub username is required")
 	}
 	var user struct {
@@ -264,15 +267,15 @@ func (c *AssistantClient) Commits(ctx context.Context, repository string, limit 
 	if err != nil {
 		return "", err
 	}
-	fullName := owner + "/" + name
-	if _, err := c.Repository(ctx, fullName); err != nil {
-		return "", err
-	}
 	if limit == 0 {
 		limit = 5
 	}
 	if limit < 1 || limit > 10 {
 		return "", fmt.Errorf("commit limit must be between 1 and 10")
+	}
+	fullName := owner + "/" + name
+	if _, err := c.Repository(ctx, fullName); err != nil {
+		return "", err
 	}
 	var commits []githubCommit
 	path := fmt.Sprintf("/repos/%s/%s/commits?per_page=%d", url.PathEscape(owner), url.PathEscape(name), limit)
@@ -290,13 +293,18 @@ func (c *AssistantClient) File(ctx context.Context, repository, path, ref string
 	if err != nil {
 		return "", err
 	}
-	fullName := owner + "/" + name
-	if _, err := c.Repository(ctx, fullName); err != nil {
-		return "", err
-	}
 	path = strings.Trim(strings.TrimSpace(path), "/")
 	if path == "" {
 		return "", fmt.Errorf("repository file path is required")
+	}
+	for _, part := range strings.Split(path, "/") {
+		if part == "." || part == ".." {
+			return "", fmt.Errorf("repository file path cannot contain dot segments")
+		}
+	}
+	fullName := owner + "/" + name
+	if _, err := c.Repository(ctx, fullName); err != nil {
+		return "", err
 	}
 	endpoint := fmt.Sprintf("/repos/%s/%s/contents/%s", url.PathEscape(owner), url.PathEscape(name), escapeGitHubPath(path))
 	if ref = strings.TrimSpace(ref); ref != "" {
@@ -438,11 +446,23 @@ func githubRepositoryName(repository, defaultOwner string) (string, string, erro
 	if len(parts) == 1 && strings.TrimSpace(defaultOwner) != "" {
 		parts = []string{strings.TrimSpace(defaultOwner), parts[0]}
 	}
-	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" ||
-		strings.ContainsAny(parts[0]+parts[1], " \t\r\n") {
+	if len(parts) != 2 || !validGitHubName(parts[0]) || !validGitHubName(parts[1]) {
 		return "", "", fmt.Errorf("repository must be an owner/name or github.com URL")
 	}
 	return parts[0], parts[1], nil
+}
+
+func validGitHubName(value string) bool {
+	return value != "" && value != "." && value != ".." && strings.IndexFunc(value, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.')
+	}) == -1
+}
+
+func sameOriginRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 || req.URL.Scheme != via[0].URL.Scheme || !strings.EqualFold(req.URL.Host, via[0].URL.Host) {
+		return fmt.Errorf("refusing GitHub redirect")
+	}
+	return nil
 }
 
 func (c *AssistantClient) get(ctx context.Context, path string, target any) error {
@@ -491,9 +511,13 @@ func (c *AssistantClient) request(ctx context.Context, path, token string) (int,
 		return 0, nil, fmt.Errorf("calling GitHub: %w", err)
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 512<<10))
+	const maxResponseBytes = 512 << 10
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 	if err != nil {
 		return 0, nil, fmt.Errorf("reading GitHub response: %w", err)
+	}
+	if len(body) > maxResponseBytes {
+		return 0, nil, fmt.Errorf("GitHub response exceeded 512 KiB")
 	}
 	return response.StatusCode, body, nil
 }

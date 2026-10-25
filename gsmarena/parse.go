@@ -67,6 +67,9 @@ func parseQuickSearch(contents []byte) (quickSearchIndex, error) {
 			records = append(records, record)
 		}
 	}
+	if len(brands) == 0 || len(records) == 0 {
+		return quickSearchIndex{}, errors.New("GSMArena quicksearch index contained no phone metadata")
+	}
 	return quickSearchIndex{Brands: brands, Records: records}, nil
 }
 
