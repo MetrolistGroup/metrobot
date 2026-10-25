@@ -103,21 +103,7 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 	}
 	defer b.unregisterGarminAIRequest(m)
 
-	messageCount := len(messages)
-	if messages[0].Name == garminAIConversationSummaryName {
-		messageCount--
-	}
-	if messageCount > garminAICompactionMessages {
-		compactionCtx, cancelCompaction := context.WithTimeout(requestCtx, garminAICompactionTimeout)
-		compacted, err := b.compactGarminAIConversation(compactionCtx, messages, b.garminDiscordContextForConversation(s, m, messages))
-		cancelCompaction()
-		if err != nil {
-			b.Logger.Warn("failed to compact Metrobot AI conversation", zap.Error(err))
-			messages = boundGarminAIConversation(messages)
-		} else {
-			messages = compacted
-		}
-	}
+	messages = b.prepareGarminAIConversation(requestCtx, s, m, messages)
 	ctx, cancel := context.WithTimeout(requestCtx, garminAITimeout)
 	defer cancel()
 	result, err := b.runGarminAIWithMode(ctx, s, m, messages, ambient, ambientToken)
@@ -538,6 +524,24 @@ func (b *Bot) garminAITriggeredConversation(m *discord.Message, prompt string) [
 	userMessage := b.garminAIUserMessage(m, prompt)
 	messages, _ := b.garminAIHistory(m, "", false)
 	return append(messages, userMessage)
+}
+
+func (b *Bot) prepareGarminAIConversation(ctx context.Context, s *bot.Client, m *discord.Message, messages []cmd.GarminAIMessage) []cmd.GarminAIMessage {
+	messageCount := len(messages)
+	if messageCount > 0 && messages[0].Name == garminAIConversationSummaryName {
+		messageCount--
+	}
+	if messageCount <= garminAICompactionMessages {
+		return messages
+	}
+	ctx, cancel := context.WithTimeout(ctx, garminAICompactionTimeout)
+	defer cancel()
+	compacted, err := b.compactGarminAIConversation(ctx, messages, b.garminDiscordContextForConversation(s, m, messages))
+	if err != nil {
+		b.Logger.Warn("failed to compact Metrobot AI conversation")
+		return boundGarminAIConversation(messages)
+	}
+	return compacted
 }
 
 func (b *Bot) compactGarminAIConversation(ctx context.Context, messages []cmd.GarminAIMessage, discordContext string) ([]cmd.GarminAIMessage, error) {

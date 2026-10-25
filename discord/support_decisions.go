@@ -257,6 +257,7 @@ func (b *Bot) runSupportDecisionAgent(s *bot.Client, m *discord.Message, message
 	for i := range messages {
 		messages[i].Images = nil
 	}
+	messages = b.prepareGarminAIConversation(ctx, s, m, messages)
 	result, err := b.runGarminAI(ctx, s, m, messages)
 	if err != nil {
 		b.Logger.Warn("app-support decision agent failed", zap.String("message_id", m.ID.String()))
