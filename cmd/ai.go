@@ -544,8 +544,14 @@ func chatCompletionStatus(err error) int {
 }
 
 func waitForChatCompletionRetry(ctx context.Context, delay time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if delay <= 0 {
-		return ctx.Err()
+		return nil
+	}
+	if deadline, ok := ctx.Deadline(); ok && delay >= time.Until(deadline) {
+		return context.DeadlineExceeded
 	}
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
@@ -589,7 +595,7 @@ func (c *chatCompletionClient) askWithKey(ctx context.Context, payload []byte, k
 		if ctx.Err() != nil {
 			return nil, false, fmt.Errorf("reading %s response: %w", c.provider, ctx.Err())
 		}
-		return nil, false, fmt.Errorf("reading %s response failed", c.provider)
+		return nil, true, &chatCompletionTransportError{err: fmt.Errorf("reading %s response failed", c.provider)}
 	}
 	if len(body) > chatCompletionResponseMax {
 		return nil, false, fmt.Errorf("oversized %s response", c.provider)

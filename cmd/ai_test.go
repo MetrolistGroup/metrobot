@@ -51,15 +51,40 @@ func TestChatCompletionClientDoesNotRetryReadTimeout(t *testing.T) {
 		"test provider",
 		nil,
 		nil,
-		&http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		&http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 			requests++
-			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(timeoutReader{})}, nil
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(timeoutReader{ctx: r.Context()})}, nil
 		})},
 	)
 
-	_, err := client.Ask(context.Background(), testGarminMessages("hi"))
-	if err == nil || requests != 1 {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, err := client.Ask(ctx, testGarminMessages("hi"))
+	if !errors.Is(err, context.DeadlineExceeded) || requests != 1 {
 		t.Fatalf("Ask() error = %v after %d requests", err, requests)
+	}
+}
+
+func TestChatCompletionClientRetriesInterruptedResponseBody(t *testing.T) {
+	for _, keys := range [][]string{{"one"}, {"one", "two"}} {
+		var authorizations []string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authorizations = append(authorizations, r.Header.Get("Authorization"))
+			if len(authorizations) == 1 {
+				w.Header().Set("Content-Length", "1000")
+				_, _ = io.WriteString(w, `{"choices":[`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)
+		}))
+		client := newChatCompletionClient(keys, server.URL, "model", "test provider", nil, nil, server.Client())
+		client.rateLimitDelay = 0
+		answer, err := client.Ask(context.Background(), testGarminMessages("hi"))
+		server.Close()
+		want := []string{"Bearer one", "Bearer " + keys[1%len(keys)]}
+		if err != nil || answer != "ok" || !reflect.DeepEqual(authorizations, want) {
+			t.Fatalf("interrupted body did not retry: answer=%q error=%v authorizations=%v", answer, err, authorizations)
+		}
 	}
 }
 
@@ -339,6 +364,43 @@ func TestChatCompletionClientRetryBudgetsWithManyKeys(t *testing.T) {
 	}
 }
 
+func TestWaitForChatCompletionRetryWithinDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := waitForChatCompletionRetry(ctx, time.Millisecond); err != nil {
+		t.Fatalf("usable retry delay rejected: %v", err)
+	}
+	cancel()
+	if err := waitForChatCompletionRetry(ctx, time.Minute); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation replaced by insufficient-budget error: %v", err)
+	}
+}
+
+func TestChatCompletionClientRejectsBackoffBeyondDeadline(t *testing.T) {
+	calls := 0
+	client := newChatCompletionClient([]string{"one", "two"}, "https://example.com", "model", "test", nil, nil, &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: 429, Header: http.Header{"Retry-After": {"60"}}, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})})
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.Ask(ctx, testGarminMessages("hi"))
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) || calls != 2 || ctx.Err() != nil {
+			t.Fatalf("backoff did not fail promptly: error=%v calls=%d context=%v", err, calls, ctx.Err())
+		}
+	case <-time.After(time.Second):
+		cancel()
+		<-done
+		t.Fatal("unusable backoff held the request open")
+	}
+}
+
 func TestChatCompletionClientCancellationAndRetryAfter(t *testing.T) {
 	for _, status := range []int{200, 429} {
 		calls := 0
@@ -404,9 +466,12 @@ type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
 
-type timeoutReader struct{}
+type timeoutReader struct{ ctx context.Context }
 
-func (timeoutReader) Read([]byte) (int, error) { return 0, context.DeadlineExceeded }
+func (r timeoutReader) Read([]byte) (int, error) {
+	<-r.ctx.Done()
+	return 0, r.ctx.Err()
+}
 
 func testGarminMessages(prompt string) []GarminAIMessage {
 	return []GarminAIMessage{{Role: "user", Content: prompt}}
