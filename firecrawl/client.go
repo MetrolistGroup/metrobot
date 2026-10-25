@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,8 @@ const (
 	apiEndpoint       = "https://api.firecrawl.dev/v2/search"
 	failedKeyCooldown = 48 * time.Hour
 )
+
+var errResponseTooLarge = errors.New("Firecrawl response exceeded 4 MiB")
 
 type Client struct {
 	keys        []string
@@ -110,6 +113,9 @@ func (c *Client) Search(ctx context.Context, query string, limit int, source str
 			if ctx.Err() != nil {
 				return "", fmt.Errorf("calling Firecrawl: %w", ctx.Err())
 			}
+			if errors.Is(err, errResponseTooLarge) {
+				return "", err
+			}
 			lastErr = err
 			continue
 		}
@@ -175,7 +181,7 @@ func (c *Client) searchWithKey(ctx context.Context, payload []byte, key string) 
 		return nil, 0, fmt.Errorf("reading Firecrawl response: %w", err)
 	}
 	if len(body) > maxResponseBytes {
-		return nil, 0, fmt.Errorf("Firecrawl response exceeded 4 MiB")
+		return nil, 0, errResponseTooLarge
 	}
 	return body, response.StatusCode, nil
 }

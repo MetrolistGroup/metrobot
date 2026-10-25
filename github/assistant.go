@@ -151,7 +151,7 @@ func (c *AssistantClient) SearchIssues(ctx context.Context, query string) (strin
 		"per_page": {"8"},
 	}
 	var search struct {
-		TotalCount int `json:"total_count"`
+		TotalCount *int `json:"total_count,omitempty"`
 		Items      []struct {
 			RepositoryURL string     `json:"repository_url"`
 			Number        int        `json:"number"`
@@ -181,7 +181,8 @@ func (c *AssistantClient) SearchIssues(ctx context.Context, query string) (strin
 		}
 	}
 	if len(items) != len(search.Items) {
-		search.TotalCount = len(items)
+		// Filtering one page cannot establish the repository-wide total.
+		search.TotalCount = nil
 	}
 	search.Items = items
 	return marshalToolResult(search)

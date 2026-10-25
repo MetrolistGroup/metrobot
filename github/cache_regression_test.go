@@ -33,7 +33,7 @@ func TestIssueSearchUsesTokenAndFiltersUnverifiedRepositories(t *testing.T) {
 			if !strings.Contains(r.URL.Query().Get("q"), "is:public") {
 				t.Error("search did not request public issues")
 			}
-			fmt.Fprintf(w, `{"total_count":4,"items":[
+			fmt.Fprintf(w, `{"total_count":50,"items":[
 				{"repository_url":%q,"title":"public report"},
 				{"repository_url":%q,"title":"private secret"},
 				{"repository_url":"https://evil.test/repos/owner/repo","title":"untrusted secret"},
@@ -47,7 +47,7 @@ func TestIssueSearchUsesTokenAndFiltersUnverifiedRepositories(t *testing.T) {
 	client := NewAssistantClient("read-token", "owner", "repo")
 	client.apiBase = server.URL
 	result, err := client.SearchIssues(context.Background(), "repo:owner/private OR secret")
-	if err != nil || strings.Contains(result, "secret") || !strings.Contains(result, `"title":"public report"`) || !strings.Contains(result, `"total_count":1`) || requests != 2 {
+	if err != nil || strings.Contains(result, "secret") || !strings.Contains(result, `"title":"public report"`) || strings.Contains(result, `"total_count"`) || requests != 2 {
 		t.Fatalf("search = %q, %v; requests=%d", result, err, requests)
 	}
 }
@@ -80,14 +80,14 @@ func TestIssueSearchFallsBackWhenTokenIsForbidden(t *testing.T) {
 		} else if r.URL.Path == "/repos/owner/repo" {
 			fmt.Fprint(w, `{"private":false}`)
 		} else {
-			fmt.Fprintf(w, `{"total_count":1,"items":[{"repository_url":%q,"title":"public report"}]}`, "http://"+r.Host+"/repos/owner/repo")
+			fmt.Fprint(w, `{"total_count":0,"items":[]}`)
 		}
 	}))
 	defer server.Close()
 	client := NewAssistantClient("bad-token", "owner", "repo")
 	client.apiBase = server.URL
 	result, err := client.SearchIssues(context.Background(), "report")
-	if err != nil || !strings.Contains(result, `"title":"public report"`) || requests != 4 {
+	if err != nil || !strings.Contains(result, `"total_count":0`) || !strings.Contains(result, `"items":[]`) || requests != 4 {
 		t.Fatalf("search = %q, %v; requests=%d", result, err, requests)
 	}
 }

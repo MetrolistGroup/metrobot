@@ -59,7 +59,7 @@ func TestAssistantClientSearchIssuesScopesRepository(t *testing.T) {
 	if query != "repo:MetrolistGroup/Metrolist is:issue is:public lyrics is:open" {
 		t.Fatalf("query = %q", query)
 	}
-	if !strings.Contains(result, `"state_reason":"completed"`) {
+	if !strings.Contains(result, `"state_reason":"completed"`) || !strings.Contains(result, `"total_count":1`) {
 		t.Fatalf("SearchIssues() = %s", result)
 	}
 }

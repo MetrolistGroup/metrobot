@@ -95,6 +95,24 @@ func TestClientRejectsOversizedResponsesAndUnsafeRedirects(t *testing.T) {
 	}
 }
 
+func TestClientDoesNotRetryOversizedResponse(t *testing.T) {
+	client := NewClient([]string{"first", "second"})
+	calls := 0
+	client.httpClient.Transport = transportFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"success":true}` + strings.Repeat(" ", 4<<20))), Request: r}, nil
+	})
+	result, err := client.Search(context.Background(), "query", 1, "web")
+	if result != "" || err == nil || !strings.Contains(err.Error(), "exceeded 4 MiB") || calls != 1 {
+		t.Fatalf("Search() = %q, %v; calls=%d", result, err, calls)
+	}
+	for i := range client.failedUntil {
+		if client.failedUntil[i].Load() != 0 {
+			t.Fatal("oversized response disabled an API key")
+		}
+	}
+}
+
 func TestCancelledSearchDoesNotRotateOrDisableKeys(t *testing.T) {
 	client := NewClient([]string{"one", "two"})
 	ctx, cancel := context.WithCancel(context.Background())
