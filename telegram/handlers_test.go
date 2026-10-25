@@ -43,11 +43,11 @@ func TestExtractTriggeredNoteNameMentionSuffix(t *testing.T) {
 }
 
 func TestFormatTelegramNoteHTML(t *testing.T) {
-	input := "📝 **Available notes:**\n• `playback`\n\n# Playback issues\n- Remove `VISITOR DATA` row"
+	input := "**Available notes:**\n• `playback`\n\n# Playback issues\n- Remove `VISITOR DATA` row"
 	formatted := formatTelegramNoteHTML(input)
 
 	expectedParts := []string{
-		"📝 <b>Available notes:</b>",
+		"<b>Available notes:</b>",
 		"• <code>playback</code>",
 		"<b>Playback issues</b>",
 		"• Remove <code>VISITOR DATA</code> row",

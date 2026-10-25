@@ -140,9 +140,9 @@ func TestRunGarminAIAutomaticallyLoadsRelevantSkills(t *testing.T) {
 		skill   string
 		heading string
 	}{
-		{name: "support", prompt: "metrolist playback keeps stopping", skill: "support", heading: "# Metrolist Support Triage"},
+		{name: "support", prompt: "metrolist playback keeps stopping", skill: "support", heading: "# Metrolist support triage"},
 
-		{name: "project", prompt: "what is the latest Metrolist release?", skill: "metrolist", heading: "# Metrolist Project Reference"},
+		{name: "project", prompt: "what is the latest Metrolist release?", skill: "metrolist", heading: "# Metrolist project reference"},
 
 		{name: "casual", prompt: "let's play 20 questions"},
 	}

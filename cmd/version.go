@@ -60,7 +60,7 @@ func formatRelease(rel *gh.ReleaseInfo, isTelegram bool) string {
 
 	if isTelegram {
 		sb.WriteString(fmt.Sprintf("<b>%s</b>\n", rel.TagName))
-		sb.WriteString(fmt.Sprintf("📅 %s\n\n", rel.PublishedAt.Format(time.DateOnly)))
+		sb.WriteString(fmt.Sprintf("Published %s\n\n", rel.PublishedAt.Format(time.DateOnly)))
 
 		if rel.Body != "" {
 			sb.WriteString("<blockquote expandable>")
@@ -81,7 +81,7 @@ func formatRelease(rel *gh.ReleaseInfo, isTelegram bool) string {
 		}
 	} else {
 		sb.WriteString(fmt.Sprintf("**%s**\n", rel.TagName))
-		sb.WriteString(fmt.Sprintf("📅 %s\n\n", rel.PublishedAt.Format(time.DateOnly)))
+		sb.WriteString(fmt.Sprintf("Published %s\n\n", rel.PublishedAt.Format(time.DateOnly)))
 
 		if rel.Body != "" {
 			sb.WriteString(formatDiscordReleaseBody(rel.Body))

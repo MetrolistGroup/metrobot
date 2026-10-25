@@ -1,9 +1,9 @@
-# Metrolist Project Reference
+# Metrolist project reference
 
 Use this skill for questions about the Metrolist project, its status, downloads, or official resources.
 
 - Metrolist is a free and open-source YouTube Music client for Android, built with Kotlin and Material 3.
-- Maintenance mode is not abandonment. It means the project continues to receive bug fixes and minor improvements, while major feature proposals are generally not accepted.
+- In maintenance mode, Metrolist still gets bug fixes and minor improvements, but generally does not accept major feature proposals. It is not abandoned.
 - Official website: https://metrolist.cc
 - Official repository and releases: https://github.com/MetrolistGroup/Metrolist
 - Official Discord: https://dsc.gg/metrolist

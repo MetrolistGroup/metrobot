@@ -1,7 +1,7 @@
 # Note markup
 
-Notes are Markdown. Behavior belongs to their **body**, never their name. Rename a
-note to keep its behavior; remove its directive to disable it. New `donate` and
+Notes are Markdown. Note behavior comes from the body, never the name. Renaming a
+note preserves its behavior. Removing its directive disables it. New `donate` and
 `kmp` notes are ordinary notes unless their bodies contain directives.
 
 Raw database reads return the exact stored body, without rendering or shuffling.
@@ -52,7 +52,7 @@ Use an optional `#` title, optional introductory Markdown, then top-level `##`
 questions followed by nonempty Markdown answers. Headings inside code, quotes or
 lists do not create questions. Other heading levels and setext headings are
 ordinary answer Markdown. Without introductory Markdown, the default header is
-`# FAQ`. Discord adds “Choose a question below.” and a question selector, showing
+`# FAQ`. Discord adds "Choose a question below." and a question selector. It shows
 one answer at a time. Telegram and AI receive the complete readable Markdown.
 
 ````markdown
@@ -69,15 +69,15 @@ Use https://github.com/MetrolistGroup/Metrolist/releases.
 Still stuck? Include your app version when asking for help.
 ````
 
-New FAQs need 1–25 questions. Selector labels and answer previews are safely
-shortened to Discord's 100 UTF-16-unit option limit; the displayed answer is not
-shortened. Every page, including the header and surrounding Markdown, must fit
-Discord's combined 4,000 UTF-16-unit text limit. Existing migrated FAQs that do
-not fit still deliver their full readable content through the fallback below.
+New FAQs need 1 to 25 questions. The bot shortens selector labels and answer
+previews to Discord's 100 UTF-16-unit option limit. It does not shorten the
+displayed answer. Every page, including the header and surrounding Markdown,
+must fit Discord's combined 4,000 UTF-16-unit text limit. Existing migrated FAQs
+that do not fit still deliver their full readable content through the fallback below.
 
 ## Authored Components V2
 
-The JSON object has exactly one field, `components`, containing 1–10 components.
+The JSON object has exactly one field, `components`, containing 1 to 10 components.
 The server constructs typed Discord components in a default plain container.
 It never accepts an arbitrary Discord payload, custom IDs, actions, JavaScript,
 colors or raw configuration.
@@ -88,9 +88,9 @@ Supported schemas (all fields shown are required):
 - `{"type":"separator"}`: a divider.
 - `{"type":"section","content":"Markdown","thumbnail":"https://…"}`:
   nonempty Markdown text with an HTTPS thumbnail.
-- `{"type":"gallery","urls":["https://…"]}`: 1–10 HTTPS media URLs.
+- `{"type":"gallery","urls":["https://…"]}`: 1 to 10 HTTPS media URLs.
 - `{"type":"buttons","buttons":[{"label":"Download","url":"https://…"}]}`:
-  1–5 URL-only buttons; labels need 1–80 UTF-16 units.
+  1 to 5 URL-only buttons; labels need 1 to 80 UTF-16 units.
 
 URLs must be absolute HTTPS URLs without credentials or whitespace and at most
 512 UTF-16 units. Only the listed fields are accepted for each component type.
@@ -100,7 +100,7 @@ Official links:
 ```components-v2
 {
   "components": [
-    {"type": "text", "content": "# Metrolist\nMusic, without distractions."},
+    {"type": "text", "content": "# Metrolist\nA YouTube Music client for Android."},
     {"type": "separator"},
     {
       "type": "section",
@@ -161,7 +161,8 @@ notes and records `note_markup_v1` in the `migrations` table:
 
 - Existing `donate`: keep the first line fixed and put the remaining lines in one
   JSON random group, using the former retrieval's newline normalization. Blank
-  lines attach to a neighboring entry; rendered text and JSON escaping are preserved. A note without nonempty remaining entries stays literal.
+  lines attach to a neighboring entry. The migration preserves rendered text and
+  JSON escaping. A note without nonempty remaining entries stays literal.
 - Existing `kmp`: wrap the complete original Markdown in a safely sized FAQ fence.
 - A legacy `kmp` FAQ with top-level questions and directive examples is wrapped
   in a longer FAQ fence so its examples stay literal and the question menu survives.

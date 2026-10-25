@@ -66,7 +66,7 @@ func (h *WarnHandler) Warn(banner PlatformBanner, callerID, targetID, reason str
 
 	h.DB.LogModAction(platform, "system", targetID, "timeout", fmt.Sprintf("Timeout for %s after warn #%d", util.FormatDuration(timeoutDuration), count))
 
-	response := fmt.Sprintf("⚠️ %s has been warned. Reason: %s (warning #%d). Auto-action: timed out for %s.", formatUserRef(banner, targetID), formatUserText(banner, reasonText), count, util.FormatDuration(timeoutDuration))
+	response := fmt.Sprintf("%s has been warned. Reason: %s (warning #%d). Auto-action: timed out for %s.", formatUserRef(banner, targetID), formatUserText(banner, reasonText), count, util.FormatDuration(timeoutDuration))
 
 	return response, nil, c, nil
 }

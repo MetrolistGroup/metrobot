@@ -1,4 +1,4 @@
-# Metrobot Memory
+# Metrobot memory
 
 ## Metrolist
 
@@ -10,7 +10,7 @@
 - Core features include YouTube Music streaming, downloads and offline caching, synchronized lyrics, library and account sync, Material 3 themes, and listen together.
 - The app is not affiliated with YouTube or Google.
 
-## Community References
+## Community references
 
 - Saved bot notes contain community support information. Use `list_notes` and `get_note` when a note may answer the question.
 - Discord nicknames, global display names, usernames, and user IDs are different fields. Use Discord context or member tools and never infer one from another.

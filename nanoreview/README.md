@@ -32,10 +32,10 @@ observed slugs, not guessed names. Search may return loosely related matches.
 Basic curl requests returned Cloudflare 403, even for the OnePlus detail page.
 With the browser User-Agent, Accept and Accept-Language headers used by this
 client, search and all five detail categories returned HTTP 200. A live Go client
-smoke check also successfully searched and parsed all five categories. The phone list
-is not needed. Cloudflare restrictions can change: blocking, malformed responses
-and missing specifications return errors, never fabricated results or cached
-empty successes. There is no proxy service or external search-engine fallback.
+smoke check searched and parsed all five categories. The phone list is not needed.
+Cloudflare restrictions can change. Blocking, malformed responses and missing
+specifications return errors, never fabricated results or cached empty successes.
+There is no proxy service or external search-engine fallback.
 
 The shared `.card` / `.specs-table` markup supplies specification and benchmark
 sections. Laptop/phone configuration selectors are not executed; results describe

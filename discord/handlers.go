@@ -443,7 +443,7 @@ func helpComponents(page int) ([]discord.LayoutComponent, bool) {
 		next = len(helpPages) - 1
 	}
 	return []discord.LayoutComponent{discord.ContainerComponent{Components: []discord.ContainerSubComponent{
-		discord.TextDisplayComponent{Content: "# Metrobot Help\n## " + helpPages[page].title + "\n" + helpPages[page].body},
+		discord.TextDisplayComponent{Content: "# Metrobot help\n## " + helpPages[page].title + "\n" + helpPages[page].body},
 		discord.SeparatorComponent{},
 		discord.TextDisplayComponent{Content: fmt.Sprintf("-# Page %d of %d", page+1, len(helpPages))},
 		discord.ActionRowComponent{Components: []discord.InteractiveComponent{
@@ -843,7 +843,7 @@ func (b *Bot) handleDehoist(s *bot.Client, i *events.ApplicationCommandInteracti
 		for _, chunk := range chunks {
 			dmUser(s, callerID, chunk)
 		}
-		if err := editDeferredResponse(s, i, "Output too large - sent to your DMs."); err != nil {
+		if err := editDeferredResponse(s, i, "The output is too long, so I sent it to your DMs."); err != nil {
 			b.Logger.Error("failed to edit deferred dehoist response", zap.Error(err))
 		}
 		return
@@ -1094,7 +1094,7 @@ func (b *Bot) handlePurge(s *bot.Client, i *events.ApplicationCommandInteraction
 			s.Rest.DeleteMessage(i.Channel().ID(), toDelete[0])
 		}
 
-		editDeferredResponse(s, i, fmt.Sprintf("🗑️ Deleted %d messages.", len(toDelete)))
+		editDeferredResponse(s, i, fmt.Sprintf("Deleted %d messages.", len(toDelete)))
 	} else {
 		respondEphemeral(s, i, "Please provide a count to purge.")
 	}
@@ -1155,7 +1155,7 @@ func (b *Bot) handleRefreshStarboard(s *bot.Client, i *events.ApplicationCommand
 		return
 	}
 
-	editDeferredResponse(s, i, "✅ Starboard and sobboard refreshed successfully.")
+	editDeferredResponse(s, i, "Starboard and sobboard refreshed.")
 }
 
 // --- Helpers ---

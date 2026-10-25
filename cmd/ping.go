@@ -11,7 +11,7 @@ type PingHandler struct{}
 
 func (h *PingHandler) Ping() (string, error) {
 	var sb strings.Builder
-	sb.WriteString("📡 **Ping Results:**\n")
+	sb.WriteString("**Ping results:**\n")
 
 	// Ping 1.1.1.1
 	cloudflare := pingHost("1.1.1.1:443")
@@ -32,10 +32,10 @@ func pingHost(host string) string {
 	start := time.Now()
 	conn, err := net.DialTimeout("tcp", host, 5*time.Second)
 	if err != nil {
-		return fmt.Sprintf("❌ Unreachable (%s)", err)
+		return fmt.Sprintf("Unreachable (%s)", err)
 	}
 	defer conn.Close()
 
 	elapsed := time.Since(start)
-	return fmt.Sprintf("✅ %d ms", elapsed.Milliseconds())
+	return fmt.Sprintf("%d ms", elapsed.Milliseconds())
 }

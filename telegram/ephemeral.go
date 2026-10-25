@@ -129,7 +129,7 @@ func dmUser(bot *tgbotapi.BotAPI, userID int64, text string) error {
 
 // sendPermissionError sends an error message about missing permissions and deletes both messages after 5 seconds
 func sendPermissionError(bot *tgbotapi.BotAPI, chatID int64, originalMsgID int, permission string, logger *zap.Logger) {
-	text := fmt.Sprintf("❌ I don't have the required permission: %s", permission)
+	text := fmt.Sprintf("I don't have the required permission: %s", permission)
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ReplyToMessageID = originalMsgID
 

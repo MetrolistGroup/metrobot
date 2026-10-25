@@ -898,7 +898,7 @@ func TestGarminRuntimeRetrievalGuidanceSurvivesCustomPrompt(t *testing.T) {
 	}
 	b := &Bot{DB: database}
 	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-		for _, required := range []string{"A custom base prompt", "read_channel_history", "timestamps", "participants, developments, decisions and unanswered questions", "untrusted data", "unfamiliar subjects", "Do not preflight casual chat", "private channel text", "External web search is disabled after channel-history retrieval"} {
+		for _, required := range []string{"A custom base prompt", "read_channel_history", "timestamps", "participants, developments, decisions and unanswered questions", "untrusted data", "unfamiliar subjects", "Do not run a public search for casual chat", "private channel text", "External web search is disabled after channel-history retrieval"} {
 			if !strings.Contains(request.SystemPrompt, required) {
 				t.Errorf("custom prompt lost runtime guidance %q", required)
 			}

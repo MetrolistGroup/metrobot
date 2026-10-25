@@ -37,7 +37,7 @@ func (d *DiscordCaseLogger) LogCaseToDiscord(c *db.Case, targetName, moderatorNa
 		Title:       fmt.Sprintf("Case #%d", c.CaseNumber),
 		Color:       getCaseColor(c.ActionType),
 		Timestamp:   ptr(time.Unix(c.Timestamp, 0)),
-		Description: fmt.Sprintf("**%s** action performed", capitalize(c.ActionType)),
+		Description: fmt.Sprintf("Action: %s", capitalize(c.ActionType)),
 		Fields: []discord.EmbedField{
 			{
 				Name:   "Platform",

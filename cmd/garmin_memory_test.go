@@ -21,7 +21,7 @@ func TestGarminMemoryLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
-	if !strings.Contains(content, "# Metrobot Memory") || !strings.Contains(content, "Remember this") {
+	if !strings.Contains(content, "# Metrobot memory") || !strings.Contains(content, "Remember this") {
 		t.Fatalf("Read() = %q", content)
 	}
 
@@ -37,7 +37,7 @@ func TestGarminMemoryLifecycle(t *testing.T) {
 		t.Fatalf("Clear() error = %v", err)
 	}
 	content, _ = memory.Read()
-	if content != "# Metrobot Memory" {
+	if content != "# Metrobot memory" {
 		t.Fatalf("Read() after clear = %q", content)
 	}
 }
@@ -75,7 +75,7 @@ func TestGarminMemoryMigratesLegacyHeading(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if content != "# Metrobot Memory\n\n- Existing fact" {
+	if content != "# Metrobot memory\n\n- Existing fact" {
 		t.Fatalf("migrated memory = %q", content)
 	}
 }

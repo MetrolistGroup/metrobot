@@ -26,9 +26,9 @@ func (h *ActionsHandler) GetActions(ctx context.Context, isTelegram bool) (strin
 
 	var sb strings.Builder
 	if isTelegram {
-		sb.WriteString("<b>GitHub Actions - Latest Runs:</b>\n\n")
+		sb.WriteString("<b>Latest GitHub Actions runs:</b>\n\n")
 	} else {
-		sb.WriteString("**GitHub Actions - Latest Runs:**\n\n")
+		sb.WriteString("**Latest GitHub Actions runs:**\n\n")
 	}
 
 	for _, run := range result.Runs {
@@ -36,9 +36,9 @@ func (h *ActionsHandler) GetActions(ctx context.Context, isTelegram bool) (strin
 
 		switch {
 		case run.Status == "in_progress" || run.Status == "queued":
-			sb.WriteString(fmt.Sprintf("⏳ Run #%d - %s\n", run.RunNumber, title))
+			sb.WriteString(fmt.Sprintf("Run #%d is queued or running. %s\n", run.RunNumber, title))
 		case run.Conclusion == "failure" || run.Conclusion == "cancelled":
-			sb.WriteString(fmt.Sprintf("❌ Run #%d - %s\n", run.RunNumber, title))
+			sb.WriteString(fmt.Sprintf("Run #%d failed or was cancelled. %s\n", run.RunNumber, title))
 		case run.Conclusion == "success":
 			fossURL := fmt.Sprintf("https://nightly.link/%s/%s/workflows/%s/main/%s.zip",
 				h.Config.GitHubOwner, h.Config.GitHubRepo,
@@ -47,11 +47,11 @@ func (h *ActionsHandler) GetActions(ctx context.Context, isTelegram bool) (strin
 				h.Config.GitHubOwner, h.Config.GitHubRepo,
 				h.Config.ActionsWorkflowFile, h.Config.ActionsArtifactNames.GMS)
 			if isTelegram {
-				sb.WriteString(fmt.Sprintf("✅ Run #%d - %s\n", run.RunNumber, title))
+				sb.WriteString(fmt.Sprintf("Run #%d succeeded. %s\n", run.RunNumber, title))
 				sb.WriteString(fmt.Sprintf("• <a href=\"%s\">FOSS APK</a>\n", fossURL))
 				sb.WriteString(fmt.Sprintf("• <a href=\"%s\">GMS APK</a>\n", gmsURL))
 			} else {
-				sb.WriteString(fmt.Sprintf("✅ Run #%d - %s\n", run.RunNumber, title))
+				sb.WriteString(fmt.Sprintf("Run #%d succeeded. %s\n", run.RunNumber, title))
 				sb.WriteString(fmt.Sprintf("• FOSS APK: <%s>\n", fossURL))
 				sb.WriteString(fmt.Sprintf("• GMS APK: <%s>\n", gmsURL))
 			}

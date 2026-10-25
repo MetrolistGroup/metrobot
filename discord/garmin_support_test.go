@@ -168,7 +168,7 @@ func TestAutomaticAppSupportHandoffRunsSupportAgent(t *testing.T) {
 		if request.SystemPrompt == garminAppSupportTriagePrompt {
 			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{ToolCalls: []cmd.GarminAIToolCall{{Function: cmd.GarminAIFunctionCall{Name: "handoff_to_app_support_agent", Arguments: `{}`}}}}}, nil
 		}
-		if !strings.Contains(request.SystemPrompt, "# Metrolist Support Triage") || !strings.Contains(request.Context, "dedicated Metrolist app-support agent") {
+		if !strings.Contains(request.SystemPrompt, "# Metrolist support triage") || !strings.Contains(request.Context, "dedicated Metrolist app-support agent") {
 			t.Fatal("handoff did not reach the constrained support agent")
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "the support answer"}}, nil

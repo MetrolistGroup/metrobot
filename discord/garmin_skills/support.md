@@ -1,4 +1,4 @@
-# Metrolist Support Triage
+# Metrolist support triage
 
 Use this skill for troubleshooting Metrolist problems.
 

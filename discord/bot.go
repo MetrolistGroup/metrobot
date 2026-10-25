@@ -503,7 +503,7 @@ func (b *Bot) registerCommands() error {
 			Required:    false,
 		}, discord.ApplicationCommandOptionBool{
 			Name:        "dry",
-			Description: "Dry run - show what would change without applying",
+			Description: "Preview changes without applying them",
 			Required:    false,
 		},
 		},

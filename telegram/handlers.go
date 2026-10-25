@@ -175,7 +175,7 @@ func (b *Bot) handleCommand(msg *tgbotapi.Message, callerID string) {
 }
 
 func (b *Bot) tgHandleHelp(msg *tgbotapi.Message) {
-	help := `<b>Available Commands:</b>
+	help := `<b>Available commands:</b>
 
 <b>Notes:</b>
 • /notes - List all available notes
@@ -185,7 +185,7 @@ func (b *Bot) tgHandleHelp(msg *tgbotapi.Message) {
 • /renamenote old_name new_name - Rename a note (admin only)
 • /delnote - Delete a note (admin only)
 
-<b>Bot Info:</b>
+<b>Bot info:</b>
 • /version - Show release info
 • /latest - Show the latest release
 • /actions - GitHub Actions build status
@@ -203,12 +203,12 @@ func (b *Bot) tgHandleHelp(msg *tgbotapi.Message) {
 • /unwarn - Remove a warning from a user
 • /dehoist - Remove hoisting characters from name
 
-<b>Admin Management (permaadmin only):</b>
+<b>Admin management (permaadmin only):</b>
 • /addadmin - Add a bot admin
 • /removeadmin - Remove a bot admin
 
-<b>Prefix Commands:</b>
-Moderation actions can also be triggered via message prefix: !<code>action</code> [user] [args]
+<b>Prefix commands:</b>
+You can also use !<code>action</code> [user] [args] for moderation.
 Example: <code>!ban @user spam</code>`
 	sendEphemeralReply(b.API, msg.Chat.ID, msg.MessageID, help, "HTML", false, b.Logger)
 }
@@ -701,7 +701,7 @@ func (b *Bot) tgHandleDehoist(msg *tgbotapi.Message, args string, callerID strin
 		for _, chunk := range chunks {
 			dmUser(b.API, uid, chunk)
 		}
-		sendEphemeralReply(b.API, msg.Chat.ID, msg.MessageID, "Output too large - sent to your DMs.", "", false, b.Logger)
+		sendEphemeralReply(b.API, msg.Chat.ID, msg.MessageID, "The output is too long, so I sent it to your DMs.", "", false, b.Logger)
 		return
 	}
 

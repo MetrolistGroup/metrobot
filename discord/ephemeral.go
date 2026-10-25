@@ -161,7 +161,7 @@ func sendReplyWithDelete(s *bot.Client, channelID, messageID, content string, du
 
 // sendPermissionError sends an error message about missing permissions and deletes both messages after 5 seconds
 func sendPermissionError(s *bot.Client, channelID, originalMsgID string, permission string, logger *zap.Logger) {
-	content := fmt.Sprintf("❌ I don't have the required permission: **%s**", permission)
+	content := fmt.Sprintf("I don't have the required permission: **%s**", permission)
 	msg, err := s.Rest.CreateMessage(snowflakeID(channelID), discord.MessageCreate{Content: suppressDiscordEmbeds(content)})
 	if err != nil {
 		logger.Error("failed to send permission error", zap.Error(err))

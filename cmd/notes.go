@@ -27,7 +27,7 @@ func (h *NotesHandler) ListNotes() (string, error) {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("📝 **Available notes:**\n")
+	sb.WriteString("**Available notes:**\n")
 	for _, note := range names {
 		sb.WriteString(fmt.Sprintf("• `%s`", note.Name))
 		if note.ShortDesc != "" {

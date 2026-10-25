@@ -44,21 +44,14 @@ func (h *CaseHandler) FormatCase(c *db.Case, targetName, moderatorName string) s
 	}
 	ts := time.Unix(c.Timestamp, 0).Format("2006-01-02 15:04:05")
 
-	platformEmoji := "💬"
-	if c.Platform == "discord" {
-		platformEmoji = "🎮"
-	} else if c.Platform == "telegram" {
-		platformEmoji = "✈️"
-	}
-
 	return fmt.Sprintf(
-		"**Case #%d** %s\n"+
+		"**Case #%d**\n"+
 			"**Action:** %s\n"+
 			"**Target:** %s (%s)\n"+
 			"**Moderator:** %s\n"+
 			"**Reason:** %s\n"+
 			"**Time:** %s",
-		c.CaseNumber, platformEmoji,
+		c.CaseNumber,
 		c.ActionType,
 		targetName, c.Platform,
 		moderatorName,

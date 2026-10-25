@@ -85,7 +85,7 @@ func (h *ModerationHandler) Ban(banner PlatformBanner, callerID, targetID, reaso
 	}
 
 	reasonText := " Reason: " + formatUserText(banner, reason)
-	return fmt.Sprintf("🔨 %s has been permanently banned.%s", formatUserRef(banner, targetID), reasonText), c, nil
+	return fmt.Sprintf("%s has been permanently banned.%s", formatUserRef(banner, targetID), reasonText), c, nil
 }
 
 func (h *ModerationHandler) DBan(banner PlatformBanner, callerID, targetID, reason string, cfg db.PermaAdminProvider) (string, *db.Case, error) {
@@ -118,7 +118,7 @@ func (h *ModerationHandler) DBan(banner PlatformBanner, callerID, targetID, reas
 	}
 
 	reasonText := " Reason: " + formatUserText(banner, reason)
-	return fmt.Sprintf("🔨 %s has been banned and their messages deleted.%s", formatUserRef(banner, targetID), reasonText), c, nil
+	return fmt.Sprintf("%s has been banned and their messages deleted.%s", formatUserRef(banner, targetID), reasonText), c, nil
 }
 
 func (h *ModerationHandler) TBan(banner PlatformBanner, callerID, targetID string, duration time.Duration, reason string, cfg db.PermaAdminProvider) (string, *db.Case, error) {
@@ -154,7 +154,7 @@ func (h *ModerationHandler) TBan(banner PlatformBanner, callerID, targetID strin
 	}
 
 	reasonText := " Reason: " + formatUserText(banner, reason)
-	return fmt.Sprintf("⏱️ %s has been banned for %s.%s", formatUserRef(banner, targetID), util.FormatDuration(duration), reasonText), c, nil
+	return fmt.Sprintf("%s has been banned for %s.%s", formatUserRef(banner, targetID), util.FormatDuration(duration), reasonText), c, nil
 }
 
 func (h *ModerationHandler) Kick(banner PlatformBanner, callerID, targetID, reason string, cfg db.PermaAdminProvider) (string, *db.Case, error) {
@@ -179,7 +179,7 @@ func (h *ModerationHandler) Kick(banner PlatformBanner, callerID, targetID, reas
 		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "kick", targetID, callerID, reason, targetName, moderatorName)
 	}
 
-	return fmt.Sprintf("👢 %s has been kicked. Reason: %s", formatUserRef(banner, targetID), formatUserText(banner, reason)), c, nil
+	return fmt.Sprintf("%s has been kicked. Reason: %s", formatUserRef(banner, targetID), formatUserText(banner, reason)), c, nil
 }
 
 func (h *ModerationHandler) SBan(banner PlatformBanner, callerID, targetID, reason string, cfg db.PermaAdminProvider) (string, *db.Case, error) {
@@ -220,7 +220,7 @@ func (h *ModerationHandler) SBan(banner PlatformBanner, callerID, targetID, reas
 	}
 
 	reasonText := " Reason: " + formatUserText(banner, reason)
-	return fmt.Sprintf("🧹 %s has been softbanned.%s", formatUserRef(banner, targetID), reasonText), c, nil
+	return fmt.Sprintf("%s has been softbanned.%s", formatUserRef(banner, targetID), reasonText), c, nil
 }
 
 func (h *ModerationHandler) Mute(banner PlatformBanner, callerID, targetID string, duration time.Duration, reason string, cfg db.PermaAdminProvider) (string, *db.Case, error) {
@@ -259,7 +259,7 @@ func (h *ModerationHandler) Mute(banner PlatformBanner, callerID, targetID strin
 	})
 
 	reasonText := " Reason: " + formatUserText(banner, reason)
-	return fmt.Sprintf("🔇 %s has been muted for %s.%s", formatUserRef(banner, targetID), util.FormatDuration(duration), reasonText), c, nil
+	return fmt.Sprintf("%s has been muted for %s.%s", formatUserRef(banner, targetID), util.FormatDuration(duration), reasonText), c, nil
 }
 
 func (h *ModerationHandler) scheduleTimer(id string, duration time.Duration, cleanupCallback func()) {
@@ -314,7 +314,7 @@ func (h *ModerationHandler) Dehoist(banner PlatformBanner, targetID string, dry 
 			successCount++
 		}
 
-		return fmt.Sprintf("Successfully dehoisted %d members out of %d server members.", successCount, totalMembers), nil
+		return fmt.Sprintf("Dehoisted %d members out of %d server members.", successCount, totalMembers), nil
 	}
 
 	displayName, err := banner.GetDisplayName(targetID)
@@ -324,7 +324,7 @@ func (h *ModerationHandler) Dehoist(banner PlatformBanner, targetID string, dry 
 
 	// If there is no display name (server or global), there is nothing to dehoist.
 	if displayName == "" {
-		return "✅ No members need dehoisting.", nil
+		return "No members need dehoisting.", nil
 	}
 
 	newName := stripHoistChars(displayName)
@@ -333,7 +333,7 @@ func (h *ModerationHandler) Dehoist(banner PlatformBanner, targetID string, dry 
 	}
 
 	if banner.Platform() == PlatformTelegram {
-		return fmt.Sprintf("⚠️ Cannot rename users on Telegram. Please manually change your username: @%s", targetID), nil
+		return fmt.Sprintf("I can't rename users on Telegram. Change your username manually: @%s", targetID), nil
 	}
 
 	if err := banner.SetNickname(targetID, newName); err != nil {
@@ -354,11 +354,11 @@ func (h *ModerationHandler) dehoistDryRun(banner PlatformBanner, targetID string
 			return "", fmt.Errorf("getting display name: %w", err)
 		}
 		if displayName == "" {
-			return "✅ No members need dehoisting.", nil
+			return "No members need dehoisting.", nil
 		}
 		newName := stripHoistChars(displayName)
 		if newName == displayName {
-			return "✅ No members need dehoisting.", nil
+			return "No members need dehoisting.", nil
 		}
 		return fmt.Sprintf("@%s - \"%s\" → \"%s\"", targetID, displayName, newName), nil
 	}
@@ -381,13 +381,13 @@ func (h *ModerationHandler) dehoistDryRun(banner PlatformBanner, targetID string
 	}
 
 	if len(results) == 0 {
-		return "✅ No members need dehoisting.", nil
+		return "No members need dehoisting.", nil
 	}
 
 	list := strings.Join(results, "\n")
 	result := fmt.Sprintf("```\n%s\n```", list)
 	if banner.Platform() == PlatformTelegram {
-		result += "\n\n⚠️ Note: Telegram bots cannot rename users. This is informational only."
+		result += "\n\nTelegram bots cannot rename users. This is a preview only."
 	}
 
 	return result, nil

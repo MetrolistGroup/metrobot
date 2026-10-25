@@ -12,7 +12,7 @@ const (
 	GarminMemoryFile           = "garmin-memory.md"
 	garminMemoryMaxSize        = 16 * 1024
 	garminLearnedMemoryMaxSize = 6 * 1024
-	garminMemoryEmpty          = "# Metrobot Memory\n"
+	garminMemoryEmpty          = "# Metrobot memory\n"
 	garminLearnedMemoryStart   = "<!-- learned-conversation-memory:start -->"
 	garminLearnedMemoryEnd     = "<!-- learned-conversation-memory:end -->"
 )
@@ -52,7 +52,7 @@ func (m *GarminMemory) migrateHeading() error {
 	if !strings.HasPrefix(content, "# Garmin Memory") {
 		return nil
 	}
-	return m.write(strings.Replace(content, "# Garmin Memory", "# Metrobot Memory", 1))
+	return m.write(strings.Replace(content, "# Garmin Memory", "# Metrobot memory", 1))
 }
 
 func (m *GarminMemory) Read() (string, error) {

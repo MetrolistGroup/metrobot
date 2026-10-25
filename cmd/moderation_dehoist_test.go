@@ -104,7 +104,7 @@ func TestDehoistBulkUsesOriginalNamesAndSkipsProtectedMembers(t *testing.T) {
 		t.Fatalf("user-4 new nickname = %q, want %q", got, "alice")
 	}
 
-	wantResp := "Successfully dehoisted 2 members out of 6 server members."
+	wantResp := "Dehoisted 2 members out of 6 server members."
 	if resp != wantResp {
 		t.Fatalf("response = %q, want %q", resp, wantResp)
 	}

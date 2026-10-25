@@ -55,7 +55,7 @@ func New(database *db.DB) *Client {
 func (c *Client) Search(ctx context.Context, query string, limit int) ([]Device, error) {
 	query = strings.Join(strings.Fields(query), " ")
 	if query == "" || len([]rune(query)) > 100 {
-		return nil, errors.New("Technical City search requires 1–100 characters")
+		return nil, errors.New("Technical City search requires 1 to 100 characters")
 	}
 	if limit <= 0 || limit > 25 {
 		limit = 25
