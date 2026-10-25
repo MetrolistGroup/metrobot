@@ -12,7 +12,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestSupportContextRecordsDeliveredRandomizedNote(t *testing.T) {
+func TestSupportContextRecordsDeliveredExcerpt(t *testing.T) {
 	database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -35,12 +35,13 @@ func TestSupportContextRecordsDeliveredRandomizedNote(t *testing.T) {
 	b := &Bot{DB: database, Notes: notes, Logger: zap.NewNop()}
 	original := []cmd.GarminAIMessage{{Role: "user", Content: "tips?"}, {Role: "assistant", Content: "earlier rendition"}}
 	m := &discord.Message{ID: 23, ChannelID: 5, Author: discord.User{ID: 42}}
-	if b.sendGarminAppSupportReplyAndRememberIfVisible(client, m, "earlier rendition", original, "tips", nil) == nil {
+	if b.sendGarminAppSupportReplyAndRememberIfVisible(client, m, "earlier rendition", original, "tips") == nil {
 		t.Fatal("send failed")
 	}
 	sent := <-requests
 	context := b.garminAIContexts["38"].messages
-	if len(context) == 0 || context[len(context)-1].Content != sent.Message.Content {
+	content := sent.Message.Components[0].(discord.ContainerComponent).Components[0].(discord.TextDisplayComponent).Content
+	if len(context) == 0 || context[len(context)-1].Content != content || content != "earlier rendition" {
 		t.Fatalf("stored answer differs from delivered note: %+v", context)
 	}
 	if original[1].Content != "earlier rendition" {

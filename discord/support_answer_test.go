@@ -56,8 +56,47 @@ func TestSupportAnswerGroundingFailsClosed(t *testing.T) {
 				}
 				return &cmd.DecisionResponse{Answers: map[string]cmd.DecisionAnswer{"grounded": {Type: "noul", Noul: &test.probability}}}, nil
 			})}
-			if got, _ := b.supportAnswerGrounded(context.Background(), supportTestMessage(101), messages, conversation, "try a clean install"); got != test.want {
+			if got, _ := b.supportAnswerGrounded(context.Background(), supportTestMessage(101), messages, conversation, "try a clean install", nil); got != test.want {
 				t.Fatalf("grounded = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestSupportNoteReferenceRequiresPositiveVerdict(t *testing.T) {
+	for _, tc := range []struct {
+		name                           string
+		use                            float64
+		legacy, invalid, wantReference bool
+	}{
+		{name: "used", use: .99, wantReference: true},
+		{name: "threshold", use: .95, wantReference: true},
+		{name: "clarification", use: .01},
+		{name: "uncertain", use: .94},
+		{name: "invalid", use: 2, invalid: true},
+		{name: "legacy has no reference check", legacy: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := &Bot{}
+			if !tc.legacy {
+				b.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+					if request.State.(map[string]any)["reference_note"] != "rpc" || request.Questions["note_used"].Type != "noul" {
+						t.Fatal("reference was not checked independently")
+					}
+					return supportTestDecision(request, "agent", .99, tc.use), nil
+				})
+			}
+			name := "rpc"
+			messages := []cmd.GarminAIMessage{{Role: "user", Content: "How do I connect Discord?"}}
+			accepted, err := b.supportAnswerGrounded(context.Background(), supportTestMessage(20), messages, messages, "Which Metrolist variant are you using?", &name)
+			if tc.invalid {
+				if err == nil || accepted {
+					t.Fatal("invalid reference verdict did not fail closed")
+				}
+				return
+			}
+			if err != nil || !accepted || (name != "") != tc.wantReference {
+				t.Fatalf("accepted=%v reference=%q err=%v", accepted, name, err)
 			}
 		})
 	}
@@ -85,7 +124,7 @@ func TestSupportEvidenceTracksCurrentAttachmentAvailability(t *testing.T) {
 			m := supportTestMessage(101)
 			m.Attachments = test.attachments
 			messages := []cmd.GarminAIMessage{{Role: "user", Content: "see attached", Images: test.images}}
-			if _, err := b.supportAnswerGrounded(context.Background(), m, messages, messages, "Please paste the error text."); err != nil {
+			if _, err := b.supportAnswerGrounded(context.Background(), m, messages, messages, "Please paste the error text.", nil); err != nil {
 				t.Fatal(err)
 			}
 		})

@@ -149,7 +149,7 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 	}
 	if m.ChannelID.String() == garminAppSupportID {
 		conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: result.Answer, Timestamp: time.Now().UTC()})
-		supportCompleted = b.sendGarminAppSupportReplyAndRememberIfVisible(s, m, result.Answer, conversation, result.NoteName, result.NoteSnapshot) != nil
+		supportCompleted = b.sendGarminAppSupportReplyAndRememberIfVisible(s, m, result.Answer, conversation, result.NoteName) != nil
 		return
 	}
 	result.Answer = enforceGarminChannelReply(garminRedirectChannelID(s, m.ChannelID.String()), result.Answer, garminUserText(messages))
@@ -475,16 +475,16 @@ func (b *Bot) sendGarminReply(s *bot.Client, m *discord.Message, content string)
 		},
 		AllowedMentions: &discord.AllowedMentions{},
 	})
-	if err != nil {
+	if noteRequestRejected(err) {
 		b.Logger.Warn("failed to send Garmin AI reply reference, retrying without it", zap.Error(err))
 		reply, err = s.Rest.CreateMessage(m.ChannelID, discord.MessageCreate{
 			Content:         content,
 			AllowedMentions: &discord.AllowedMentions{},
 		})
-		if err != nil {
-			b.Logger.Error("failed to send Garmin AI reply", zap.Error(err))
-			return nil
-		}
+	}
+	if err != nil {
+		b.Logger.Error("failed to send Garmin AI reply", zap.Error(err))
+		return nil
 	}
 	return reply
 }

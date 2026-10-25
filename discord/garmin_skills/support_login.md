@@ -4,9 +4,9 @@ Match variant/version/platform first. English labels. Music-account login, not D
 
 ## Source applicability
 
-- **A: standalone Android v13.7.0**, tag `7c5ba3ad22cb562d337897f82163a2b7fce665f3` in `/mnt/work/projects/Metrolist`.
+- **A: standalone Android v13.7.0**, tag `7c5ba3ad22cb562d337897f82163a2b7fce665f3` in the Metrolist repository.
 - **M: standalone Android main**, HEAD/main `6d08504262de76a4ba841dc24489a754e2f48e4f` (`6d0850426`), not the stable tag. Traced login flow matches A.
-- **K: KMP**, `/mnt/work/projects/Metrolist-KMP` HEAD equals local `origin/main`: `2ac8e47c5566b5771133d798618d75cc69c2d039`. Snapshot only, not remote freshness or proof of features/access in a user's release.
+- **K: KMP**, the Metrolist-KMP repository HEAD equals local `origin/main`: `2ac8e47c5566b5771133d798618d75cc69c2d039`. Snapshot only, not remote freshness or proof of features/access in a user's release.
 
 ## Standalone Android (A; also traced in M)
 
@@ -27,6 +27,7 @@ Top-bar profile button → **Sign in** while signed out (mobile popup/desktop me
 | Linux/macOS desktop | **Sign In - YouTube Music**: native WebView, Google sign-in → YouTube Music. Automatic completion; **Complete sign-in** retries completion if the view remains after reaching Music. Failed Linux WebKit detection shows **YouTube sign-in unavailable** / **Channel switch unavailable**. [K4] |
 | Windows desktop | **Windows Login Helper** auto-launches a separate **WebView2 helper window**, not the default browser. Sign in there; session returns automatically. **Start Login Process** is available when it is not running; missing/failed helpers show errors. [K4] |
 
+- Do not append an app channel-picker/Continue step to Windows initial login: that step is verified only for the other platforms below. The Windows helper returns its session automatically.
 - Android/iOS/non-Windows desktop show **Choose a YouTube channel** when multiple channels are discovered: select one and **Continue**. Signed-in menus offer **Switch YouTube channel**. Windows switching lists only channels usable from the existing session; **Start Login Process** starts fresh helper login. Do not promise every channel is listed. [K1–K4]
 - For another Google login, the verified entry is **Sign in** after **Log out** and confirmation. No Keep/Clear choice here. Logout clears app credentials/web-session state, not Google sign-in elsewhere. Desktop can report **Signed out, but the WebView login profile could not be removed.** with **Retry cleanup**; do not claim cleanup succeeded. [K1, K5]
 

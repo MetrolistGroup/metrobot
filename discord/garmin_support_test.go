@@ -183,7 +183,7 @@ func TestAutomaticAppSupportHandoffRunsSupportAgent(t *testing.T) {
 	}
 }
 
-func TestAppSupportAgentReturnsExactNoteForPlatformRenderer(t *testing.T) {
+func TestAppSupportAgentSynthesizesExcerptFromNote(t *testing.T) {
 	database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -197,14 +197,14 @@ func TestAppSupportAgentReturnsExactNoteForPlatformRenderer(t *testing.T) {
 		t.Fatal(err)
 	}
 	bot := &Bot{DB: database, Notes: &cmd.NotesHandler{DB: database}, garminMemory: memory}
-	bot.garminAI = garminAITestFunc(func(_ context.Context, _ cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{ToolCalls: []cmd.GarminAIToolCall{{
-			ID: "note", Function: cmd.GarminAIFunctionCall{Name: "get_note", Arguments: `{"name":"kmp"}`},
-		}}}}, nil
+	const answer = "KMP is the multiplatform version of Metrolist."
+	bot.garminAI = supportTestNoteAnswer("kmp", answer)
+	bot.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+		return supportTestDecision(request, "agent", .99, .99), nil
 	})
 	message := &discord.Message{ID: snowflakeID("20"), ChannelID: snowflakeID(garminAppSupportID), Author: discord.User{ID: snowflakeID("100000000000000056")}}
 	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "what is KMP?"}})
-	if err != nil || result.NoteName != "kmp" || result.Answer != testKMPNote {
+	if err != nil || result.NoteName != "kmp" || result.Answer != answer {
 		t.Fatalf("support note result = %#v, %v", result, err)
 	}
 }
@@ -278,7 +278,7 @@ func TestSendGarminAppSupportReplyPreservesLongAnswerAsAttachment(t *testing.T) 
 	session.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: session.Rest.HTTPClient().Transport, target: server.URL}
 	bot := &Bot{Logger: zap.NewNop()}
 	message := &discord.Message{ID: snowflakeID("100000000000000023"), ChannelID: snowflakeID(garminAppSupportID)}
-	if reply, _ := bot.sendGarminAppSupportReply(session, message, content, "", nil); reply == nil {
+	if reply, _ := bot.sendGarminAppSupportReply(session, message, content, ""); reply == nil {
 		t.Fatal("long app support answer was not sent")
 	}
 	if !strings.Contains(requestBody, "app-support-note.md") || !strings.Contains(requestBody, content) {

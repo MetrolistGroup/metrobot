@@ -91,7 +91,7 @@ func newSupportDecisionTestBot(t *testing.T) (*Bot, *bot.Client, *supportTestDel
 	client.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: client.Rest.HTTPClient().Transport, target: server.URL}
 	cacheTestGuild(client, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: 12}, Roles: []discord.Role{{ID: 12, Name: "@everyone"}}}})
 	client.Caches.AddChannel(testChannel(t, map[string]any{"id": garminAppSupportID, "guild_id": "12", "name": "app-support"}))
-	b := &Bot{Config: &config.Config{DiscordGuildID: "12"}, DB: database, Notes: notes, Logger: zap.NewNop(), garminProcessor: cmd.NewGarminProcessor(), garminAISlots: make(chan struct{}, 3), garminAILastUsed: make(map[string]time.Time)}
+	b := &Bot{Config: &config.Config{DiscordGuildID: "12"}, DB: database, Notes: notes, Logger: zap.NewNop(), garminProcessor: cmd.NewGarminProcessor(), garminAISlots: make(chan struct{}, 3), garminAILastUsed: make(map[string]time.Time), garminAI: supportTestNoteAnswer("nightly", "Use the relevant nightly instructions.")}
 	return b, client, delivery
 }
 
@@ -99,9 +99,27 @@ func supportTestMessage(id int) *discord.Message {
 	return &discord.Message{ID: snowflakeID(fmt.Sprint(id)), GuildID: snowflakePtr("12"), ChannelID: snowflakeID(garminAppSupportID), Author: discord.User{ID: 42, Username: "private-profile"}, Content: "How do I install the nightly build?"}
 }
 
+func supportTestNoteAnswer(name, answer string) garminAITestFunc {
+	return func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		for _, message := range request.Messages {
+			if message.Role == "tool" {
+				if garminToolResultError(message.Content) != "" {
+					return garminHistoryTestCall("do_not_respond", `{}`), nil
+				}
+				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: answer}}, nil
+			}
+		}
+		return garminHistoryTestCall("get_note", mustJSON(map[string]string{"name": name})), nil
+	}
+}
+
 func supportTestDecision(request cmd.DecisionRequest, choice string, shouldAnswer, top float64) *cmd.DecisionResponse {
 	if _, ok := request.Questions["grounded"]; ok {
-		return &cmd.DecisionResponse{Answers: map[string]cmd.DecisionAnswer{"grounded": {Type: "noul", Noul: &shouldAnswer}}}
+		answers := map[string]cmd.DecisionAnswer{"grounded": {Type: "noul", Noul: &shouldAnswer}}
+		if _, referenced := request.Questions["note_used"]; referenced {
+			answers["note_used"] = cmd.DecisionAnswer{Type: "noul", Noul: &top}
+		}
+		return &cmd.DecisionResponse{Answers: answers}
 	}
 	options := request.Questions["route"].Criteria
 	for id, criterion := range options {
@@ -157,14 +175,20 @@ func TestSupportDecisionSyntheticFixtures(t *testing.T) {
 				}
 			}
 			calls, agentCalls := 0, 0
-			b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+			b.garminAI = garminAITestFunc(func(ctx context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 				agentCalls++
+				if fixture.Expected == "note" {
+					return supportTestNoteAnswer(fixture.Route, "Relevant note excerpt.")(ctx, request)
+				}
 				if fixture.Expected != "agent" {
 					t.Error("unexpected chat-model fallback")
 				}
 				return garminHistoryTestCall("do_not_respond", `{}`), nil
 			})
 			b.garminDecisions = supportDecisionTestFunc(func(ctx context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+				if _, checking := request.Questions["grounded"]; checking {
+					return supportTestDecision(request, "agent", .99, .99), nil
+				}
 				calls++
 				if request.Questions["should_answer"].Type != "noul" || request.Questions["route"].Type != "choice" || strings.Contains(request.Questions["route"].Instructions, "should_answer") {
 					t.Error("questions must be independent Noul and Choice evaluations")
@@ -188,14 +212,14 @@ func TestSupportDecisionSyntheticFixtures(t *testing.T) {
 			if sent.count() != want || (fixture.Expected == "guard" && calls != 0) || (fixture.Expected != "guard" && calls != 1) {
 				t.Fatalf("sends=%d want=%d calls=%d", sent.count(), want, calls)
 			}
-			if (fixture.Expected == "agent") != (agentCalls > 0) {
+			if (fixture.Expected == "agent" || fixture.Expected == "note") != (agentCalls > 0) {
 				t.Fatalf("agent calls=%d expected=%s", agentCalls, fixture.Expected)
 			}
 		})
 	}
 }
 
-func TestSupportDecisionExactRenderingContinuationAndCooldown(t *testing.T) {
+func TestSupportDecisionConciseAnswerContinuationAndCooldown(t *testing.T) {
 	b, client, sent := newSupportDecisionTestBot(t)
 	if err := b.Notes.EditNote("nightly", "How to get nightly builds", "Intro\n```random\n[\"first\",\"second\"]\n```"); err != nil {
 		t.Fatal(err)
@@ -219,26 +243,21 @@ func TestSupportDecisionExactRenderingContinuationAndCooldown(t *testing.T) {
 	if err := json.Unmarshal([]byte(sent.bodies[0]), &body); err != nil {
 		t.Fatal(err)
 	}
-	if len(context) != 2 || context[1].Content != body.Content || !strings.HasPrefix(body.Content, "Intro\n") || body.AllowedMentions == nil {
-		t.Fatalf("delivered/stored note mismatch: %q %#v", body.Content, context)
+	const answer = "Use the relevant nightly instructions."
+	if len(context) != 2 || context[1].Content != answer || !strings.Contains(sent.bodies[0], answer) || strings.Contains(sent.bodies[0], "Intro") || body.AllowedMentions == nil {
+		t.Fatalf("delivered/stored answer mismatch: %#v", context)
 	}
 	followup := supportTestMessage(22)
 	followup.Content = "Where do I find that?"
 	followup.MessageReference = &discord.MessageReference{MessageID: snowflakePtr("1001")}
-	b.garminAI = garminAITestFunc(nil) // Continuation lookup only requires a configured agent.
 	continued, ok := b.garminAIContinuation(followup, followup.Content)
-	if !ok || len(continued) != 3 || continued[1].Content != body.Content {
+	if !ok || len(continued) != 3 || continued[1].Content != answer {
 		t.Fatalf("continuation=%#v %v", continued, ok)
 	}
-	b.supportMu.Lock()
-	for key, state := range b.supportNotes {
-		state.expiresAt = time.Now().Add(-time.Second)
-		b.supportNotes[key] = state
-	}
-	b.supportMu.Unlock()
+	b.garminAILastUsed[m.Author.ID.String()] = time.Now().Add(-garminAICooldown)
 	b.handleGarminAutomaticAppSupport(client, supportTestMessage(23), messages)
 	if sent.count() != 2 {
-		t.Fatal("expired cooldown did not permit note")
+		t.Fatal("a new question could not reuse the same note after the normal agent cooldown")
 	}
 }
 
@@ -252,6 +271,9 @@ func TestSupportDecisionFailureCanRetryAndDoesNotFallback(t *testing.T) {
 		return nil, nil
 	})
 	b.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+		if _, checking := request.Questions["grounded"]; checking {
+			return supportTestDecision(request, "agent", .99, .99), nil
+		}
 		calls++
 		if calls == 1 {
 			return nil, errors.New("private-key https://private.example user body")
@@ -270,15 +292,17 @@ func TestSupportDecisionFailureCanRetryAndDoesNotFallback(t *testing.T) {
 			t.Fatal("unsafe error logging")
 		}
 	}
+	b.garminAI = supportTestNoteAnswer("nightly", "Relevant steps.")
 	sent.fail.Store(true)
 	b.handleGarminAutomaticAppSupport(client, m, messages)
-	if len(b.supportNotes) != 0 || len(b.supportSeen) != 0 {
+	if len(b.supportSeen) != 0 {
 		t.Fatal("failed send claimed cooldown or seen state")
 	}
 	sent.fail.Store(false)
+	b.garminAILastUsed[m.Author.ID.String()] = time.Now().Add(-garminAICooldown)
 	b.handleGarminAutomaticAppSupport(client, m, messages)
-	if sent.count() != 2 || len(b.supportNotes) != 1 || calls != 3 {
-		t.Fatalf("retry sends=%d calls=%d cooldowns=%d", sent.count(), calls, len(b.supportNotes))
+	if sent.count() != 2 || calls != 3 {
+		t.Fatalf("retry sends=%d calls=%d", sent.count(), calls)
 	}
 }
 
@@ -293,6 +317,13 @@ func TestSupportDecisionLiveCatalogAndStaleSelection(t *testing.T) {
 				t.Fatal(err)
 			}
 			b.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+				if _, checking := request.Questions["grounded"]; checking {
+					state, _ := json.Marshal(request.State)
+					if !strings.Contains(string(state), "Updated text") {
+						t.Error("agent used stale source content")
+					}
+					return supportTestDecision(request, "agent", .01, .01), nil
+				}
 				for id, criterion := range request.Questions["route"].Criteria {
 					if strings.Contains(criterion, "Saved note manual:") || (strings.Contains(criterion, "Saved note none:") && id == "none") {
 						t.Error("manual/reserved name handling failed")
@@ -401,8 +432,8 @@ func TestSupportDecisionSlotsAreSeparateAndBounded(t *testing.T) {
 	}
 	close(release)
 	wg.Wait()
-	if sent.count() != 1 {
-		t.Fatalf("general AI saturation or concurrent same-note cooldown failed: sends=%d", sent.count())
+	if sent.count() != 0 {
+		t.Fatalf("agent saturation must not fall back to full notes: sends=%d", sent.count())
 	}
 }
 
@@ -534,12 +565,12 @@ func TestSupportDecisionAgentFailedHandoffCanRetry(t *testing.T) {
 				return supportTestDecision(request, "agent", .99, .99), nil
 			})
 			failed := true
-			b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+			b.garminAI = garminAITestFunc(func(ctx context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 				if failure == "model" && failed {
 					return nil, errors.New("synthetic model failure")
 				}
 				if failure == "note" {
-					return garminHistoryTestCall("get_note", `{"name":"nightly"}`), nil
+					return supportTestNoteAnswer("nightly", "Relevant nightly instructions.")(ctx, request)
 				}
 				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "Verified support answer"}}, nil
 			})
@@ -556,7 +587,7 @@ func TestSupportDecisionAgentFailedHandoffCanRetry(t *testing.T) {
 				sent.fail.Store(true)
 			}
 			b.handleGarminAutomaticAppSupport(client, m, messages)
-			if _, seen := b.supportSeen[m.ID.String()]; seen || len(b.supportNotes) != 0 {
+			if _, seen := b.supportSeen[m.ID.String()]; seen {
 				t.Fatal("failed handoff retained seen state or a note cooldown")
 			}
 			attempts := sent.count()

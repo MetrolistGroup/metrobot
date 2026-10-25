@@ -46,20 +46,16 @@ func TestAuthoredLayoutDeliveryPathsAndRawReads(t *testing.T) {
 	b := &Bot{DB: database, Notes: &cmd.NotesHandler{DB: database}, Config: &config.Config{DiscordGuildID: "12"}, Logger: zap.NewNop(), garminProcessor: cmd.NewGarminProcessor()}
 	interaction := testCommandInteraction(t, client, `{"id":"17","application_id":"1","token":"token","type":2,"channel":{"id":"5","type":0},"data":{"name":"note","type":1}}`)
 	option, _ := json.Marshal(longName)
-	for _, path := range []string{"trigger", "private", "stay", "donor", "support"} {
+	readable, err := b.Notes.GetNote(longName)
+	if err != nil || strings.Contains(readable, "components-v2") || !strings.Contains(readable, "Open: https://example.com") {
+		t.Fatalf("AI/Telegram fallback = %q, %v", readable, err)
+	}
+	for _, path := range []string{"trigger", "private", "stay", "donor"} {
 		switch path {
 		case "trigger":
 			b.onMessageCreate(client, &discord.Message{ID: 23, ChannelID: 5, GuildID: ptr(snowflake.ID(12)), Content: "." + longName, Author: discord.User{ID: 56}})
 		case "donor":
 			b.sendDonorWelcome(client, "56")
-		case "support":
-			readable, err := b.Notes.GetNote(longName)
-			if err != nil || strings.Contains(readable, "components-v2") || !strings.Contains(readable, "Open: https://example.com") {
-				t.Fatalf("AI/Telegram fallback = %q, %v", readable, err)
-			}
-			if reply, _ := b.sendGarminAppSupportReply(client, &discord.Message{ID: 23, ChannelID: 5}, readable, longName, nil); reply == nil {
-				t.Fatal("support delivery failed")
-			}
 		default:
 			b.handleNote(client, interaction, map[string]discord.SlashCommandOption{"name": {Value: option}}, "56", path == "stay")
 		}

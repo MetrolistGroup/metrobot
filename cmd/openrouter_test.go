@@ -147,8 +147,11 @@ func TestOpenRouterClientSupportsConfiguredModel(t *testing.T) {
 	if request.Reasoning != nil {
 		t.Errorf("reasoning = %#v, want model default", request.Reasoning)
 	}
-	if request.Provider != nil {
-		t.Errorf("provider routing = %#v, want no default restrictions for configured model", request.Provider)
+	if request.Provider == nil || request.Provider.DataCollection != "deny" || !request.Provider.RequireParameters || request.Provider.Sort.By != "latency" {
+		t.Errorf("configured model lost privacy/tool requirements: %#v", request.Provider)
+	}
+	if request.SessionID != "" || request.Messages[0].Cache {
+		t.Error("configured model inherited the Qwen session/cache policy")
 	}
 }
 

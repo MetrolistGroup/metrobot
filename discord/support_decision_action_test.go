@@ -43,7 +43,7 @@ func TestSupportAgentCompactsLongConversations(t *testing.T) {
 				}
 				return garminHistoryTestCall("do_not_respond", `{}`), nil
 			})
-			if !b.runSupportDecisionAgent(client, m, messages) || calls != 2 {
+			if !b.runSupportDecisionAgent(client, m, messages, "") || calls != 2 {
 				t.Fatalf("handoff calls=%d", calls)
 			}
 		})
@@ -65,6 +65,7 @@ func TestSupportDecisionActionDefersUncertainMatches(t *testing.T) {
 		{"low request probability", .79, .99, .98, "n0", "nightly", true, "none"},
 		{"explicit silence", .99, .99, .98, "none", "", true, "none"},
 		{"no agent available", .99, .60, .20, "agent", "", false, "none"},
+		{"confident note still needs agent", .99, .99, .98, "n0", "nightly", false, "none"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := supportDecisionAction(tc.answer, tc.top, tc.margin, tc.route, tc.note, tc.agent)

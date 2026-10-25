@@ -34,6 +34,10 @@ func noteSelectCustomID(name string) string {
 	return fmt.Sprintf("note:faq:%x", sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(name)))))
 }
 
+func noteMoreCustomID(name string) string {
+	return strings.Replace(noteSelectCustomID(name), "note:faq:", "note:more:", 1)
+}
+
 func noteOptionText(text string) string {
 	if util.UTF16Len(text) <= 100 {
 		return text
@@ -162,13 +166,16 @@ func noteRequestRejected(err error) bool {
 		(rejected.Response.StatusCode == http.StatusBadRequest || rejected.Response.StatusCode == http.StatusNotFound)
 }
 
-func (b *Bot) respondNote(s *bot.Client, i *events.ApplicationCommandInteractionCreate, name string, note notefmt.Rendered, ephemeral bool) {
+func (b *Bot) respondNote(s *bot.Client, i discord.Interaction, name string, note notefmt.Rendered, ephemeral bool) {
 	message := authoredNoteMessage(note, name, "", -1)
 	if message.AllowedMentions == nil {
 		message.AllowedMentions = &discord.AllowedMentions{Parse: []discord.AllowedMentionType{discord.AllowedMentionTypeUsers}}
 	}
 	if ephemeral {
 		message.Flags |= discord.MessageFlagEphemeral
+		if i.Type() == discord.InteractionTypeComponent {
+			message.AllowedMentions = &discord.AllowedMentions{}
+		}
 	}
 	err := s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{Type: discord.InteractionResponseTypeCreateMessage, Data: message})
 	if noteRequestRejected(err) && message.Flags.Has(discord.MessageFlagIsComponentsV2) {
@@ -185,6 +192,31 @@ func (b *Bot) respondNote(s *bot.Client, i *events.ApplicationCommandInteraction
 }
 
 func (b *Bot) handleNoteComponent(s *bot.Client, i *events.ComponentInteractionCreate) bool {
+	if i.Data.Type() == discord.ComponentTypeButton && strings.HasPrefix(i.Data.CustomID(), "note:more:") {
+		unavailable := func() bool { respondEphemeral(s, i, "That note is no longer available."); return true }
+		if b.Notes == nil || b.Notes.DB == nil {
+			return unavailable()
+		}
+		names, err := b.Notes.DB.ListNotes()
+		if err != nil {
+			return unavailable()
+		}
+		for _, note := range names {
+			if noteMoreCustomID(note.Name) != i.Data.CustomID() {
+				continue
+			}
+			document, err := b.Notes.GetNoteDocument(note.Name)
+			if err != nil {
+				return unavailable()
+			}
+			b.respondNote(s, i, note.Name, document.Render(), true)
+			return true
+		}
+		return unavailable()
+	}
+	if i.Data.Type() != discord.ComponentTypeStringSelectMenu {
+		return false
+	}
 	data := i.StringSelectMenuInteractionData()
 	id := data.CustomID()
 	if id != kmpNoteSelectCustomID && !strings.HasPrefix(id, "note:faq:") {

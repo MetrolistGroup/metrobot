@@ -75,12 +75,14 @@ func TestSupportAgentLive(t *testing.T) {
 	}
 	var reports []report
 	for i, test := range []struct {
-		id         string
-		messages   []cmd.GarminAIMessage
-		attachment bool
-		wantTool   string
-		wantNote   string
-		forbidden  []string
+		id           string
+		messages     []cmd.GarminAIMessage
+		attachment   bool
+		wantTool     string
+		wantNote     string
+		selectedNote string
+		wantAnswer   bool
+		forbidden    []string
 	}{
 		{id: "search-followup", messages: []cmd.GarminAIMessage{
 			{Role: "user", Content: "is it me or is searching stuff not working right now?"},
@@ -97,67 +99,106 @@ func TestSupportAgentLive(t *testing.T) {
 		{id: "current-release-vs-nightly", messages: []cmd.GarminAIMessage{{Role: "user", Content: "what is the current release is the nightly better or ?"}}, wantTool: "get_metrolist_status"},
 		{id: "debug-vs-release-crash", messages: []cmd.GarminAIMessage{{Role: "user", Content: "After changing phones, stable and nightly crash at startup but debug works. What can I test?"}}, forbidden: []string{"signing", "signed", "permission", "library mismatch", "clear data", "reinstall"}},
 		{id: "chrome-download", messages: []cmd.GarminAIMessage{{Role: "user", Content: "The Metrolist APK download fails in Chrome before reaching the Android installer. Which browser should I try?"}}},
-		{id: "kmp-access", messages: []cmd.GarminAIMessage{{Role: "user", Content: "What are the requirements for getting Metrolist KMP tester access?"}}, wantNote: "kmp"},
-		{id: "nightly-install", messages: []cmd.GarminAIMessage{{Role: "user", Content: "How do I download and install nightly without uninstalling?"}}, wantNote: "nightly"},
+		{id: "kmp-access", messages: []cmd.GarminAIMessage{{Role: "user", Content: "What are the requirements for getting Metrolist KMP tester access?"}}, wantNote: "kmp", selectedNote: "kmp"},
+		{id: "nightly-install", messages: []cmd.GarminAIMessage{{Role: "user", Content: "How do I download and install nightly without uninstalling?"}}, wantNote: "nightly", selectedNote: "nightly"},
+		{id: "rpc-invisible-excerpt", messages: []cmd.GarminAIMessage{{Role: "user", Content: "My Discord status is Invisible and Metrolist RPC does not show. What should I change?"}}, wantNote: "rpc", selectedNote: "rpc", forbidden: []string{"profile buttons", "social sdk", "permissions"}},
+		{id: "rpc-setup-not-faq", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Guys how do I connect my Metrolist to Discord?"}}, wantAnswer: true, forbidden: []string{"profile buttons", "social sdk", "permissions", "reinstall"}},
+		// Fault injection: a mismatched router note may abstain, but must not turn setup into a troubleshooting FAQ.
+		{id: "rpc-setup-with-related-note", messages: []cmd.GarminAIMessage{{Role: "user", Content: "How do I connect Metrolist to Discord?"}}, selectedNote: "rpc", forbidden: []string{"profile buttons", "social sdk", "permissions", "reinstall"}},
+		{id: "rpc-setup-variant-followup", messages: []cmd.GarminAIMessage{
+			{Role: "user", Content: "How do I connect Metrolist to Discord?"},
+			{Role: "assistant", Content: "Are you using regular Android Metrolist or KMP? Which platform?"},
+			{Role: "user", Content: "regular Android 13.7.0"},
+		}, wantAnswer: true, forbidden: []string{"profile buttons", "social sdk", "permissions", "reinstall"}},
+		{id: "android-rpc-setup", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Regular Android Metrolist 13.7.0: how do I enable Discord RPC?"}}, wantAnswer: true, forbidden: []string{"settings > account", "settings → account", "paste your token", "reinstall"}},
+		{id: "kmp-rpc-setup", messages: []cmd.GarminAIMessage{{Role: "user", Content: "How do I connect Discord in Metrolist KMP on desktop?"}}, wantAnswer: true, forbidden: []string{"settings > account", "settings → account", "paste your token", "reinstall"}},
+		{id: "android-music-login", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Where do I sign in to my YouTube Music account in regular Android Metrolist 13.7.0?"}}, wantAnswer: true, forbidden: []string{"settings > account", "settings → account", "send me your", "reinstall"}},
+		{id: "kmp-windows-login", messages: []cmd.GarminAIMessage{{Role: "user", Content: "How do I log into YouTube Music in Metrolist KMP on Windows?"}}, wantAnswer: true, forbidden: []string{"settings > account", "settings → account", "send me your", "reinstall"}},
+		{id: "android-lastfm-setup", messages: []cmd.GarminAIMessage{{Role: "user", Content: "How do I set up Last.fm scrobbling in regular Android Metrolist 13.7.0?"}}, wantAnswer: true, forbidden: []string{"settings > account", "settings → account", "send me your", "reinstall"}},
+		{id: "kmp-listenbrainz-setup", messages: []cmd.GarminAIMessage{{Role: "user", Content: "How do I connect ListenBrainz in Metrolist KMP?"}}, wantAnswer: true, forbidden: []string{"settings > account", "settings → account", "send me your", "reinstall"}},
 	} {
-		r := report{ID: test.id}
-		b := &Bot{DB: database, Notes: &cmd.NotesHandler{DB: database}, Logger: zap.NewNop(), garminGitHub: gh.NewAssistantClient("", "MetrolistGroup", "Metrolist")}
-		b.garminDecisions = supportDecisionTestFunc(func(ctx context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
-			r.Draft, _ = request.State.(map[string]any)["proposed_answer"].(string)
-			response, err := decisions.Decide(ctx, request)
+		t.Run(test.id, func(t *testing.T) {
+			r := report{ID: test.id}
+			b := &Bot{DB: database, Notes: &cmd.NotesHandler{DB: database}, Logger: zap.NewNop(), garminGitHub: gh.NewAssistantClient("", "MetrolistGroup", "Metrolist")}
+			b.garminDecisions = supportDecisionTestFunc(func(ctx context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+				r.Draft, _ = request.State.(map[string]any)["proposed_answer"].(string)
+				response, err := decisions.Decide(ctx, request)
+				if err != nil {
+					r.CheckFailed = true
+					t.Errorf("%s: evidence check API failed", test.id)
+				}
+				if response != nil && response.Answers["grounded"].Noul != nil {
+					r.Grounded = *response.Answers["grounded"].Noul
+				}
+				check := map[string]any{"draft": r.Draft, "grounded": r.Grounded, "api_error": err != nil}
+				if response != nil && response.Answers["note_used"].Noul != nil {
+					check["note_used"] = *response.Answers["note_used"].Noul
+				}
+				r.Checks = append(r.Checks, check)
+				return response, err
+			})
+			b.garminAI = garminAITestFunc(func(ctx context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+				completion, err := client.Complete(ctx, request)
+				if completion != nil {
+					for _, call := range completion.Message.ToolCalls {
+						r.Tools = append(r.Tools, call.Function.Name)
+					}
+				}
+				return completion, err
+			})
+			message := supportTestMessage(100 + i)
+			message.Content = test.messages[len(test.messages)-1].Content
+			if test.attachment {
+				message.Attachments = []discord.Attachment{{Filename: "unread.png", URL: "https://invalid.example/not-fetched.png"}}
+			}
+			requestCtx := context.WithValue(context.Background(), automaticSupportContextKey{}, true)
+			requestCtx = context.WithValue(requestCtx, supportSelectedNoteContextKey{}, test.selectedNote)
+			ctx, cancel := context.WithTimeout(requestCtx, 60*time.Second)
+			start := time.Now()
+			result, err := b.runGarminAI(ctx, nil, message, test.messages)
+			cancel()
+			r.Milliseconds = time.Since(start).Milliseconds()
 			if err != nil {
-				r.CheckFailed = true
-				t.Errorf("%s: evidence check API failed", test.id)
-			}
-			if response != nil && response.Answers["grounded"].Noul != nil {
-				r.Grounded = *response.Answers["grounded"].Noul
-			}
-			r.Checks = append(r.Checks, map[string]any{"draft": r.Draft, "grounded": r.Grounded, "api_error": err != nil})
-			return response, err
-		})
-		b.garminAI = garminAITestFunc(func(ctx context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-			completion, err := client.Complete(ctx, request)
-			if completion != nil {
-				for _, call := range completion.Message.ToolCalls {
-					r.Tools = append(r.Tools, call.Function.Name)
+				r.Error = true
+				t.Errorf("%s: agent failed", test.id)
+			} else {
+				r.Answer, r.Note, r.Suppressed = result.Answer, result.NoteName, result.Silent
+				r.Tools = nil
+				for _, turn := range result.Conversation[len(test.messages):] {
+					for _, call := range turn.ToolCalls {
+						r.Tools = append(r.Tools, call.Function.Name)
+					}
+				}
+				if (test.wantAnswer || test.wantNote != "" || test.wantTool != "" || test.id == "chrome-download" || test.id == "unread-image") && (r.Answer == "" || result.Silent) {
+					t.Errorf("%s: no useful answer", test.id)
+				}
+				if strings.HasPrefix(test.id, "rpc-setup-") && r.Answer != "" {
+					lower := strings.ToLower(r.Answer)
+					if test.id == "rpc-setup-variant-followup" && (strings.HasPrefix(lower, "which ") || strings.HasPrefix(lower, "are you ")) && strings.HasSuffix(strings.TrimSpace(lower), "?") && !strings.Contains(lower, "\n") {
+						t.Error("known-variant follow-up asked another question instead of giving setup steps")
+					}
+					clarifying := test.id != "rpc-setup-variant-followup" && (strings.HasPrefix(lower, "which ") || strings.HasPrefix(lower, "are you ")) && strings.HasSuffix(strings.TrimSpace(lower), "?") && strings.Count(lower, "?") == 1 && !strings.ContainsAny(lower, ".!\n") && containsAnyGarminPhrase(lower, "variant", "platform", "android", "kmp") && !containsAnyGarminPhrase(lower, "invisible", "do not disturb", "dnd", "social sdk", "permissions")
+					if !clarifying && (!strings.Contains(lower, "integrations") || !containsAnyGarminPhrase(lower, "log in", "login", "sign in", "authoriz")) {
+						t.Error("related FAQ replaced the requested setup instructions")
+					}
+				}
+				for _, forbidden := range test.forbidden {
+					if strings.Contains(strings.ToLower(r.Answer), forbidden) {
+						t.Errorf("%s: review forbidden phrase %q", test.id, forbidden)
+					}
+				}
+				if test.wantNote != "" && r.Note != test.wantNote {
+					t.Errorf("%s: note = %q, want %q", test.id, r.Note, test.wantNote)
+				}
+				if test.wantTool != "" && !strings.Contains(strings.Join(r.Tools, ","), test.wantTool) {
+					t.Errorf("%s: expected release lookup and synthesis, got tools=%v note=%q", test.id, r.Tools, r.Note)
+				}
+				if test.id == "chrome-download" && !strings.Contains(strings.ToLower(r.Answer), "firefox") {
+					t.Error("Chrome download case lost applicable Firefox advice")
 				}
 			}
-			return completion, err
+			reports = append(reports, r)
 		})
-		message := supportTestMessage(100 + i)
-		message.Content = test.messages[len(test.messages)-1].Content
-		if test.attachment {
-			message.Attachments = []discord.Attachment{{Filename: "unread.png", URL: "https://invalid.example/not-fetched.png"}}
-		}
-		ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), automaticSupportContextKey{}, true), 60*time.Second)
-		start := time.Now()
-		result, err := b.runGarminAI(ctx, nil, message, test.messages)
-		cancel()
-		r.Milliseconds = time.Since(start).Milliseconds()
-		if err != nil {
-			r.Error = true
-			t.Errorf("%s: agent failed", test.id)
-		} else {
-			r.Answer, r.Note, r.Suppressed = result.Answer, result.NoteName, result.Silent
-			if (test.wantNote != "" || test.wantTool != "" || test.id == "chrome-download" || test.id == "unread-image") && (r.Answer == "" || result.Silent) {
-				t.Errorf("%s: no useful answer", test.id)
-			}
-			for _, forbidden := range test.forbidden {
-				if strings.Contains(strings.ToLower(r.Answer), forbidden) {
-					t.Errorf("%s: review forbidden phrase %q", test.id, forbidden)
-				}
-			}
-			if test.wantNote != "" && r.Note != test.wantNote {
-				t.Errorf("%s: note = %q, want %q", test.id, r.Note, test.wantNote)
-			}
-			if test.wantTool != "" && (!strings.Contains(strings.Join(r.Tools, ","), test.wantTool) || r.Note != "") {
-				t.Errorf("%s: expected release lookup and synthesis, got tools=%v note=%q", test.id, r.Tools, r.Note)
-			}
-			if test.id == "chrome-download" && !strings.Contains(strings.ToLower(r.Answer), "firefox") {
-				t.Error("Chrome download case lost applicable Firefox advice")
-			}
-		}
-		reports = append(reports, r)
 	}
 	data, err := json.MarshalIndent(reports, "", "  ")
 	if err != nil {

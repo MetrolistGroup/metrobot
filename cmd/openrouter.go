@@ -41,20 +41,20 @@ func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http
 			"X-OpenRouter-Title": "Metrobot",
 		},
 		func(request *chatCompletionRequest) {
+			request.Provider = &chatProviderPreferences{
+				DataCollection:    "deny",
+				RequireParameters: true,
+				Sort: chatProviderSort{
+					By:        "latency",
+					Partition: "none",
+				},
+			}
 			if useDefaultRoute {
 				disabled := false
 				request.Reasoning = &chatReasoning{Enabled: &disabled}
 				request.SessionID = openRouterSessionID
 				if len(request.Messages) > 0 {
 					request.Messages[0].Cache = true
-				}
-				request.Provider = &chatProviderPreferences{
-					DataCollection:    "deny",
-					RequireParameters: true,
-					Sort: chatProviderSort{
-						By:        "latency",
-						Partition: "none",
-					},
 				}
 			}
 		},

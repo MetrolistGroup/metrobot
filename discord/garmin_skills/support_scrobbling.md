@@ -13,10 +13,10 @@ Default English labels; match app/build, version and platform first.
 ## Standalone Android v13.7.0 (A)
 
 1. Account/avatar button → **Integrations** → **Last.fm integration**. Integrations is beside **Settings** in the account dialog, not inside Settings.
-2. **Account** → **Log in** → enter Last.fm **Username** and **Password** in the app → **Login**. This uses mobile-session authentication, not browser authorization or token entry.
+2. Under the **Account** heading, tap **Log in**, enter Last.fm **Username** and **Password** in the app, then tap **Login**. **Account** is a section heading, not an extra button. This uses mobile-session authentication, not browser authorization or token entry.
 3. After the account name appears, turn on **Options** → **Enable scrobbling** (default off). Optional **Send Now Playing status** (default off) requires login and scrobbling enabled. **Sync Loved and Unloved** syncs likes/unlikes; not required for scrobbles.
 
-**Scrobbling configuration** defaults: **Scrobble songs longer than (seconds)**: strictly >30s; **Scrobble delay (percentage)**: 50%; **Scrobble delay (minutes)**: 180s. Submission waits the lesser delay in playing time. Pause/resume preserves the timer; stopping/changing tracks cancels it.
+**Scrobbling configuration** defaults: **Scrobble songs longer than (seconds)**: the track's TOTAL DURATION must be strictly >30s; **Scrobble delay (percentage)**: 50%; **Scrobble delay (minutes)**: 3 minutes (180s). Submission waits the lesser delay in playing time. The 30-second setting is not listening time: do not say "play for 30 seconds to scrobble". For example, an eligible 40-second track has a 20-second listening threshold; a four-minute track has a two-minute threshold. Pause/resume preserves the timer; stopping/changing tracks cancels it.
 
 **Offline:** Direct submission; no persisted offline queue or retry/backfill. Downloads do not ensure offline listens reach Last.fm later. Accepted scrobbles are not checked in the response, so login/Now Playing does not prove acceptance.
 
@@ -25,7 +25,7 @@ Default English labels; match app/build, version and platform first.
 Account/profile menu → **Integrations**, then choose the service; **Settings** is a separate entry.
 
 1. **Last.fm** → **Connect your Last.fm account** → enter **Username** and **Password** in **Connect Last.fm** → **Connect**. This obtains a mobile session directly, with no browser/token-copy step. Confirm **Logged in as …**, then **Enable scrobbling**; optional **Now Playing updates**. Both preferences default on.
-2. **ListenBrainz** → **Connect with a ListenBrainz user token**. In **Connect ListenBrainz**, the **User token** link opens `https://listenbrainz.org/settings/`. Get your own token there; paste it **only into the app's User token field**, then **Connect**. Validation precedes **Connected as …** and automatically enables this service. Check **Enable scrobbling**; optional **Now Playing updates** defaults on.
+2. **ListenBrainz** → **Connect with a ListenBrainz user token** opens the **Connect ListenBrainz** dialog, not a website. The **User token** link inside that dialog opens `https://listenbrainz.org/settings/`. Copy your own token there (token-generation controls on that website are not verified); paste it **only into the app's User token field**, then **Connect**. Validation precedes **Connected as …** and automatically enables this service. Check **Enable scrobbling**; optional **Now Playing updates** defaults on.
 3. Each service has **Enable scrobbling**; no all-services master switch is exposed. Last.fm also gates on `lastFmActivityEnabled` (default true; no UI setter found). **Show on Home** affects display, not submission.
 
 **Timing:** Last.fm's **Sensitivity** controls **Scrobble delay**, **Minimum song duration**, **Max delay** for **both services**. Defaults: duration at least 30 seconds, then the lesser of 50% of duration or 180 seconds of accumulated playing time. Unknown duration is ineligible; pauses do not count. Pause/stop check the threshold.

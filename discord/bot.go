@@ -70,7 +70,6 @@ type Bot struct {
 	supportMu             sync.Mutex
 	supportSlots          chan struct{}
 	supportSeen           map[string]supportRequestState
-	supportNotes          map[string]supportRequestState
 	garminDeletedMessages map[string]time.Time
 }
 

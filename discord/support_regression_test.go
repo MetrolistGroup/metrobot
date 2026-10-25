@@ -63,7 +63,7 @@ func TestSupportCompactionDoesNotWriteSharedMemory(t *testing.T) {
 	}
 }
 
-func TestSupportSendsCheckedNoteSnapshot(t *testing.T) {
+func TestSupportSendsCheckedExcerptNotChangedOrFullNote(t *testing.T) {
 	for _, automatic := range []bool{false, true} {
 		t.Run(map[bool]string{false: "explicit", true: "automatic"}[automatic], func(t *testing.T) {
 			b, client, sent := newSupportDecisionTestBot(t)
@@ -71,10 +71,14 @@ func TestSupportSendsCheckedNoteSnapshot(t *testing.T) {
 			if err := b.Notes.EditNote("nightly", description, notefmt.Fence("faq", testKMPNote)); err != nil {
 				t.Fatal(err)
 			}
-			b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-				return garminHistoryTestCall("get_note", `{"name":"nightly"}`), nil
-			})
+			const answer = "Relevant KMP excerpt."
+			b.garminAI = supportTestNoteAnswer("nightly", answer)
 			b.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+				state := request.State.(map[string]any)
+				sources, _ := json.Marshal(state["tool_results"])
+				if state["proposed_answer"] != answer || !strings.Contains(string(sources), "KMP") {
+					t.Fatal("checker lost the excerpt or its original source")
+				}
 				if err := b.Notes.EditNote("nightly", description, "CHANGED_AFTER_CHECK"); err != nil {
 					t.Fatal(err)
 				}
@@ -83,7 +87,7 @@ func TestSupportSendsCheckedNoteSnapshot(t *testing.T) {
 			m := supportTestMessage(20)
 			messages := []cmd.GarminAIMessage{{Role: "user", Content: m.Content}}
 			if automatic {
-				if !b.runSupportDecisionAgent(client, m, messages) {
+				if !b.runSupportDecisionAgent(client, m, messages, "nightly") {
 					t.Fatal("automatic snapshot delivery failed")
 				}
 			} else {
@@ -99,10 +103,28 @@ func TestSupportSendsCheckedNoteSnapshot(t *testing.T) {
 				t.Fatalf("checked rich note snapshot lost: %s", body)
 			}
 			stored, ok := b.garminAIHistory(m, "", false)
-			if !ok || stored[len(stored)-1].Content != testKMPNote {
+			if !ok || stored[len(stored)-1].Content != answer {
 				t.Fatal("retained text differs from checked note")
 			}
 		})
+	}
+}
+
+func TestSupportToolFailureDoesNotExposeUncheckedNoteReference(t *testing.T) {
+	b, _, _ := newSupportDecisionTestBot(t)
+	b.garminGitHub = nil
+	b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{ToolCalls: []cmd.GarminAIToolCall{{
+			ID: "lookup", Type: "function", Function: cmd.GarminAIFunctionCall{Name: "search_metrolist_issues", Arguments: `{"query":"crash"}`},
+		}}}}, nil
+	})
+	ctx := context.WithValue(context.Background(), supportSelectedNoteContextKey{}, "nightly")
+	result, err := b.runGarminAI(ctx, nil, supportTestMessage(20), []cmd.GarminAIMessage{{Role: "user", Content: "Does nightly fix this crash?"}})
+	if err != nil || result == nil {
+		t.Fatalf("run: %v", err)
+	}
+	if result.Answer != "github lookup failed just now." || result.NoteName != "" {
+		t.Fatalf("tool failure exposed an unchecked reference: answer=%q note=%q", result.Answer, result.NoteName)
 	}
 }
 
@@ -113,6 +135,11 @@ func TestSupportRewriteOnlySendsAndRetainsAcceptedAnswer(t *testing.T) {
 		calls++
 		answer := "UNSUPPORTED_DRAFT"
 		if calls == 2 {
+			for _, message := range request.Messages {
+				if message.Content == "UNSUPPORTED_DRAFT" {
+					t.Fatal("rewrite remained anchored to a rejected draft")
+				}
+			}
 			if request.Messages[len(request.Messages)-1].Role != "system" {
 				t.Fatal("rewrite lost evidence correction")
 			}
@@ -158,24 +185,22 @@ func TestSupportChecksFullLongNoteSnapshot(t *testing.T) {
 	if err := b.Notes.EditNote("nightly", "How to get nightly builds", body); err != nil {
 		t.Fatal(err)
 	}
-	b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-		return garminHistoryTestCall("get_note", `{"name":"nightly"}`), nil
-	})
+	b.garminAI = supportTestNoteAnswer("nightly", "APPROVED_TAIL")
 	b.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
 		state := request.State.(map[string]any)
 		sources, err := json.Marshal(state["tool_results"])
 		if err != nil || !strings.Contains(string(sources), "APPROVED_TAIL") {
 			t.Fatal("checker lost the note's tail")
 		}
-		if state["proposed_answer"] != body {
-			t.Fatal("candidate was truncated")
+		if state["proposed_answer"] != "APPROVED_TAIL" {
+			t.Fatal("candidate is not the requested excerpt")
 		}
 		return supportTestDecision(request, "agent", .99, .99), nil
 	})
 	m := supportTestMessage(20)
 	result, err := b.runGarminAI(context.Background(), nil, m, []cmd.GarminAIMessage{{Role: "user", Content: m.Content}})
-	if err != nil || result.NoteSnapshot == nil || result.NoteSnapshot.Text != body {
-		t.Fatal("approved long snapshot lost")
+	if err != nil || result.NoteName != "nightly" || result.Answer != "APPROVED_TAIL" {
+		t.Fatalf("excerpt from full source lost: %v, %+v", err, result)
 	}
 }
 

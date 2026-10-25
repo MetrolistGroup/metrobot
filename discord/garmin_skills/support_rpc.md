@@ -10,11 +10,28 @@ Use for setup/how-to questions. Match product, version and platform first. Label
 
 Source-verified, not device-tested. B/C do not prove availability in distributed releases. Do not apply C's labels/lifecycle to A/B or call current source a released fix.
 
+## Setup shared by the verified variants
+
+For an unspecified variant, these steps are sufficient:
+1. Open the **account/profile menu**, choose **Integrations**, then its Discord entry.
+2. Choose **Log in** on that Discord page and complete Discord authorization in the flow Metrolist opens.
+3. Turn on that page's Rich Presence switch, then play music.
+
+Do not add an Android-only label or an external-browser requirement to this shared flow. Integrations is not in the main Settings list. Google/YouTube **Login/Sign in** is a separate flow, not a prerequisite for opening Integrations or connecting Discord.
+
+Use the exact labels below only for the stated variant:
+
+| Label/default | Standalone Android A/B | KMP C |
+| --- | --- | --- |
+| Discord entry | **Discord Integration** | **Discord** |
+| Enable switch | **Enable Rich Presence**, under **Options** | **Enable Discord Rich Presence**, under **Rich presence** |
+| Unset enable preference | On | Off |
+
+Both switches require successful Discord login.
+
 ## Standalone Android: A and B
 
-1. Tap the top-bar **Account/profile icon → Integrations → Discord Integration**. This is not in the main Settings list.
-2. Tap **Log in**. Discord OAuth opens in a browser/Custom Tab. Sign in there if needed, approve authorization and return to Metrolist through the callback.
-3. Under **Options**, ensure **Enable Rich Presence** is on, then play a song. The switch is unavailable until Discord login succeeds; its unset preference defaults to on.
+Authorization opens in a browser/Custom Tab. Sign in to Discord there if needed, approve authorization and return to Metrolist through the callback.
 
 - Stop sharing: turn **Enable Rich Presence** off. The service disconnects RPC when ready; login remains saved. **Log out** on the Discord card disconnects and clears saved Discord authorization.
 - Pausing can retain song metadata without running timestamps. The service schedules disconnect after about one minute paused with the screen on, or ten minutes idle with it off, if still not playing and RPC is ready. Service teardown also disconnects. These are source timers, not guaranteed Discord display deadlines.
@@ -22,9 +39,7 @@ Source-verified, not device-tested. B/C do not prove availability in distributed
 
 ## KMP: C only
 
-1. Open **Account/profile menu → Integrations → Discord** on Android, desktop or iOS.
-2. Choose **Log in** under **Account**, complete Discord sign-in/authorization in the platform flow below and return to Metrolist.
-3. Turn on **Enable Discord Rich Presence** under **Rich presence**, then play music. This preference defaults to off; the switch requires a logged-in Discord account.
+The shared setup applies on Android, desktop and iOS. **Log in** is under the **Account** heading on the Discord page; **Account** is not an extra button. Use C's labels from the table above and the platform authorization flow below.
 
 Platform authorization differences:
 - **Android:** tries the Discord app first; if no handler exists, falls back to a browser Custom Tab or browser. The callback is handled by Metrolist.

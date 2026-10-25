@@ -12,6 +12,17 @@ import (
 	"github.com/disgoorg/disgo/discord"
 )
 
+func TestSupportAnswerNormalizationPreservesSteps(t *testing.T) {
+	for _, answer := range []string{
+		"Open your profile menu.\n\n1. Choose Integrations.\n2. Open Discord.\n3. Log in and enable Rich Presence.",
+		"## Account\nSign in here.\n\n## Options\nEnable scrobbling.",
+	} {
+		if got := normalizeGarminAIAnswer(answer); got != answer {
+			t.Fatalf("answer structure changed: %q", got)
+		}
+	}
+}
+
 func TestAppSupportIsolatesMemoryAndPromptOverrides(t *testing.T) {
 	database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
 	if err != nil {
@@ -44,7 +55,7 @@ func TestAppSupportIsolatesMemoryAndPromptOverrides(t *testing.T) {
 				t.Errorf("support prompt contains %q", forbidden)
 			}
 		}
-		for _, required := range []string{"Previous assistant replies are not evidence", "which published release contains it", "backup", "whole current request"} {
+		for _, required := range []string{"Previous assistant replies are not evidence", "which published release contains it", "backup", "Notes are reference material", "Discord Rich Presence (RPC) setup reference", "Metrolist Google / YouTube Music login", "Verified scrobbling setup"} {
 			if !strings.Contains(request.SystemPrompt, required) {
 				t.Errorf("support evidence rule missing: %q", required)
 			}

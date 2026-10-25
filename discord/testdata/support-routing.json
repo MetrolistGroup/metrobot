@@ -1,6 +1,7 @@
 [
   {"name":"nightly installation","message":"How do I install the nightly build without building it myself?","route":"nightly","should_answer":0.99,"probability":0.98,"expected":"note"},
-  {"name":"rpc help","message":"How can I turn on Discord rich presence in Metrolist?","route":"rpc","should_answer":0.99,"probability":0.96,"expected":"note"},
+  {"name":"rpc troubleshooting","message":"Discord RPC does not show while my status is Invisible. What should I check?","route":"rpc","should_answer":0.99,"probability":0.96,"expected":"note"},
+  {"name":"rpc setup","message":"How can I turn on Discord rich presence in Metrolist?","route":"agent","should_answer":0.99,"probability":0.96,"expected":"agent"},
   {"name":"lyrics help","message":"Metrolist lyrics are out of sync. Is there a way to adjust their timing?","route":"lyrics","should_answer":0.98,"probability":0.95,"expected":"note"},
   {"name":"bot followup","message":"Where do I get that nightly build?","reply_to":"bot","route":"nightly","should_answer":0.99,"probability":0.97,"expected":"note"},
   {"name":"keyword chatter","message":"the new lyrics look insane","route":"lyrics","should_answer":0.03,"probability":0.99,"expected":"none"},
