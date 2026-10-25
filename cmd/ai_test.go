@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -70,23 +71,31 @@ func TestChatCompletionClientRoundTripsToolCalls(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Errorf("decoding request: %v", err)
 		}
-		if len(request.Tools) != 1 || request.ToolChoice != "auto" {
+		if len(request.Tools) != 1 || request.ToolChoice != "auto" || !request.Tools[0].Function.Strict || string(request.Tools[0].Function.Parameters) != `{"type":"object","additionalProperties":false}` {
 			t.Errorf("tools = %#v, choice = %q", request.Tools, request.ToolChoice)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if requests == 1 {
-			_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"reasoning_content":"need the lookup","tool_calls":[{"id":"call-1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}}]}`))
+			_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"reasoning":"lookup rationale","reasoning_content":"need the lookup","reasoning_details":[{"type":"reasoning.encrypted","data":"opaque","signature":"signed"}],"tool_calls":[{"id":"call-1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}}]}`))
 			return
 		}
-		if len(request.Messages) < 2 || request.Messages[len(request.Messages)-2].ReasoningContent != "need the lookup" {
-			t.Errorf("tool turn lost reasoning content: %#v", request.Messages)
+		if len(request.Messages) != 4 {
+			t.Errorf("messages = %#v", request.Messages)
+		} else {
+			assistant, toolResult := request.Messages[2], request.Messages[3]
+			if assistant.Reasoning != "lookup rationale" || assistant.ReasoningContent != "need the lookup" || string(assistant.ReasoningDetails) != `[{"type":"reasoning.encrypted","data":"opaque","signature":"signed"}]` || !reflect.DeepEqual(assistant.ToolCalls, []GarminAIToolCall{{ID: "call-1", Type: "function", Function: GarminAIFunctionCall{Name: "lookup", Arguments: "{}"}}}) {
+				t.Errorf("tool turn lost reasoning or call identity: %#v", assistant)
+			}
+			if toolResult.Role != "tool" || toolResult.ToolCallID != "call-1" || toolResult.Content != "  {\"result\":\"ok\"}\n" {
+				t.Errorf("tool result changed: %#v", toolResult)
+			}
 		}
-		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"done"}}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":" done\n"}}]}`))
 	}))
 	defer server.Close()
 
 	client := newChatCompletionClient([]string{"key"}, server.URL, "model", "test provider", nil, nil, server.Client())
-	tool := GarminAITool{Type: "function", Function: GarminAIFunctionDefinition{Name: "lookup", Parameters: json.RawMessage(`{"type":"object"}`)}}
+	tool := GarminAITool{Type: "function", Function: GarminAIFunctionDefinition{Name: "lookup", Parameters: json.RawMessage(`{"type":"object","additionalProperties":false}`), Strict: true}}
 	completion, err := client.Complete(context.Background(), GarminAIRequest{Messages: testGarminMessages("hi"), Tools: []GarminAITool{tool}})
 	if err != nil {
 		t.Fatal(err)
@@ -94,9 +103,9 @@ func TestChatCompletionClientRoundTripsToolCalls(t *testing.T) {
 	if len(completion.Message.ToolCalls) != 1 || completion.Message.ToolCalls[0].Function.Name != "lookup" {
 		t.Fatalf("completion = %#v", completion)
 	}
-	messages := append(testGarminMessages("hi"), completion.Message, GarminAIMessage{Role: "tool", ToolCallID: "call-1", Content: `{"result":"ok"}`})
+	messages := append(testGarminMessages("hi"), completion.Message, GarminAIMessage{Role: "tool", ToolCallID: "call-1", Content: "  {\"result\":\"ok\"}\n"})
 	final, err := client.Complete(context.Background(), GarminAIRequest{Messages: messages, Tools: []GarminAITool{tool}})
-	if err != nil || final.Message.Content != "done" || requests != 2 {
+	if err != nil || final.Message.Content != " done\n" || requests != 2 {
 		t.Fatalf("second Complete() = %#v after %d requests, error %v", final, requests, err)
 	}
 }
@@ -181,13 +190,165 @@ func TestChatCompletionClientSeparatesDynamicContextFromCachedPrompt(t *testing.
 	}))
 	defer server.Close()
 
-	client := newOpenRouterClient([]string{"key"}, "", server.URL, server.Client())
-	_, err := client.Complete(context.Background(), GarminAIRequest{SystemPrompt: "stable prompt", Context: "dynamic context", Messages: testGarminMessages("hi")})
-	if err != nil {
+	client := newOpenRouterClient([]string{"key"}, "qwen/qwen3-coder-flash", server.URL, server.Client())
+	var prefix string
+	for _, dynamic := range []string{"first private memory", "changed memory and skill"} {
+		_, err := client.Complete(context.Background(), GarminAIRequest{SystemPrompt: garminSystemPrompt + "\n\n" + dynamic, Context: "dynamic profile", Messages: testGarminMessages("hi")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(request.Messages) != 4 || !request.Messages[0].Cache || request.Messages[1].Cache || request.Messages[2].Cache || request.Messages[3].Cache || request.Messages[1].Content != "\n\n"+dynamic || request.Messages[2].Content != "dynamic profile" {
+			t.Fatalf("messages = %#v", request.Messages)
+		}
+		if prefix != "" && request.Messages[0].Content != prefix {
+			t.Fatal("volatile data changed the cached prefix")
+		}
+		prefix = request.Messages[0].Content
+	}
+}
+
+func TestGarminAIMessageCacheControlWireContract(t *testing.T) {
+	for _, cache := range []bool{false, true} {
+		data, err := json.Marshal(GarminAIMessage{Role: "system", Content: "stable", Cache: cache})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := `{"role":"system","content":"stable"}`
+		if cache {
+			want = `{"role":"system","content":[{"type":"text","text":"stable","cache_control":{"type":"ephemeral"}}]}`
+		}
+		if string(data) != want {
+			t.Fatalf("cache=%v: %s, want %s", cache, data, want)
+		}
+	}
+	original := GarminAIMessage{ReasoningDetails: json.RawMessage(`[{"data":"original"}]`)}
+	copied := original
+	if err := json.Unmarshal([]byte(`{"role":"assistant","reasoning_details":[{"data":"replaced"}]}`), &copied); err != nil {
 		t.Fatal(err)
 	}
-	if len(request.Messages) != 3 || !request.Messages[0].Cache || request.Messages[1].Cache || request.Messages[1].Content != "dynamic context" {
-		t.Fatalf("messages = %#v", request.Messages)
+	if string(original.ReasoningDetails) != `[{"data":"original"}]` {
+		t.Fatal("decoding mutated reasoning shared with another message")
+	}
+}
+
+func TestChatCompletionClientPreservesSharedInput(t *testing.T) {
+	input := GarminAIRequest{
+		Messages: []GarminAIMessage{{Role: "assistant", Content: "  exact text\n", Cache: true, Images: []string{"https://example.com/image"}, ToolCalls: []GarminAIToolCall{{ID: "call"}}, ReasoningDetails: json.RawMessage(`[{"data":"original"}]`)}},
+		Tools:    []GarminAITool{{Function: GarminAIFunctionDefinition{Parameters: json.RawMessage(`{"type":"object"}`)}}},
+	}
+	before, _ := json.Marshal(input)
+	client := newChatCompletionClient([]string{"one", "two"}, "https://example.com", "model", "test", nil, nil, &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))}, nil
+	})})
+	// Mutate the local snapshots before marshaling, while keeping their JSON valid.
+	client.configureRequest = func(request *chatCompletionRequest) {
+		message := &request.Messages[1]
+		if message.Content != input.Messages[0].Content || !message.Cache {
+			t.Error("caller content/cache flag changed")
+		}
+		message.Images[0] = "replaced"
+		message.ToolCalls[0].ID = "replaced"
+		copy(message.ReasoningDetails, `[{"data":"replaced"}]`)
+		copy(request.Tools[0].Function.Parameters, `{"type":"string"}`)
+	}
+	errs := make(chan error, 8)
+	for range 8 {
+		go func() {
+			_, err := client.Complete(context.Background(), input)
+			errs <- err
+		}()
+	}
+	for range 8 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	after, _ := json.Marshal(input)
+	if string(before) != string(after) {
+		t.Fatal("concurrent requests mutated caller-owned slices")
+	}
+}
+
+func TestChatCompletionClientRetryBudgetsWithManyKeys(t *testing.T) {
+	for _, transport := range []bool{false, true} {
+		calls := 0
+		client := newChatCompletionClient([]string{"1", "2", "3", "4", "5", "6"}, "https://example.com", "model", "test", nil, nil, &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+			calls++
+			if transport {
+				return nil, errors.New("private transport error")
+			}
+			return &http.Response{StatusCode: 429, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("private error"))}, nil
+		})})
+		client.rateLimitDelay = 0
+		_, err := client.Ask(context.Background(), testGarminMessages("hi"))
+		want := 4
+		if transport {
+			want = 2
+		}
+		if err == nil || calls != want || strings.Contains(err.Error(), "private") {
+			t.Fatalf("transport=%v: calls=%d want %d, error=%v", transport, calls, want, err)
+		}
+	}
+}
+
+func TestChatCompletionClientCancellationAndRetryAfter(t *testing.T) {
+	for _, status := range []int{200, 429} {
+		calls := 0
+		client := newChatCompletionClient([]string{"one", "two"}, "https://example.com", "model", "test", nil, nil, &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			calls++
+			if status == 200 {
+				<-r.Context().Done()
+				return nil, r.Context().Err()
+			}
+			return &http.Response{StatusCode: status, Header: http.Header{"Retry-After": {"60"}}, Body: io.NopCloser(strings.NewReader(""))}, nil
+		})})
+		client.rateLimitDelay = 0
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+		start := time.Now()
+		_, err := client.Ask(ctx, testGarminMessages("hi"))
+		cancel()
+		if !errors.Is(err, context.DeadlineExceeded) || calls != 1 || time.Since(start) > time.Second {
+			t.Fatalf("status=%d: deadline error=%v calls=%d", status, err, calls)
+		}
+		ctx, cancel = context.WithCancel(context.Background())
+		cancel()
+		if _, err := client.Ask(ctx, testGarminMessages("hi")); !errors.Is(err, context.Canceled) || calls != 1 {
+			t.Fatalf("already canceled request sent/retried: %v calls=%d", err, calls)
+		}
+	}
+	if chatCompletionRetryAfter("2") != 2*time.Second || chatCompletionRetryAfter("invalid") != 0 || chatCompletionRetryAfter("-1") != 0 || chatCompletionRetryAfter(time.Now().Add(time.Minute).UTC().Format(http.TimeFormat)) < 58*time.Second {
+		t.Fatal("invalid Retry-After parsing")
+	}
+}
+
+func TestChatCompletionClientRejectsMalformedAndOversizedResponses(t *testing.T) {
+	valid := `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`
+	for _, body := range []string{
+		valid + strings.Repeat(" ", chatCompletionResponseMax),
+		valid + ` {}`,
+		`{"error":{"message":"private-key private input"}}`,
+		`{"error":{"message":"private input"},"choices":[{"message":{"content":"unsafe"}}]}`,
+		`{"choices":[{"message":{"role":"user","content":"wrong speaker"}}]}`,
+		`{"choices":[{"message":{"role":"assistant","content":"","reasoning_details":null}}]}`,
+		`{"choices":[{"message":{"role":"assistant","content":"","reasoning_details":[]}}]}`,
+		`{"choices":[{"message":{"role":"assistant","content":"","reasoning_details":{}}}]}`,
+		`{"choices":[{"message":{"role":"assistant","tool_calls":[{"type":"function","function":{"name":"lookup","arguments":"{}"}}]}}]}`,
+		`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call","type":"function","function":{"name":"lookup","arguments":"null"}}]}}]}`,
+		`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call","type":"function","function":{"name":"lookup","arguments":"[1]"}}]}}]}`,
+		`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call","type":"function","function":{"name":"lookup","arguments":"{}"}},{"id":"call","type":"function","function":{"name":"lookup","arguments":"{}"}}]}}]}`,
+	} {
+		calls := 0
+		client := newChatCompletionClient([]string{"one", "two"}, "https://example.com", "model", "test", nil, nil, &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+			calls++
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
+		})})
+		if result, err := client.Complete(context.Background(), GarminAIRequest{Messages: testGarminMessages("hi")}); err == nil || result != nil || calls != 1 || strings.Contains(err.Error(), "private") {
+			t.Fatalf("malformed response accepted/retried: result=%#v error=%v calls=%d", result, err, calls)
+		}
+	}
+	client := newChatCompletionClient([]string{"key"}, ":bad", "model", "test", nil, nil, http.DefaultClient)
+	if _, err := client.Ask(context.Background(), testGarminMessages(strings.Repeat("x", chatCompletionRequestMax))); err == nil || !strings.Contains(err.Error(), "oversized") {
+		t.Fatalf("oversized request accepted: %v", err)
 	}
 }
 

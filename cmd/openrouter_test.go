@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -35,11 +36,11 @@ func TestOpenRouterClientUsesCapableRouteByDefault(t *testing.T) {
 	if request.Reasoning == nil || request.Reasoning.Enabled == nil || *request.Reasoning.Enabled || request.Reasoning.MaxTokens != 0 || request.Reasoning.Exclude || request.MaxTokens != 1024 {
 		t.Errorf("reasoning = %#v with %d output tokens, want disabled reasoning and 1024 output", request.Reasoning, request.MaxTokens)
 	}
-	if request.SessionID != openRouterSessionID {
-		t.Errorf("session ID = %q, want %q", request.SessionID, openRouterSessionID)
+	if request.SessionID != "" {
+		t.Errorf("unrelated conversations were grouped into session %q", request.SessionID)
 	}
-	if len(request.Messages) == 0 || !request.Messages[0].Cache {
-		t.Errorf("stable system prompt was not marked for provider caching: %#v", request.Messages)
+	if len(request.Messages) == 0 || request.Messages[0].Cache {
+		t.Errorf("undocumented model cache support was assumed: %#v", request.Messages)
 	}
 	if request.Provider == nil || request.Provider.ZDR || request.Provider.DataCollection != "deny" || !request.Provider.RequireParameters || request.Provider.Sort.By != "latency" || request.Provider.Sort.Partition != "none" {
 		t.Errorf("provider routing = %#v", request.Provider)
@@ -151,7 +152,7 @@ func TestOpenRouterClientSupportsConfiguredModel(t *testing.T) {
 		t.Errorf("configured model lost privacy/tool requirements: %#v", request.Provider)
 	}
 	if request.SessionID != "" || request.Messages[0].Cache {
-		t.Error("configured model inherited the Qwen session/cache policy")
+		t.Error("configured model inherited an undocumented session/cache policy")
 	}
 }
 
@@ -181,6 +182,77 @@ func TestOpenRouterClientRotatesAndFailsOverKeys(t *testing.T) {
 	want := []string{"Bearer limited", "Bearer available"}
 	if !reflect.DeepEqual(authorizations, want) {
 		t.Fatalf("authorizations = %v, want %v", authorizations, want)
+	}
+}
+
+func TestOpenRouterClientCacheCapabilitiesAndCustomPrompts(t *testing.T) {
+	for _, test := range []struct {
+		model, prompt string
+		cache         bool
+	}{
+		{model: "anthropic/claude-sonnet-4", cache: true},
+		{model: "qwen/qwen3-coder-flash", cache: true},
+		{model: "qwen/qwen3.5-flash-02-23"},
+		{model: openRouterDefaultModel},
+		{model: "openai/gpt-4.1-mini"},
+		{model: "vendor/unknown"},
+		{model: "anthropic/claude-sonnet-4", prompt: "private custom instructions"},
+	} {
+		t.Run(test.model+"/"+test.prompt, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request chatCompletionRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+				}
+				if request.Messages[0].Cache != test.cache || request.Messages[1].Cache || request.SessionID != "" {
+					t.Errorf("unexpected automatic caching/session: %#v", request)
+				}
+				// Explicit caller breakpoints are preserved, never spread to neighboring messages.
+				if !request.Messages[2].Cache || request.Messages[2].Content != " caller prefix " {
+					t.Errorf("caller breakpoint lost: %#v", request.Messages)
+				}
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+			}))
+			defer server.Close()
+			client := newOpenRouterClient([]string{"key"}, test.model, server.URL, server.Client())
+			_, err := client.Complete(context.Background(), GarminAIRequest{SystemPrompt: test.prompt, Context: "private profile", Messages: []GarminAIMessage{{Role: "user", Content: " caller prefix ", Cache: true}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestOpenRouterClientHonorsDisableReasoningForCustomModel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request chatCompletionRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		if request.Reasoning == nil || request.Reasoning.Enabled == nil || *request.Reasoning.Enabled {
+			t.Error("explicit reasoning disable was ignored")
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer server.Close()
+	client := newOpenRouterClient([]string{"key"}, "openai/gpt-4.1-mini", server.URL, server.Client())
+	if _, err := client.Complete(context.Background(), GarminAIRequest{DisableReasoning: true, Messages: testGarminMessages("hi")}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOpenRouterClientDoesNotFollowRedirects(t *testing.T) {
+	var leaked atomic.Bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { leaked.Store(true) }))
+	defer target.Close()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer server.Close()
+	client := NewOpenRouterClient([]string{"key"}, "")
+	client.endpoint = server.URL
+	if _, err := client.Ask(context.Background(), testGarminMessages("private conversation")); err == nil || leaked.Load() {
+		t.Fatalf("redirect followed: %v", err)
 	}
 }
 

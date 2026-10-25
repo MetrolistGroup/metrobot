@@ -14,7 +14,6 @@ const (
 	openRouterOlderModel    = "openai/gpt-5-mini"
 	openRouterLegacyDefault = "upstage/solar-pro4"
 	openRouterBrokenDefault = "ibm-granite/granite-4.1-8b"
-	openRouterSessionID     = "metrobot-qwen3.7-flash-v1"
 )
 
 type OpenRouterClient struct {
@@ -22,7 +21,10 @@ type OpenRouterClient struct {
 }
 
 func NewOpenRouterClient(keys []string, model string) *OpenRouterClient {
-	return newOpenRouterClient(keys, model, openRouterEndpoint, &http.Client{Timeout: 20 * time.Second})
+	return newOpenRouterClient(keys, model, openRouterEndpoint, &http.Client{
+		Timeout:       20 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	})
 }
 
 func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http.Client) *OpenRouterClient {
@@ -49,15 +51,28 @@ func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http
 					Partition: "none",
 				},
 			}
-			if useDefaultRoute {
+			if useDefaultRoute || request.DisableReasoning {
 				disabled := false
 				request.Reasoning = &chatReasoning{Enabled: &disabled}
-				request.SessionID = openRouterSessionID
-				if len(request.Messages) > 0 {
-					request.Messages[0].Cache = true
-				}
+			}
+			// session_id is routing/trace grouping, not history; let OpenRouter derive it per conversation.
+			if openRouterExplicitCacheModel(model) && len(request.Messages) > 0 {
+				request.Messages[0].Cache = true
 			}
 		},
 		httpClient,
 	)}
+}
+
+// shortcut: automatic hints cover documented explicit-cache models only; extend when OpenRouter documents more.
+func openRouterExplicitCacheModel(model string) bool {
+	if strings.HasPrefix(model, "anthropic/claude-") {
+		return true
+	}
+	switch model {
+	case "deepseek/deepseek-v3.2", "qwen/qwen3-max", "qwen/qwen-plus", "qwen/qwen3.6-plus", "qwen/qwen3-coder-plus", "qwen/qwen3-coder-flash":
+		return true
+	default:
+		return false
+	}
 }

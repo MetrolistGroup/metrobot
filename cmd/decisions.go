@@ -69,20 +69,29 @@ func NewDecisionsClient(keys []string, model string) *DecisionsClient {
 }
 
 func newDecisionsClient(keys []string, model, endpoint string, client *http.Client) *DecisionsClient {
-	return &DecisionsClient{keys: append([]string(nil), keys...), model: strings.TrimSpace(model), endpoint: endpoint, http: client}
+	cleanKeys := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if key = strings.TrimSpace(key); key != "" {
+			cleanKeys = append(cleanKeys, key)
+		}
+	}
+	return &DecisionsClient{keys: cleanKeys, model: strings.TrimSpace(model), endpoint: endpoint, http: client}
 }
 
 func (c *DecisionsClient) Decide(ctx context.Context, request DecisionRequest) (*DecisionResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, DecisionsTimeout)
 	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(c.keys) == 0 || c.model == "" {
 		return nil, errors.New("Decisions is not configured")
 	}
 	body, err := json.Marshal(struct {
 		DecisionRequest
-		Model    string            `json:"model"`
-		Provider map[string]string `json:"provider"`
-	}{request, c.model, map[string]string{"data_collection": "deny", "sort": "latency"}})
+		Model    string         `json:"model"`
+		Provider map[string]any `json:"provider"`
+	}{request, c.model, map[string]any{"data_collection": "deny", "require_parameters": true, "sort": "latency"}})
 	if err != nil || len(body) > decisionsBodyMax {
 		return nil, errors.New("invalid or oversized Decisions request")
 	}
@@ -100,12 +109,13 @@ func (c *DecisionsClient) Decide(ctx context.Context, request DecisionRequest) (
 		if err == nil || !retry || attempt == 1 {
 			return response, err
 		}
-		timer := time.NewTimer(100 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, ctx.Err()
-		case <-timer.C:
+		delay := 100 * time.Millisecond
+		var httpErr *chatCompletionHTTPError
+		if errors.As(err, &httpErr) && httpErr.retryAfter > delay {
+			delay = httpErr.retryAfter
+		}
+		if err := waitForChatCompletionRetry(ctx, delay); err != nil {
+			return nil, err
 		}
 	}
 	panic("unreachable")
@@ -129,7 +139,11 @@ func (c *DecisionsClient) attempt(ctx context.Context, key string, body []byte, 
 	if resp.StatusCode != http.StatusOK {
 		retry := resp.StatusCode == 408 || resp.StatusCode == 429 || resp.StatusCode >= 500 ||
 			(len(c.keys) > 1 && (resp.StatusCode == 401 || resp.StatusCode == 402 || resp.StatusCode == 403))
-		return nil, retry, fmt.Errorf("Decisions HTTP status %d", resp.StatusCode)
+		return nil, retry, &chatCompletionHTTPError{
+			status:     resp.StatusCode,
+			retryAfter: chatCompletionRetryAfter(resp.Header.Get("Retry-After")),
+			err:        fmt.Errorf("Decisions HTTP status %d", resp.StatusCode),
+		}
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, decisionsBodyMax+1))
 	if err != nil {

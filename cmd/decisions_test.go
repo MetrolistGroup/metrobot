@@ -32,15 +32,15 @@ func TestDecisionsWireContract(t *testing.T) {
 		}
 		var body struct {
 			DecisionRequest
-			Model    string            `json:"model"`
-			Provider map[string]string `json:"provider"`
-			Messages json.RawMessage   `json:"messages"`
-			Tools    json.RawMessage   `json:"tools"`
+			Model    string          `json:"model"`
+			Provider map[string]any  `json:"provider"`
+			Messages json.RawMessage `json:"messages"`
+			Tools    json.RawMessage `json:"tools"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Error(err)
 		}
-		if body.Model != "perplexity/pplx-decider-flash-v1.2" || body.Provider["data_collection"] != "deny" || body.Provider["sort"] != "latency" ||
+		if body.Model != "perplexity/pplx-decider-flash-v1.2" || body.Provider["data_collection"] != "deny" || body.Provider["sort"] != "latency" || body.Provider["require_parameters"] != true ||
 			body.Questions["should_answer"].Type != "noul" || body.Questions["route"].Type != "choice" || body.Messages != nil || body.Tools != nil {
 			t.Errorf("invalid Decisions schema: %#v", body)
 		}
@@ -214,6 +214,20 @@ func TestDecisionsTransportBudgetAndRedaction(t *testing.T) {
 	}
 }
 
+func TestDecisionsHonorsRetryAfterWithinParentDeadline(t *testing.T) {
+	calls := 0
+	client := newDecisionsClient([]string{"one", "two"}, "model", "https://example.com", &http.Client{Transport: decisionTestTransport(func(*http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: 429, Header: http.Header{"Retry-After": {"60"}}, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})})
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := client.Decide(ctx, decisionTestRequest()); !errors.Is(err, context.DeadlineExceeded) || calls != 1 || time.Since(start) > time.Second {
+		t.Fatalf("retry ignored rate-limit/parent deadline: %v calls=%d", err, calls)
+	}
+}
+
 func TestDecisionsRotatesInitialKey(t *testing.T) {
 	var keys []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -229,6 +243,56 @@ func TestDecisionsRotatesInitialKey(t *testing.T) {
 	}
 	if strings.Join(keys, ",") != "Bearer one,Bearer two,Bearer one" {
 		t.Fatalf("rotation=%v", keys)
+	}
+}
+
+func TestDecisionsFiltersBlankKeysAndSupportsConcurrentCalls(t *testing.T) {
+	entered := make(chan string, 2)
+	release := make(chan struct{}, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		entered <- r.Header.Get("Authorization")
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
+		_, _ = io.WriteString(w, decisionTestResponse)
+	}))
+	defer server.Close()
+	defer close(release)
+	client := newDecisionsClient([]string{" ", " one ", "", "two"}, "model", server.URL, server.Client())
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := client.Decide(ctx, decisionTestRequest())
+			errs <- err
+		}()
+	}
+	keys := make(map[string]bool)
+	for range 2 {
+		select {
+		case key := <-entered:
+			keys[key] = true
+		case <-ctx.Done():
+			t.Fatal("concurrent request did not reach provider")
+		}
+	}
+	if !keys["Bearer one"] || !keys["Bearer two"] {
+		t.Fatalf("blank or untrimmed keys used: %v", keys)
+	}
+	for range 2 {
+		release <- struct{}{}
+	}
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	client = newDecisionsClient([]string{" ", ""}, "model", server.URL, server.Client())
+	if _, err := client.Decide(context.Background(), decisionTestRequest()); err == nil {
+		t.Fatal("blank keys treated as configuration")
 	}
 }
 

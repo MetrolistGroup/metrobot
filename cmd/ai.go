@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -93,6 +94,8 @@ const (
 	chatCompletionRateLimitRetries = 3
 	chatCompletionTransportRetries = 1
 	chatCompletionRateLimitDelay   = time.Second
+	chatCompletionRequestMax       = 16 << 20
+	chatCompletionResponseMax      = 1 << 20
 )
 
 type GarminAI interface {
@@ -196,7 +199,7 @@ func (m *GarminAIMessage) UnmarshalJSON(data []byte) error {
 	m.ToolCallID = wire.ToolCallID
 	m.Reasoning = wire.Reasoning
 	m.ReasoningContent = wire.ReasoningContent
-	m.ReasoningDetails = append(m.ReasoningDetails[:0], wire.ReasoningDetails...)
+	m.ReasoningDetails = wire.ReasoningDetails
 	m.Content = ""
 	m.Images = nil
 	m.Cache = false
@@ -364,19 +367,29 @@ func (c *chatCompletionClient) Ask(ctx context.Context, messages []GarminAIMessa
 }
 
 func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIRequest) (*GarminAICompletion, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(c.keys) == 0 {
 		return nil, fmt.Errorf("no %s API keys configured", c.provider)
 	}
 	if len(input.Messages) == 0 {
 		return nil, fmt.Errorf("no messages provided")
 	}
-	systemPrompt := strings.TrimSpace(input.SystemPrompt)
-	if systemPrompt == "" {
+	systemPrompt := input.SystemPrompt
+	if strings.TrimSpace(systemPrompt) == "" {
 		systemPrompt = garminSystemPrompt
 	}
+	// Caller system prompts can include memory and skills; only the public built-in prefix is safe to mark automatically.
+	dynamicPrompt := ""
+	if strings.HasPrefix(systemPrompt, garminSystemPrompt+"\n") {
+		dynamicPrompt = strings.TrimPrefix(systemPrompt, garminSystemPrompt)
+		systemPrompt = garminSystemPrompt
+	}
+	cacheSystemPrompt := systemPrompt == garminSystemPrompt
 	systemPrompt += "\n\nRuntime model identity:\n- The exact API model powering this response is `" + c.model + "`.\n- If asked what model you are, state this exact model ID. You are still Metrobot, the Discord bot; do not claim to be a different model or provider."
 
-	messageCapacity := len(input.Messages) + 1
+	messageCapacity := len(input.Messages) + 2
 	if strings.TrimSpace(input.Context) != "" {
 		messageCapacity++
 	}
@@ -386,7 +399,10 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 		Messages:         make([]chatMessage, 1, messageCapacity),
 		MaxTokens:        1024,
 		Stream:           false,
-		Tools:            input.Tools,
+		Tools:            append([]GarminAITool(nil), input.Tools...),
+	}
+	for i := range request.Tools {
+		request.Tools[i].Function.Parameters = append(json.RawMessage(nil), request.Tools[i].Function.Parameters...)
 	}
 	if len(input.Tools) > 0 {
 		request.ToolChoice = input.ToolChoice
@@ -395,36 +411,37 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 		}
 	}
 	request.Messages[0] = chatMessage{Role: "system", Content: systemPrompt}
-	if contextMessage := strings.TrimSpace(input.Context); contextMessage != "" {
-		request.Messages = append(request.Messages, chatMessage{Role: "system", Content: contextMessage})
+	if dynamicPrompt != "" {
+		request.Messages = append(request.Messages, chatMessage{Role: "system", Content: dynamicPrompt})
+	}
+	if strings.TrimSpace(input.Context) != "" {
+		request.Messages = append(request.Messages, chatMessage{Role: "system", Content: input.Context})
 	}
 	for _, message := range input.Messages {
-		request.Messages = append(request.Messages, chatMessage{
-			Role:             message.Role,
-			Name:             message.Name,
-			Content:          strings.TrimSpace(message.Content),
-			Images:           append([]string(nil), message.Images...),
-			ToolCalls:        message.ToolCalls,
-			ToolCallID:       message.ToolCallID,
-			Reasoning:        message.Reasoning,
-			ReasoningContent: message.ReasoningContent,
-			ReasoningDetails: append(json.RawMessage(nil), message.ReasoningDetails...),
-		})
+		message.Images = append([]string(nil), message.Images...)
+		message.ToolCalls = append([]GarminAIToolCall(nil), message.ToolCalls...)
+		message.ReasoningDetails = append(json.RawMessage(nil), message.ReasoningDetails...)
+		request.Messages = append(request.Messages, message)
 	}
 	if c.configureRequest != nil {
 		c.configureRequest(&request)
 	}
+	if !cacheSystemPrompt {
+		request.Messages[0].Cache = false
+	}
 
 	payload, err := json.Marshal(request)
 	if err != nil {
-		return nil, fmt.Errorf("encoding %s request: %w", c.provider, err)
+		return nil, fmt.Errorf("encoding %s request failed", c.provider)
+	}
+	if len(payload) > chatCompletionRequestMax {
+		return nil, fmt.Errorf("oversized %s request", c.provider)
 	}
 
 	start := int((c.nextKey.Add(1) - 1) % uint64(len(c.keys)))
 	keyAttempts := 0
 	rateLimitRetries := 0
 	transportRetries := 0
-	var lastErr error
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("calling %s: %w", c.provider, err)
@@ -435,38 +452,50 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 		completion, retry, err := c.askWithKey(attemptCtx, payload, c.keys[keyIndex])
 		attemptErr := attemptCtx.Err()
 		cancel()
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("calling %s: %w", c.provider, ctx.Err())
+		}
 		if err == nil {
 			return completion, nil
 		}
-		lastErr = err
-		if chatCompletionStatus(err) == http.StatusTooManyRequests && rateLimitRetries < chatCompletionRateLimitRetries {
+		if attemptErr != nil {
+			return nil, err
+		}
+		if chatCompletionStatus(err) == http.StatusTooManyRequests {
+			if rateLimitRetries >= chatCompletionRateLimitRetries {
+				return nil, err
+			}
 			rateLimitRetries++
-			if err := waitForChatCompletionRetry(ctx, c.rateLimitDelay); err != nil {
+			delay := c.rateLimitDelay
+			var httpErr *chatCompletionHTTPError
+			if errors.As(err, &httpErr) && httpErr.retryAfter > delay {
+				delay = httpErr.retryAfter
+			}
+			if err := waitForChatCompletionRetry(ctx, delay); err != nil {
 				return nil, fmt.Errorf("calling %s: %w", c.provider, err)
 			}
 			continue
 		}
-		if isChatCompletionTransportError(err) && transportRetries < chatCompletionTransportRetries {
+		if isChatCompletionTransportError(err) {
+			if transportRetries >= chatCompletionTransportRetries {
+				return nil, err
+			}
 			transportRetries++
 			if err := waitForChatCompletionRetry(ctx, c.rateLimitDelay); err != nil {
 				return nil, fmt.Errorf("calling %s: %w", c.provider, err)
 			}
 			continue
 		}
-		if !retry || attemptErr != nil || ctx.Err() != nil {
-			break
-		}
-		if keyAttempts >= len(c.keys) {
-			break
+		if !retry || keyAttempts >= len(c.keys) {
+			return nil, err
 		}
 	}
-
-	return nil, lastErr
 }
 
 type chatCompletionHTTPError struct {
-	status int
-	err    error
+	status     int
+	retryAfter time.Duration
+	err        error
 }
 
 type chatCompletionTransportError struct {
@@ -508,7 +537,7 @@ func waitForChatCompletionRetry(ctx context.Context, delay time.Duration) error 
 func (c *chatCompletionClient) askWithKey(ctx context.Context, payload []byte, key string) (*GarminAICompletion, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return nil, false, fmt.Errorf("creating %s request: %w", c.provider, err)
+		return nil, false, fmt.Errorf("creating %s request failed", c.provider)
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
@@ -521,43 +550,66 @@ func (c *chatCompletionClient) askWithKey(ctx context.Context, payload []byte, k
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, true, fmt.Errorf("calling %s: %w", c.provider, ctxErr)
 		}
-		return nil, true, &chatCompletionTransportError{err: fmt.Errorf("calling %s: %w", c.provider, err)}
+		return nil, true, &chatCompletionTransportError{err: fmt.Errorf("calling %s: transport failed", c.provider)}
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, ctx.Err() == nil, fmt.Errorf("reading %s response: %w", c.provider, err)
-	}
-
-	var result chatCompletionResponse
-	decodeErr := json.Unmarshal(body, &result)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		message := strings.TrimSpace(http.StatusText(resp.StatusCode))
-		if decodeErr == nil && result.Error != nil && strings.TrimSpace(result.Error.Message) != "" {
-			message = strings.TrimSpace(result.Error.Message)
-		}
 		return nil, retryChatCompletionStatus(resp.StatusCode), &chatCompletionHTTPError{
-			status: resp.StatusCode,
-			err:    fmt.Errorf("%s returned %d: %s", c.provider, resp.StatusCode, message),
+			status:     resp.StatusCode,
+			retryAfter: chatCompletionRetryAfter(resp.Header.Get("Retry-After")),
+			err:        fmt.Errorf("%s returned HTTP status %d", c.provider, resp.StatusCode),
 		}
 	}
-	if decodeErr != nil {
-		return nil, true, fmt.Errorf("decoding %s response: %w", c.provider, decodeErr)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, chatCompletionResponseMax+1))
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, false, fmt.Errorf("reading %s response: %w", c.provider, ctx.Err())
+		}
+		return nil, false, fmt.Errorf("reading %s response failed", c.provider)
+	}
+	if len(body) > chatCompletionResponseMax {
+		return nil, false, fmt.Errorf("oversized %s response", c.provider)
+	}
+	var result chatCompletionResponse
+	if json.Unmarshal(body, &result) != nil || result.Error != nil {
+		return nil, false, fmt.Errorf("invalid %s response", c.provider)
 	}
 	if len(result.Choices) == 0 {
-		return nil, true, fmt.Errorf("%s returned no choices", c.provider)
+		return nil, false, fmt.Errorf("%s returned no choices", c.provider)
 	}
 	message := result.Choices[0].Message
-	message.Content = strings.TrimSpace(message.Content)
-	if message.Content == "" && len(message.ToolCalls) == 0 && strings.TrimSpace(message.Reasoning) == "" && strings.TrimSpace(message.ReasoningContent) == "" && len(message.ReasoningDetails) == 0 {
-		return nil, true, fmt.Errorf("%s returned an empty response", c.provider)
+	var reasoningDetails []json.RawMessage
+	if message.Role != "assistant" || (len(message.ReasoningDetails) > 0 && json.Unmarshal(message.ReasoningDetails, &reasoningDetails) != nil) {
+		return nil, false, fmt.Errorf("invalid %s assistant message", c.provider)
+	}
+	seenCalls := make(map[string]bool, len(message.ToolCalls))
+	for _, call := range message.ToolCalls {
+		var arguments map[string]json.RawMessage
+		validArguments := json.Unmarshal([]byte(call.Function.Arguments), &arguments) == nil && arguments != nil
+		if strings.TrimSpace(call.ID) == "" || seenCalls[call.ID] || call.Type != "function" || strings.TrimSpace(call.Function.Name) == "" || !validArguments {
+			return nil, false, fmt.Errorf("%s returned an invalid tool call", c.provider)
+		}
+		seenCalls[call.ID] = true
+	}
+	if strings.TrimSpace(message.Content) == "" && len(message.ToolCalls) == 0 && strings.TrimSpace(message.Reasoning) == "" && strings.TrimSpace(message.ReasoningContent) == "" && len(reasoningDetails) == 0 {
+		return nil, false, fmt.Errorf("%s returned an empty response", c.provider)
 	}
 
 	return &GarminAICompletion{
 		Message:      message,
 		FinishReason: result.Choices[0].FinishReason,
 	}, false, nil
+}
+
+func chatCompletionRetryAfter(value string) time.Duration {
+	if seconds, err := strconv.ParseUint(strings.TrimSpace(value), 10, 32); err == nil {
+		return time.Duration(seconds) * time.Second
+	}
+	if deadline, err := http.ParseTime(value); err == nil {
+		return max(0, time.Until(deadline))
+	}
+	return 0
 }
 
 func retryChatCompletionStatus(status int) bool {
