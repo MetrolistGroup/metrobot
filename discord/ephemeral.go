@@ -14,13 +14,12 @@ import (
 var discordURLPattern = regexp.MustCompile(`https?://[^\s>]+`)
 
 func respondEphemeral(s *bot.Client, i discord.Interaction, content string) {
+	message := newDiscordNoteMessage(suppressDiscordEmbeds(content), "")
+	message.Flags = discord.MessageFlagEphemeral | discord.MessageFlagSuppressEmbeds
+	message.AllowedMentions = &discord.AllowedMentions{Parse: []discord.AllowedMentionType{discord.AllowedMentionTypeUsers}}
 	s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{
 		Type: discord.InteractionResponseTypeCreateMessage,
-		Data: discord.MessageCreate{
-			Content:         suppressDiscordEmbeds(content),
-			Flags:           discord.MessageFlagEphemeral | discord.MessageFlagSuppressEmbeds,
-			AllowedMentions: &discord.AllowedMentions{Parse: []discord.AllowedMentionType{discord.AllowedMentionTypeUsers}},
-		},
+		Data: message,
 	})
 }
 
@@ -35,13 +34,12 @@ func respondEphemeralAllowEmbeds(s *bot.Client, i discord.Interaction, content s
 }
 
 func respondPublic(s *bot.Client, i discord.Interaction, content string) {
+	message := newDiscordNoteMessage(suppressDiscordEmbeds(content), "")
+	message.Flags = discord.MessageFlagSuppressEmbeds
+	message.AllowedMentions = &discord.AllowedMentions{}
 	s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{
 		Type: discord.InteractionResponseTypeCreateMessage,
-		Data: discord.MessageCreate{
-			Content:         suppressDiscordEmbeds(content),
-			Flags:           discord.MessageFlagSuppressEmbeds,
-			AllowedMentions: &discord.AllowedMentions{},
-		},
+		Data: message,
 	})
 }
 
