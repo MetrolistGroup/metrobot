@@ -10,23 +10,7 @@ import (
 )
 
 func sendEphemeralReply(bot *tgbotapi.BotAPI, chatID int64, replyToMsgID int, text string, parseMode string, stay bool, logger *zap.Logger) {
-	msg := tgbotapi.NewMessage(chatID, text)
-	msg.ReplyToMessageID = replyToMsgID
-	msg.DisableWebPagePreview = true
-	if parseMode != "" {
-		msg.ParseMode = parseMode
-	}
-
-	sent, err := bot.Send(msg)
-	if err != nil {
-		logger.Error("failed to send telegram message", zap.Error(err))
-		return
-	}
-
-	if !stay {
-		scheduleDelete(bot, chatID, sent.MessageID, logger)
-		scheduleDelete(bot, chatID, replyToMsgID, logger)
-	}
+	sendPublicReply(bot, chatID, replyToMsgID, text, parseMode, !stay, logger)
 }
 
 func sendEphemeralNoteReply(bot *tgbotapi.BotAPI, chatID int64, replyToMsgID int, text string, stay bool, logger *zap.Logger) {
@@ -41,7 +25,14 @@ func sendPublicReply(bot *tgbotapi.BotAPI, chatID int64, replyToMsgID int, text 
 		msg.ParseMode = parseMode
 	}
 
-	sent, err := bot.Send(msg)
+	var reply tgbotapi.Chattable = msg
+	// Serialized HTML conservatively bounds visible text without reparsing tags.
+	if util.UTF16Len(text) > 4096 {
+		document := tgbotapi.NewDocument(chatID, tgbotapi.FileBytes{Name: "message.txt", Bytes: []byte(text)})
+		document.ReplyToMessageID = replyToMsgID
+		reply = document
+	}
+	sent, err := bot.Send(reply)
 	if err != nil {
 		logger.Error("failed to send telegram message", zap.Error(err))
 		return

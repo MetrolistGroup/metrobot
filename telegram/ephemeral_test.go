@@ -62,13 +62,27 @@ type telegramNoteHTTPFunc func(*http.Request) (*http.Response, error)
 
 func (f telegramNoteHTTPFunc) Do(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestTelegramNoteSendHelpersUploadFullReplyAndKeepCleanup(t *testing.T) {
-	text := strings.Repeat("**Full 界𝄞**\n<https://example.com>\n", 200)
+func TestTelegramSendHelpersUploadFullReplyAndKeepCleanup(t *testing.T) {
 	for _, test := range []struct {
-		name            string
-		public, cleanup bool
-	}{{"public persistent", true, false}, {"public cleanup", true, true}, {"ephemeral stay", false, false}, {"ephemeral cleanup", false, true}} {
+		name                       string
+		public, cleanup, formatted bool
+	}{
+		{"public persistent", true, false, false},
+		{"public cleanup", true, true, false},
+		{"ephemeral stay", false, false, false},
+		{"ephemeral cleanup", false, true, false},
+		{"formatted public persistent", true, false, true},
+		{"formatted public cleanup", true, true, true},
+		{"formatted ephemeral stay", false, false, true},
+		{"formatted ephemeral cleanup", false, true, true},
+	} {
 		t.Run(test.name, func(t *testing.T) {
+			text := strings.Repeat("**Full 界𝄞**\n<https://example.com>\n", 200)
+			filename := "note.md"
+			if test.formatted {
+				text = "<b>Latest GitHub Actions runs:</b>\n\n" + strings.Repeat("Run #1000 failed or was cancelled. "+strings.Repeat("a", 175)+" (1234567)\n", 20)
+				filename = "message.txt"
+			}
 			synctest.Test(t, func(t *testing.T) {
 				deletions := make(chan string, 2)
 				sent := 0
@@ -100,8 +114,8 @@ func TestTelegramNoteSendHelpersUploadFullReplyAndKeepCleanup(t *testing.T) {
 							} else {
 								defer file.Close()
 								content, err := io.ReadAll(file)
-								if err != nil || header.Filename != "note.md" || string(content) != text {
-									t.Error("full raw note.md was not uploaded")
+								if err != nil || header.Filename != filename || string(content) != text {
+									t.Error("full raw attachment was not uploaded")
 								}
 							}
 						}
@@ -115,9 +129,14 @@ func TestTelegramNoteSendHelpersUploadFullReplyAndKeepCleanup(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if test.public {
+				switch {
+				case test.formatted && test.public:
+					sendPublicReply(bot, 123, 456, text, "HTML", test.cleanup, zap.NewNop())
+				case test.formatted:
+					sendEphemeralReply(bot, 123, 456, text, "HTML", !test.cleanup, zap.NewNop())
+				case test.public:
 					sendPublicNoteReply(bot, 123, 456, text, test.cleanup, zap.NewNop())
-				} else {
+				default:
 					sendEphemeralNoteReply(bot, 123, 456, text, !test.cleanup, zap.NewNop())
 				}
 				if sent != 1 {
