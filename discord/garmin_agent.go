@@ -126,7 +126,13 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 		skillName = "support"
 	}
 	if skillName != "" {
-		skillContent, err := loadGarminSkill(skillName)
+		var skillContent string
+		var err error
+		if appSupport {
+			skillContent, err = loadGarminSupportAnswerSkill(messages)
+		} else {
+			skillContent, err = loadGarminSkill(skillName)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -139,12 +145,16 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 	} else {
 		prepareGarminGIFs(ctx, s.Rest.HTTPClient(), conversation, b.Logger)
 	}
-	discordContext := b.garminDiscordContextForConversation(s, m, messages)
-	discordContext += "\nRequest time (UTC): " + time.Now().UTC().Format(time.RFC3339)
+	discordContext := "Request time (UTC): " + time.Now().UTC().Format(time.RFC3339)
+	if appSupport {
+		discordContext += "\nConversation timestamps: " + mustJSON(garminAIConversationTimestamps(messages))
+	} else {
+		discordContext = b.garminDiscordContextForConversation(s, m, messages) + "\n" + discordContext
+	}
 	webQuery := garminWebSearchQuery(messages)
 	// Retention drops tool provenance, so prior chat is never authorized search text.
 	restrictWebQuery := len(messages) > 1 || m.ReferencedMessage != nil
-	if restrictWebQuery {
+	if restrictWebQuery && !appSupport {
 		discordContext += "\n\nFor privacy, any web search query must exactly match this current user request, without text from earlier messages: " + mustJSON(webQuery) + ". If the subject is only in prior chat, ask the user to restate a self-contained public search subject."
 		if webQuery == "" {
 			discordContext += "\nNo self-contained public search subject is named. Ask for the subject instead of searching or guessing a link."
@@ -162,6 +172,7 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 	tools := garminToolsForConversation(messages, isGarminOwner(m.Author.ID.String()), ambient)
 	if appSupport {
 		tools = onlyGarminTools(garminAITools, "do_not_respond", "list_notes", "get_note", "search_metrolist_issues", "get_metrolist_status")
+		tools = append(tools, garminTool("load_support_guide", "Read verified setup instructions when the relevant guide is not already supplied. rpc: Discord; login: Google/YouTube Music; scrobbling: Last.fm/ListenBrainz. Preserve the guide's build/platform scope.", `{"type":"object","properties":{"name":{"type":"string","enum":["rpc","login","scrobbling"]}},"required":["name"],"additionalProperties":false}`))
 	}
 	if skillName != "" {
 		tools = withoutGarminTools(tools, "load_skill")
@@ -1015,6 +1026,15 @@ func (b *Bot) executeGarminAITool(ctx context.Context, s *bot.Client, m *discord
 			output, err = b.readGarminChannelMessagesContext(ctx, s, m.ChannelID.String(), m.ID.String(), args.Query, args.Limit, garminAIHistoryResultSize)
 			if err == nil {
 				err = confirmGarminHistoryAccess(ctx, s, m)
+			}
+		}
+	case "load_support_guide":
+		if m == nil || m.ChannelID.String() != garminAppSupportID {
+			err = fmt.Errorf("support guides are only available in app support")
+		} else {
+			output, err = loadGarminSupportGuide(args.Name)
+			if err == nil {
+				skill = "support_" + strings.ToLower(strings.TrimSpace(args.Name))
 			}
 		}
 	case "load_skill":

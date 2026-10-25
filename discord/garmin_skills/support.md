@@ -17,6 +17,7 @@
 
 ## Tiny contrasts
 
-- Common setup steps already in the guide: give those steps and stop, rather than ask the variant or append an advanced FAQ.
-- Exact playback error code + applicable generic playback note: "These are general checks; no fix for that code is verified," rather than "These steps fix that code."
+- "How do I connect Metrolist to Discord?" (variant unknown): "Open the account/profile menu → Integrations → its Discord entry. Choose Log in and complete Discord authorization in the flow that opens. Turn on that page's Rich Presence switch, then play music." Stop there; Android-only labels and browser assumptions are unnecessary.
+- "How do I sign into Google in KMP?" (platform unknown): "Which platform are you using: Android, iOS, Windows, Linux or macOS?" Do not dump all platform instructions.
+- An exact playback error has no verified remedy: "I can't verify a fix for that error. Does it affect streamed songs, downloaded songs, or both?" Ask only details still missing; do not add generic fixes or invented menu paths to a question.
 - "Where can I donate?": relevant `donate` excerpt. "Grant my tester role": `do_not_respond`.

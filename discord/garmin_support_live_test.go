@@ -72,6 +72,8 @@ func TestSupportAgentLive(t *testing.T) {
 		Tools        []string         `json:"tools,omitempty"`
 		Milliseconds int64            `json:"ms"`
 		Error        bool             `json:"error,omitempty"`
+		PromptChars  int              `json:"prompt_chars"`
+		ModelCalls   int              `json:"model_calls"`
 	}
 	var reports []report
 	for i, test := range []struct {
@@ -82,8 +84,17 @@ func TestSupportAgentLive(t *testing.T) {
 		wantNote     string
 		selectedNote string
 		wantAnswer   bool
+		wantSilent   bool
 		forbidden    []string
 	}{
+		{id: "richpresence-wording", messages: []cmd.GarminAIMessage{{Role: "user", Content: "How do I turn on RichPresence in Metrolist?"}}, wantAnswer: true, forbidden: []string{"reinstall", "profile buttons"}},
+		{id: "kmp-lastfm-setup", messages: []cmd.GarminAIMessage{{Role: "user", Content: "How do I connect Last.fm in Metrolist KMP?"}}, wantAnswer: true, forbidden: []string{"send me your", "reinstall"}},
+		{id: "short-track-threshold", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Regular Android Metrolist 13.7.0, default Last.fm settings: for a 40-second song, how long must I listen before it scrobbles?"}}, wantAnswer: true, forbidden: []string{"listen for 30", "play for 30"}},
+		{id: "kmp-login-platform-unknown", messages: []cmd.GarminAIMessage{{Role: "user", Content: "How do I sign into Google in Metrolist KMP?"}}, wantAnswer: true},
+		{id: "logout-keep-library", messages: []cmd.GarminAIMessage{{Role: "user", Content: "How do I log out of regular Android Metrolist 13.7.0 without losing my library?"}}, wantAnswer: true, forbidden: []string{"reinstall", "clear app data"}},
+		{id: "confirmed-topic-followup", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Where can my friends see what I'm listening to?"}, {Role: "assistant", Content: "Do you mean Discord Rich Presence?"}, {Role: "user", Content: "Yes, how do I set that up in Metrolist?"}}, wantAnswer: true},
+		{id: "resolved-no-reply", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Discord works now, thanks, that fixed it!"}}, wantSilent: true},
+		{id: "staff-action-no-reply", messages: []cmd.GarminAIMessage{{Role: "user", Content: "I donated and sent my receipt. Please grant me the KMP tester role now."}}, wantSilent: true},
 		{id: "search-followup", messages: []cmd.GarminAIMessage{
 			{Role: "user", Content: "is it me or is searching stuff not working right now?"},
 			{Role: "assistant", Content: "What happens when you search? Which app version are you on?"},
@@ -97,7 +108,7 @@ func TestSupportAgentLive(t *testing.T) {
 		{id: "unread-image", attachment: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "I keep getting this from time to time on multiple songs"}}, forbidden: []string{"cut off", "truncated", "latest nightly", "firefox", "reinstall"}},
 		{id: "io-2000", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Metrolist version: 13.7.0\nAndroid version: 17\nIt was on auto play\nMany songs\nError Code: IO UNSPECIFIED (2000)"}}, forbidden: []string{"has been fixed", "fixed in recent", "latest nightly", "connectivity hiccup"}},
 		{id: "current-release-vs-nightly", messages: []cmd.GarminAIMessage{{Role: "user", Content: "what is the current release is the nightly better or ?"}}, wantTool: "get_metrolist_status"},
-		{id: "debug-vs-release-crash", messages: []cmd.GarminAIMessage{{Role: "user", Content: "After changing phones, stable and nightly crash at startup but debug works. What can I test?"}}, forbidden: []string{"signing", "signed", "permission", "library mismatch", "clear data", "reinstall"}},
+		{id: "debug-vs-release-crash", messages: []cmd.GarminAIMessage{{Role: "user", Content: "After changing phones, stable and nightly crash at startup but debug works. What can I test?"}}, forbidden: []string{"signing", "signed", "permission", "library mismatch", "clear data", "reinstall", "settings → about", "settings > about"}},
 		{id: "chrome-download", messages: []cmd.GarminAIMessage{{Role: "user", Content: "The Metrolist APK download fails in Chrome before reaching the Android installer. Which browser should I try?"}}},
 		{id: "kmp-access", messages: []cmd.GarminAIMessage{{Role: "user", Content: "What are the requirements for getting Metrolist KMP tester access?"}}, wantNote: "kmp", selectedNote: "kmp"},
 		{id: "nightly-install", messages: []cmd.GarminAIMessage{{Role: "user", Content: "How do I download and install nightly without uninstalling?"}}, wantNote: "nightly", selectedNote: "nightly"},
@@ -138,6 +149,10 @@ func TestSupportAgentLive(t *testing.T) {
 				return response, err
 			})
 			b.garminAI = garminAITestFunc(func(ctx context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+				r.ModelCalls++
+				if r.ModelCalls == 1 {
+					r.PromptChars = len(request.SystemPrompt) + len(request.Context)
+				}
 				completion, err := client.Complete(ctx, request)
 				if completion != nil {
 					for _, call := range completion.Message.ToolCalls {
@@ -153,7 +168,7 @@ func TestSupportAgentLive(t *testing.T) {
 			}
 			requestCtx := context.WithValue(context.Background(), automaticSupportContextKey{}, true)
 			requestCtx = context.WithValue(requestCtx, supportSelectedNoteContextKey{}, test.selectedNote)
-			ctx, cancel := context.WithTimeout(requestCtx, 60*time.Second)
+			ctx, cancel := context.WithTimeout(requestCtx, garminAITimeout)
 			start := time.Now()
 			result, err := b.runGarminAI(ctx, nil, message, test.messages)
 			cancel()
@@ -163,6 +178,9 @@ func TestSupportAgentLive(t *testing.T) {
 				t.Errorf("%s: agent failed", test.id)
 			} else {
 				r.Answer, r.Note, r.Suppressed = result.Answer, result.NoteName, result.Silent
+				if test.wantSilent && !result.Silent {
+					t.Errorf("%s: answered a resolved/staff-action message", test.id)
+				}
 				r.Tools = nil
 				for _, turn := range result.Conversation[len(test.messages):] {
 					for _, call := range turn.ToolCalls {

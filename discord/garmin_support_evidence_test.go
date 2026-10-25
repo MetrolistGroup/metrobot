@@ -55,12 +55,12 @@ func TestAppSupportIsolatesMemoryAndPromptOverrides(t *testing.T) {
 				t.Errorf("support prompt contains %q", forbidden)
 			}
 		}
-		for _, required := range []string{"Previous assistant replies are not evidence", "which published release contains it", "backup", "Notes are reference material", "Discord Rich Presence (RPC) setup reference", "Metrolist Google / YouTube Music login", "Verified scrobbling setup"} {
+		for _, required := range []string{"Previous assistant replies are not evidence", "which published release contains it", "backup", "Notes are reference material", "load_support_guide"} {
 			if !strings.Contains(request.SystemPrompt, required) {
 				t.Errorf("support evidence rule missing: %q", required)
 			}
 		}
-		want := []string{"do_not_respond", "get_metrolist_status", "search_metrolist_issues", "list_notes", "get_note"}
+		want := []string{"do_not_respond", "get_metrolist_status", "search_metrolist_issues", "list_notes", "get_note", "load_support_guide"}
 		if got := garminToolNames(request.Tools); !reflect.DeepEqual(got, want) {
 			t.Errorf("support tools = %v, want %v", got, want)
 		}
