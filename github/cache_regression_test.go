@@ -17,21 +17,78 @@ import (
 	gh "github.com/google/go-github/v60/github"
 )
 
-func TestIssueSearchCannotReadPrivateIssues(t *testing.T) {
+func TestIssueSearchUsesTokenAndFiltersUnverifiedRepositories(t *testing.T) {
+	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "" {
-			t.Error("issue search received private repository access")
-			fmt.Fprint(w, `{"items":[{"title":"private secret"}]}`)
+		requests++
+		if r.Header.Get("Authorization") != "Bearer read-token" {
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `{"message":"anonymous quota exhausted"}`)
 			return
 		}
-		fmt.Fprint(w, `{"items":[]}`)
+		switch r.URL.Path {
+		case "/repos/owner/repo":
+			fmt.Fprint(w, `{"private":false}`)
+		case "/search/issues":
+			if !strings.Contains(r.URL.Query().Get("q"), "is:public") {
+				t.Error("search did not request public issues")
+			}
+			fmt.Fprintf(w, `{"total_count":4,"items":[
+				{"repository_url":%q,"title":"public report"},
+				{"repository_url":%q,"title":"private secret"},
+				{"repository_url":"https://evil.test/repos/owner/repo","title":"untrusted secret"},
+				{"title":"unverifiable secret"}]}`, "http://"+r.Host+"/repos/owner/repo", "http://"+r.Host+"/repos/owner/private")
+		default:
+			t.Errorf("unexpected visibility request: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
 	}))
 	defer server.Close()
 	client := NewAssistantClient("read-token", "owner", "repo")
 	client.apiBase = server.URL
 	result, err := client.SearchIssues(context.Background(), "repo:owner/private OR secret")
-	if err != nil || strings.Contains(result, "private secret") {
-		t.Fatalf("search = %q, %v", result, err)
+	if err != nil || strings.Contains(result, "secret") || !strings.Contains(result, `"title":"public report"`) || !strings.Contains(result, `"total_count":1`) || requests != 2 {
+		t.Fatalf("search = %q, %v; requests=%d", result, err, requests)
+	}
+}
+
+func TestIssueSearchRejectsPrivateConfiguredRepository(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/repos/owner/private" {
+			t.Errorf("private issue search reached %s", r.URL.Path)
+		}
+		fmt.Fprint(w, `{"private":true}`)
+	}))
+	defer server.Close()
+	client := NewAssistantClient("read-token", "owner", "private")
+	client.apiBase = server.URL
+	result, err := client.SearchIssues(context.Background(), "secret")
+	if result != "" || err == nil || !strings.Contains(err.Error(), "private") || requests != 1 {
+		t.Fatalf("search = %q, %v; requests=%d", result, err, requests)
+	}
+}
+
+func TestIssueSearchFallsBackWhenTokenIsForbidden(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Header.Get("Authorization") != "" {
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `{"message":"token forbidden"}`)
+		} else if r.URL.Path == "/repos/owner/repo" {
+			fmt.Fprint(w, `{"private":false}`)
+		} else {
+			fmt.Fprintf(w, `{"total_count":1,"items":[{"repository_url":%q,"title":"public report"}]}`, "http://"+r.Host+"/repos/owner/repo")
+		}
+	}))
+	defer server.Close()
+	client := NewAssistantClient("bad-token", "owner", "repo")
+	client.apiBase = server.URL
+	result, err := client.SearchIssues(context.Background(), "report")
+	if err != nil || !strings.Contains(result, `"title":"public report"`) || requests != 4 {
+		t.Fatalf("search = %q, %v; requests=%d", result, err, requests)
 	}
 }
 

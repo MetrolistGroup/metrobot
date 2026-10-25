@@ -40,8 +40,12 @@ func TestAssistantClientRetriesPublicDataWithoutForbiddenToken(t *testing.T) {
 func TestAssistantClientSearchIssuesScopesRepository(t *testing.T) {
 	var query string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/MetrolistGroup/Metrolist" {
+			_, _ = w.Write([]byte(`{"private":false}`))
+			return
+		}
 		query = r.URL.Query().Get("q")
-		_, _ = w.Write([]byte(`{"total_count":1,"items":[{"number":1,"title":"Lyrics fixed","state":"closed","state_reason":"completed"}]}`))
+		_, _ = w.Write([]byte(`{"total_count":1,"items":[{"repository_url":"http://` + r.Host + `/repos/MetrolistGroup/Metrolist","number":1,"title":"Lyrics fixed","state":"closed","state_reason":"completed"}]}`))
 	}))
 	defer server.Close()
 
@@ -52,7 +56,7 @@ func TestAssistantClientSearchIssuesScopesRepository(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SearchIssues() error = %v", err)
 	}
-	if query != "repo:MetrolistGroup/Metrolist is:issue lyrics is:open" {
+	if query != "repo:MetrolistGroup/Metrolist is:issue is:public lyrics is:open" {
 		t.Fatalf("query = %q", query)
 	}
 	if !strings.Contains(result, `"state_reason":"completed"`) {

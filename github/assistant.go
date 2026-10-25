@@ -141,8 +141,11 @@ func (c *AssistantClient) SearchIssues(ctx context.Context, query string) (strin
 	if query == "" {
 		return "", fmt.Errorf("search query is required")
 	}
+	if _, err := c.Repository(ctx, c.owner+"/"+c.repo); err != nil {
+		return "", err
+	}
 	values := url.Values{
-		"q":        {fmt.Sprintf("repo:%s/%s is:issue %s", c.owner, c.repo, query)},
+		"q":        {fmt.Sprintf("repo:%s/%s is:issue is:public %s", c.owner, c.repo, query)},
 		"sort":     {"updated"},
 		"order":    {"desc"},
 		"per_page": {"8"},
@@ -150,14 +153,15 @@ func (c *AssistantClient) SearchIssues(ctx context.Context, query string) (strin
 	var search struct {
 		TotalCount int `json:"total_count"`
 		Items      []struct {
-			Number      int        `json:"number"`
-			Title       string     `json:"title"`
-			State       string     `json:"state"`
-			StateReason string     `json:"state_reason"`
-			HTMLURL     string     `json:"html_url"`
-			CreatedAt   *time.Time `json:"created_at"`
-			UpdatedAt   *time.Time `json:"updated_at"`
-			User        struct {
+			RepositoryURL string     `json:"repository_url"`
+			Number        int        `json:"number"`
+			Title         string     `json:"title"`
+			State         string     `json:"state"`
+			StateReason   string     `json:"state_reason"`
+			HTMLURL       string     `json:"html_url"`
+			CreatedAt     *time.Time `json:"created_at"`
+			UpdatedAt     *time.Time `json:"updated_at"`
+			User          struct {
 				Login string `json:"login"`
 			} `json:"user"`
 			Labels []struct {
@@ -165,12 +169,21 @@ func (c *AssistantClient) SearchIssues(ctx context.Context, query string) (strin
 			} `json:"labels"`
 		} `json:"items"`
 	}
-	// Search qualifiers can escape the configured repository; never search with private access.
-	public := *c
-	public.token = ""
-	if err := public.get(ctx, "/search/issues?"+values.Encode(), &search); err != nil {
+	if err := c.get(ctx, "/search/issues?"+values.Encode(), &search); err != nil {
 		return "", err
 	}
+	// Search qualifiers can widen the scope; only expose the verified public repository.
+	repositoryURL := strings.TrimRight(c.apiBase, "/") + "/repos/" + url.PathEscape(c.owner) + "/" + url.PathEscape(c.repo)
+	items := search.Items[:0]
+	for _, issue := range search.Items {
+		if strings.EqualFold(issue.RepositoryURL, repositoryURL) {
+			items = append(items, issue)
+		}
+	}
+	if len(items) != len(search.Items) {
+		search.TotalCount = len(items)
+	}
+	search.Items = items
 	return marshalToolResult(search)
 }
 
