@@ -45,6 +45,12 @@ func garminDiscordContextForMessage(m *discord.Message) string {
 }
 
 func garminDiscordContext(b *Bot, s *bot.Client, m *discord.Message, messages []cmd.GarminAIMessage) string {
+	if m.ChannelID.String() == garminAppSupportID {
+		return "Support context (timestamps only):\n" + mustJSON(map[string]any{
+			"current_utc_time":           time.Now().UTC().Format(time.RFC3339),
+			"tracked_message_timestamps": garminAIConversationTimestamps(messages),
+		})
+	}
 	member := m.Member
 	if member == nil {
 		member = garminCurrentGuildMember(s, snowflakeString(m.GuildID), m.Author.ID.String())

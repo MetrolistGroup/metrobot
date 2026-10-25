@@ -14,7 +14,7 @@ func loadGarminSupportAnswerSkill(messages []cmd.GarminAIMessage) (string, error
 	}
 
 	// shortcut: English topic hints only; load_support_guide covers novel or non-English wording.
-	var selected [3]bool
+	var selected [4]bool
 	userTurns := 0
 	for i := len(messages) - 1; i >= 0 && userTurns < 3; i-- {
 		if messages[i].Role != "user" {
@@ -26,8 +26,9 @@ func loadGarminSupportAnswerSkill(messages []cmd.GarminAIMessage) (string, error
 		scrobbling := containsAnyGarminPhrase(prompt, "last.fm", "lastfm", "listenbrainz", "scrobbl")
 		login := containsAnyGarminPhrase(prompt, "login", "log in", "signin", "sign in", "signing in")
 		musicLogin := containsAnyGarminPhrase(prompt, "google", "youtube", "music login", "music sign in", "log in to music", "sign in to music")
-		selected = [3]bool{rpc, login && (musicLogin || (!rpc && !scrobbling)), scrobbling}
-		if selected[0] || selected[1] || selected[2] {
+		playlists := strings.Contains(prompt, "playlist")
+		selected = [4]bool{rpc, login && (musicLogin || (!rpc && !scrobbling)), scrobbling, playlists}
+		if selected[0] || selected[1] || selected[2] || selected[3] {
 			break
 		}
 
@@ -50,7 +51,7 @@ func loadGarminSupportAnswerSkill(messages []cmd.GarminAIMessage) (string, error
 	}
 
 	content := string(data)
-	for i, name := range []string{"rpc", "login", "scrobbling"} {
+	for i, name := range []string{"rpc", "login", "scrobbling", "playlists"} {
 		if !selected[i] {
 			continue
 		}
@@ -66,13 +67,13 @@ func loadGarminSupportAnswerSkill(messages []cmd.GarminAIMessage) (string, error
 func loadGarminSupportGuide(name string) (string, error) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	switch name {
-	case "rpc", "login", "scrobbling":
+	case "rpc", "login", "scrobbling", "playlists":
 		data, err := garminSkillFiles.ReadFile("garmin_skills/support_" + name + ".md")
 		if err != nil {
 			return "", fmt.Errorf("loading support guide %s: %w", name, err)
 		}
 		return string(data), nil
 	default:
-		return "", fmt.Errorf("unknown support guide %q; available guides: rpc, login, scrobbling", name)
+		return "", fmt.Errorf("unknown support guide %q; available guides: rpc, login, scrobbling, playlists", name)
 	}
 }

@@ -113,7 +113,7 @@ func TestRunGarminAIAmbientModeCanReplyReactOrStaySilent(t *testing.T) {
 		if !strings.Contains(request.Context, "active Metrobot conversation") {
 			t.Fatal("ambient decision instruction was not supplied")
 		}
-		if got, want := garminToolNames(request.Tools), []string{"react_to_message", "do_not_respond"}; !reflect.DeepEqual(got, want) {
+		if got, want := garminToolNames(request.Tools), []string{"react_to_message", "do_not_respond", "load_support_guide"}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("ambient request tools = %v, want %v", got, want)
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{ToolCalls: []cmd.GarminAIToolCall{{
@@ -237,7 +237,7 @@ func TestRunGarminAIMakesWebSearchAvailableForAnswers(t *testing.T) {
 	}
 	bot := &Bot{garminMemory: memory, garminFirecrawl: firecrawl.NewClient([]string{"key"})}
 	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-		if got, want := garminToolNames(request.Tools), []string{"search_web"}; !reflect.DeepEqual(got, want) {
+		if got, want := garminToolNames(request.Tools), []string{"load_support_guide", "search_web"}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("general answer tools = %v, want %v", got, want)
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "a useful short answer."}}, nil
@@ -398,7 +398,7 @@ func TestRunGarminAIUsesCalculatorBeforeAnswering(t *testing.T) {
 	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		calls++
 		if calls == 1 {
-			if names := garminToolNames(request.Tools); !reflect.DeepEqual(names, []string{"calculate_math"}) || !strings.Contains(request.Context, "calculator tool") {
+			if names := garminToolNames(request.Tools); !reflect.DeepEqual(names, []string{"calculate_math", "load_support_guide"}) || !strings.Contains(request.Context, "calculator tool") {
 				t.Fatalf("calculator request = %#v", request)
 			}
 			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{

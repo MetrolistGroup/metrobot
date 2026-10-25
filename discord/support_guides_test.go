@@ -19,7 +19,7 @@ func TestSupportSetupGuidesReachAgentAndEvidenceCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"rpc", "login", "scrobbling"} {
+	for _, name := range []string{"rpc", "login", "scrobbling", "playlists"} {
 		guide, err := loadGarminSupportGuide(name)
 		if err != nil || !strings.Contains(full, guide) || strings.Contains(selected, guide) != (name == "rpc") {
 			t.Fatalf("wrong guide selection/evidence for %s: %v", name, err)

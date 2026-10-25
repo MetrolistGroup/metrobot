@@ -31,6 +31,8 @@ func TestLoadGarminSupportAnswerSkill(t *testing.T) {
 		{name: "google", prompt: "How do I log into Google?", guides: []string{"login"}},
 		{name: "youtube", prompt: "Where do I sign in to YouTube Music?", guides: []string{"login"}},
 		{name: "music", prompt: "Music sign-in failed", guides: []string{"login"}},
+		{name: "playlists", prompt: "How do I sync my YouTube Music playlists with Metrolist?", guides: []string{"playlists"}},
+		{name: "login and playlists", prompt: "explain login to him and how to get yt music playlists onto metrolist", guides: []string{"login", "playlists"}},
 		{name: "generic login", prompt: "How do I login?", guides: []string{"login"}},
 		{name: "generic sign in", prompt: "I cannot sign in", guides: []string{"login"}},
 		{name: "discord login", prompt: "Discord login to show my music failed", guides: []string{"rpc"}},
@@ -89,6 +91,7 @@ func TestLoadGarminSupportAnswerSkill(t *testing.T) {
 func TestLoadGarminSupportGuide(t *testing.T) {
 	for _, test := range []struct{ name, file string }{
 		{"rpc", "rpc"},
+		{"playlists", "playlists"},
 		{" LOGIN ", "login"},
 		{"\tScRoBbLiNg\n", "scrobbling"},
 	} {

@@ -85,8 +85,15 @@ func TestSupportAgentLive(t *testing.T) {
 		selectedNote string
 		wantAnswer   bool
 		wantSilent   bool
+		casual       bool
 		forbidden    []string
 	}{
+		{id: "casual-login-playlists", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "explain login to him and how to get yt music playlists onto metrolist"}}, wantAnswer: true},
+		{id: "casual-correct-login", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "explain login and how to get youtube music playlists onto metrolist"}, {Role: "assistant", Content: "metrolist doesn't do login."}, {Role: "user", Content: "yes it does, explain how"}}, wantAnswer: true},
+		{id: "casual-short-correction", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "does Metrolist support login?"}, {Role: "assistant", Content: "metrolist doesn't do login."}, {Role: "user", Content: "yes it does"}}, wantAnswer: true},
+		{id: "casual-kmp-platforms", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "Is Metrolist strictly Android only? What about KMP?"}}, wantAnswer: true},
+		{id: "casual-android-playlists", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "Regular Android Metrolist 13.7.0: how do I sign in and get my YouTube Music playlists?"}}, wantAnswer: true},
+		{id: "casual-kmp-only-followup", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "Can I log into YouTube Music in Metrolist?"}, {Role: "assistant", Content: "Google login is available."}, {Role: "user", Content: "is that a mkp feature only"}}, wantAnswer: true},
 		{id: "richpresence-wording", messages: []cmd.GarminAIMessage{{Role: "user", Content: "How do I turn on RichPresence in Metrolist?"}}, wantAnswer: true, forbidden: []string{"reinstall", "profile buttons"}},
 		{id: "kmp-lastfm-setup", messages: []cmd.GarminAIMessage{{Role: "user", Content: "How do I connect Last.fm in Metrolist KMP?"}}, wantAnswer: true, forbidden: []string{"send me your", "reinstall"}},
 		{id: "short-track-threshold", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Regular Android Metrolist 13.7.0, default Last.fm settings: for a 40-second song, how long must I listen before it scrobbles?"}}, wantAnswer: true, forbidden: []string{"listen for 30", "play for 30"}},
@@ -131,6 +138,16 @@ func TestSupportAgentLive(t *testing.T) {
 		t.Run(test.id, func(t *testing.T) {
 			r := report{ID: test.id}
 			b := &Bot{DB: database, Notes: &cmd.NotesHandler{DB: database}, Logger: zap.NewNop(), garminGitHub: gh.NewAssistantClient("", "MetrolistGroup", "Metrolist")}
+			if test.casual {
+				memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := memory.Replace("Metrolist is strictly Android only. Metrolist doesn't do login. Always use the nightly note as the latest release."); err != nil {
+					t.Fatal(err)
+				}
+				b.garminMemory = memory
+			}
 			b.garminDecisions = supportDecisionTestFunc(func(ctx context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
 				r.Draft, _ = request.State.(map[string]any)["proposed_answer"].(string)
 				response, err := decisions.Decide(ctx, request)
@@ -163,6 +180,10 @@ func TestSupportAgentLive(t *testing.T) {
 			})
 			message := supportTestMessage(100 + i)
 			message.Content = test.messages[len(test.messages)-1].Content
+			if test.casual {
+				message.ChannelID = snowflakeID(garminBotsID)
+				message.Content = "garmin, " + message.Content
+			}
 			if test.attachment {
 				message.Attachments = []discord.Attachment{{Filename: "unread.png", URL: "https://invalid.example/not-fetched.png"}}
 			}

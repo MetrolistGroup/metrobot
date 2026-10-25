@@ -51,12 +51,19 @@ func TestSupportCompactionDoesNotWriteSharedMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := &Bot{garminMemory: memory, garminAI: &summaryGarminAI{summary: `{"summary":"Crash investigation remains unresolved","shared_memory":["Metrolist release notes use Markdown"]}`}}
+	b := &Bot{garminMemory: memory, garminAI: garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		if !strings.Contains(request.Context, "timestamps only") || strings.Contains(request.Context, "PRIVATE_PROFILE") || strings.Contains(request.Context, "current_user") {
+			t.Fatal("support compaction inherited Discord profile context")
+		}
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: `{"summary":"Crash investigation remains unresolved","shared_memory":["Metrolist release notes use Markdown"]}`}}, nil
+	})}
 	messages := make([]cmd.GarminAIMessage, garminAICompactionMessages+1)
 	for i := range messages {
 		messages[i] = cmd.GarminAIMessage{Role: "user", Content: "support detail"}
 	}
-	got := b.prepareGarminAIConversation(context.Background(), nil, supportTestMessage(101), messages)
+	m := supportTestMessage(101)
+	m.Author.Username = "PRIVATE_PROFILE"
+	got := b.prepareGarminAIConversation(context.Background(), nil, m, messages)
 	after, err := memory.Read()
 	if err != nil || after != before || len(got) >= len(messages) {
 		t.Fatal("support compaction failed or changed shared memory")
@@ -140,8 +147,9 @@ func TestSupportRewriteOnlySendsAndRetainsAcceptedAnswer(t *testing.T) {
 					t.Fatal("rewrite remained anchored to a rejected draft")
 				}
 			}
-			if request.Messages[len(request.Messages)-1].Role != "system" {
-				t.Fatal("rewrite lost evidence correction")
+			correction := request.Messages[len(request.Messages)-1]
+			if correction.Role != "system" || !strings.Contains(correction.Content, "source-verified common steps") || !strings.Contains(correction.Content, "only when the needed steps differ materially") {
+				t.Fatal("rewrite lost evidence correction or unnecessarily requires a variant")
 			}
 			answer = "Please paste the exact error."
 		}
