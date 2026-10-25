@@ -278,7 +278,7 @@ func TestSendGarminAppSupportReplyPreservesLongAnswerAsAttachment(t *testing.T) 
 	session.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: session.Rest.HTTPClient().Transport, target: server.URL}
 	bot := &Bot{Logger: zap.NewNop()}
 	message := &discord.Message{ID: snowflakeID("100000000000000023"), ChannelID: snowflakeID(garminAppSupportID)}
-	if reply, _ := bot.sendGarminAppSupportReply(session, message, content, ""); reply == nil {
+	if reply, _ := bot.sendGarminAppSupportReply(session, message, content, "", nil); reply == nil {
 		t.Fatal("long app support answer was not sent")
 	}
 	if !strings.Contains(requestBody, "app-support-note.md") || !strings.Contains(requestBody, content) {

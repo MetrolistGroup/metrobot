@@ -14,6 +14,7 @@ import (
 
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/db"
+	"github.com/MetrolistGroup/metrobot/internal/notefmt"
 	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/rest"
@@ -33,6 +34,7 @@ var garminSkillFiles embed.FS
 type garminAIResult struct {
 	Answer           string
 	NoteName         string
+	NoteSnapshot     *notefmt.Rendered
 	Conversation     []cmd.GarminAIMessage
 	ToolCalls        int
 	Skills           map[string]struct{}
@@ -98,19 +100,20 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *bot.Client, m *discord
 		return nil, err
 	}
 	appSupport := m.ChannelID.String() == garminAppSupportID
-	var memory string
-	var err error
-	if b.garminMemory != nil {
-		memory, err = b.garminMemory.Read()
+	systemPrompt := garminAppSupportSystemPrompt
+	if !appSupport {
+		var memory string
+		var err error
+		if b.garminMemory != nil {
+			memory, err = b.garminMemory.Read()
+			if err != nil {
+				return nil, err
+			}
+		}
+		systemPrompt, err = b.garminSystemPromptWithMemory(memory)
 		if err != nil {
 			return nil, err
 		}
-	}
-	systemPrompt, err := b.garminSystemPromptWithMemory(memory)
-	if err != nil {
-		return nil, err
-	}
-	if !appSupport {
 		systemPrompt += `
 
 Runtime conversation and retrieval guidance:
@@ -152,11 +155,14 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 		discordContext += "\n\nThis is an unprefixed message during an active Metrobot conversation. Default to do_not_respond: most ambient channel messages are not for you. Never answer merely because Metrobot is mentioned in the third person. Short reactions or commentary get at most react_to_message. Send text only for a direct follow-up question or clear direct address to you."
 	}
 	if appSupport {
-		discordContext += "\n\nYou are the dedicated Metrolist app-support agent. Use only an exact saved note, a verified answer in the loaded support skill, or an official issue explicitly marked completed. Use list_notes before get_note when a note may apply. Ignore staff coordination, chatter, and unsupported requests instead of replying about the channel or missing information."
+		discordContext += "\n\nYou are the dedicated Metrolist app-support agent. Follow the support evidence rules, including their limits on issue searches and release claims."
+		if len(m.Attachments) > 0 {
+			discordContext += fmt.Sprintf("\nThe current message has %d attachment(s). Their contents are unknown unless explicitly included as image/file parts in this request. Do not infer their contents or say the message was cut off.", len(m.Attachments))
+		}
 	}
 	tools := garminToolsForConversation(messages, isGarminOwner(m.Author.ID.String()), ambient)
 	if appSupport {
-		tools = onlyGarminTools(garminAITools, "do_not_respond", "list_notes", "get_note", "search_metrolist_issues")
+		tools = onlyGarminTools(garminAITools, "do_not_respond", "list_notes", "get_note", "search_metrolist_issues", "get_metrolist_status")
 	}
 	if skillName != "" {
 		tools = withoutGarminTools(tools, "load_skill")
@@ -282,6 +288,7 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 			}
 		}
 	}
+	supportDraftRetried := false
 	for round := range garminAIMaxToolRounds {
 		if !b.garminMessageVisible(m.ChannelID.String(), m.ID.String()) {
 			result.Silent = true
@@ -410,8 +417,23 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 					answer = "i couldn't confirm your current channel-history access, so i can't share that summary."
 				}
 			}
-			result.Answer = answer
 			result.Conversation = conversation
+			if appSupport {
+				grounded, err := b.supportAnswerGrounded(ctx, m, messages, conversation, answer)
+				if err != nil {
+					return nil, err
+				}
+				if !grounded {
+					if !supportDraftRetried && round+1 < garminAIMaxToolRounds {
+						supportDraftRetried = true
+						conversation = append(conversation, cmd.GarminAIMessage{Role: "system", Content: "Your draft failed the support evidence check and was not sent. Rewrite once, in at most 60 words, using only directly supported facts or one relevant missing detail. Remove speculative causes, fixes, menu paths, unrelated reports and claims based on earlier assistant replies. For release questions, give the returned latest_release tag and link, and explain only that nightly is in development and not a guaranteed improvement. Do not mention this check."})
+						continue
+					}
+					result.Silent = true
+					return result, nil
+				}
+			}
+			result.Answer = answer
 			return result, nil
 		}
 
@@ -481,9 +503,26 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 			if appSupport && toolCall.Function.Name == "get_note" && garminToolResultError(output) == "" {
 				var args garminToolArgs
 				if json.Unmarshal([]byte(toolCall.Function.Arguments), &args) == nil {
+					note, err := b.Notes.GetNoteDocument(args.Name)
+					if err != nil {
+						return nil, err
+					}
+					rendered := note.Render()
+					output = rendered.Text
+					// Check the full snapshot; oversized Decisions requests fail closed.
+					conversation[len(conversation)-1].Content = output
+					result.Conversation = conversation
+					grounded, err := b.supportAnswerGrounded(ctx, m, messages, conversation, output)
+					if err != nil {
+						return nil, err
+					}
+					if !grounded {
+						result.Silent = true
+						return result, nil
+					}
 					result.Answer = output
 					result.NoteName = strings.ToLower(strings.TrimSpace(args.Name))
-					result.Conversation = conversation
+					result.NoteSnapshot = &rendered
 					return result, nil
 				}
 			}

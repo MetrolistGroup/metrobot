@@ -100,6 +100,9 @@ func supportTestMessage(id int) *discord.Message {
 }
 
 func supportTestDecision(request cmd.DecisionRequest, choice string, shouldAnswer, top float64) *cmd.DecisionResponse {
+	if _, ok := request.Questions["grounded"]; ok {
+		return &cmd.DecisionResponse{Answers: map[string]cmd.DecisionAnswer{"grounded": {Type: "noul", Noul: &shouldAnswer}}}
+	}
 	options := request.Questions["route"].Criteria
 	for id, criterion := range options {
 		if strings.HasPrefix(criterion, "Saved note "+choice+":") {
@@ -525,7 +528,9 @@ func TestSupportDecisionAgentFailedHandoffCanRetry(t *testing.T) {
 			b, client, sent := newSupportDecisionTestBot(t)
 			decisionCalls := 0
 			b.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
-				decisionCalls++
+				if _, routing := request.Questions["route"]; routing {
+					decisionCalls++
+				}
 				return supportTestDecision(request, "agent", .99, .99), nil
 			})
 			failed := true

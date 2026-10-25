@@ -57,7 +57,7 @@ func TestAuthoredLayoutDeliveryPathsAndRawReads(t *testing.T) {
 			if err != nil || strings.Contains(readable, "components-v2") || !strings.Contains(readable, "Open: https://example.com") {
 				t.Fatalf("AI/Telegram fallback = %q, %v", readable, err)
 			}
-			if reply, _ := b.sendGarminAppSupportReply(client, &discord.Message{ID: 23, ChannelID: 5}, readable, longName); reply == nil {
+			if reply, _ := b.sendGarminAppSupportReply(client, &discord.Message{ID: 23, ChannelID: 5}, readable, longName, nil); reply == nil {
 				t.Fatal("support delivery failed")
 			}
 		default:

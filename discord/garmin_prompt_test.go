@@ -183,7 +183,7 @@ func TestBasePromptOverrideDoesNotChangeSecondaryPrompts(t *testing.T) {
 	for i := range messages {
 		messages[i] = cmd.GarminAIMessage{Role: "user", Content: "hello"}
 	}
-	if _, err := b.compactGarminAIConversation(context.Background(), messages, "context"); err != nil {
+	if _, err := b.compactGarminAIConversation(context.Background(), messages, "context", true); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(prompts, []string{garminAppSupportTriagePrompt, garminAIConversationSummaryPrompt}) {

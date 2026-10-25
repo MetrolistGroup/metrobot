@@ -390,7 +390,7 @@ func TestGarminAmbientHasOptionalRetrievalAndSupportDoesNot(t *testing.T) {
 		}
 		b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 			if support {
-				if got, want := garminToolNames(request.Tools), []string{"do_not_respond", "search_metrolist_issues", "list_notes", "get_note"}; !reflect.DeepEqual(got, want) {
+				if got, want := garminToolNames(request.Tools), []string{"do_not_respond", "get_metrolist_status", "search_metrolist_issues", "list_notes", "get_note"}; !reflect.DeepEqual(got, want) {
 					t.Fatalf("support tool scope expanded: %v", got)
 				}
 			} else if !garminToolAvailable(request.Tools, "search_web") || !garminToolAvailable(request.Tools, "read_channel_history") {

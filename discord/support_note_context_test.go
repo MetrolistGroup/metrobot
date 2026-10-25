@@ -35,7 +35,7 @@ func TestSupportContextRecordsDeliveredRandomizedNote(t *testing.T) {
 	b := &Bot{DB: database, Notes: notes, Logger: zap.NewNop()}
 	original := []cmd.GarminAIMessage{{Role: "user", Content: "tips?"}, {Role: "assistant", Content: "earlier rendition"}}
 	m := &discord.Message{ID: 23, ChannelID: 5, Author: discord.User{ID: 42}}
-	if b.sendGarminAppSupportReplyAndRememberIfVisible(client, m, "earlier rendition", original, "tips") == nil {
+	if b.sendGarminAppSupportReplyAndRememberIfVisible(client, m, "earlier rendition", original, "tips", nil) == nil {
 		t.Fatal("send failed")
 	}
 	sent := <-requests

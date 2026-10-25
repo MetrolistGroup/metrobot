@@ -1,7 +1,7 @@
 # Persisted Garmin base system prompt
 
 Garmin reads its base instructions from the SQLite setting
-`garmin_base_system_prompt` for each new agent request. Stored overrides survive
+`garmin_base_system_prompt` for each new general-chat agent request. Stored overrides survive
 restarts. The bot has no command, HTTP editor or web interface to replace or reset
 the base prompt.
 
@@ -15,9 +15,10 @@ Back up the database to preserve an override.
 
 ## Scope
 
-The override replaces the whole base used by `runGarminAIWithMode`, including the
-support agent after handoff. It does not edit the separate silent app-support
-triage or conversation summarization prompts. Runtime API model identity is still
+The override replaces the general-chat base used by `runGarminAIWithMode`.
+App-support uses separate evidence-focused instructions and does not load this
+override or shared memory. Neither silent app-support triage nor conversation
+summarization uses the override. Runtime API model identity is still
 appended by the model client. The bot appends shared memory as lower-priority data,
 never instructions. Discord context, loaded skills, tool selection and
 code-enforced authorization are unchanged. Prompt text cannot grant tool access

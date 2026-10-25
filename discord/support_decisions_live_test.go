@@ -67,10 +67,11 @@ func TestSupportDecisionsLive(t *testing.T) {
 		}
 	}
 	var cases []struct {
-		ID       string   `json:"id"`
-		Message  string   `json:"message"`
-		Parent   string   `json:"parent,omitempty"`
-		Expected []string `json:"expected"`
+		ID           string                `json:"id"`
+		Message      string                `json:"message"`
+		Parent       string                `json:"parent,omitempty"`
+		Expected     []string              `json:"expected"`
+		Conversation []supportDecisionTurn `json:"conversation,omitempty"`
 	}
 	read(os.Getenv("METROBOT_DECISIONS_LIVE_CASES"), &cases)
 	if len(cases) == 0 || len(cases) > 500 {
@@ -98,7 +99,12 @@ func TestSupportDecisionsLive(t *testing.T) {
 			m.ReferencedMessage = supportTestMessage(99)
 			m.ReferencedMessage.Content = c.Parent
 		}
-		request, catalog, err := b.supportDecisionRequest(m, []cmd.GarminAIMessage{{Role: "user", Content: c.Message}})
+		var messages []cmd.GarminAIMessage
+		for _, turn := range c.Conversation {
+			messages = append(messages, cmd.GarminAIMessage{Role: turn.Role, Content: turn.Content})
+		}
+		messages = append(messages, cmd.GarminAIMessage{Role: "user", Content: c.Message})
+		request, catalog, err := b.supportDecisionRequest(m, messages)
 		if err != nil {
 			t.Fatal(err)
 		}

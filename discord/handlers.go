@@ -205,10 +205,7 @@ func (b *Bot) onMessageCreate(s *bot.Client, m *discord.Message) {
 	matches := chatModPattern.FindStringSubmatch(content)
 	if matches == nil {
 		if m.ChannelID.String() == garminAppSupportID {
-			messages := []cmd.GarminAIMessage{b.garminAIUserMessage(m, content)}
-			if continuation, ok := b.garminAIContinuation(m, content); ok {
-				messages = continuation
-			}
+			messages := b.garminAITriggeredConversation(m, content)
 			go b.handleGarminAutomaticAppSupport(s, m, messages)
 			return
 		}

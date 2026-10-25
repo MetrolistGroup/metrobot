@@ -59,6 +59,7 @@ func (b *Bot) handleGarminAI(s *bot.Client, m *discord.Message, messages []cmd.G
 }
 
 func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages []cmd.GarminAIMessage, ambient bool, ambientToken uint64) {
+	supportCompleted := false
 	if !b.garminMessageVisible(m.ChannelID.String(), m.ID.String()) {
 		return
 	}
@@ -78,6 +79,13 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 		}
 		b.sendGarminReply(s, m, "Metrobot AI isn't configured right now.")
 		return
+	}
+	if m.ChannelID.String() == garminAppSupportID && b.garminDecisions != nil {
+		if !b.beginSupportDecision(m) {
+			return
+		}
+		// The claim outlives request unregistration, so duplicate events cannot replace it.
+		defer func() { b.endSupportDecision(m, supportCompleted) }()
 	}
 	if !ambient && !b.waitForGarminAICooldown(m.Author.ID.String()) {
 		b.sendGarminReply(s, m, "i'm still rate limited, try again in a sec.")
@@ -112,13 +120,14 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 	}
 	if err != nil {
 		b.Logger.Error("Metrobot AI request failed", zap.String("user", m.Author.ID.String()), zap.Error(err))
-		if ambient {
+		if ambient || (m.ChannelID.String() == garminAppSupportID && b.garminDecisions != nil) {
 			return
 		}
 		b.sendGarminReply(s, m, "I couldn't answer that right now. Try again in a moment.")
 		return
 	}
 	if result.Silent {
+		supportCompleted = true
 		if result.Interacted {
 			if ambient {
 				b.rememberGarminAmbientUserContext(m, messages, ambientToken)
@@ -140,7 +149,7 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 	}
 	if m.ChannelID.String() == garminAppSupportID {
 		conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: result.Answer, Timestamp: time.Now().UTC()})
-		b.sendGarminAppSupportReplyAndRememberIfVisible(s, m, result.Answer, conversation, result.NoteName)
+		supportCompleted = b.sendGarminAppSupportReplyAndRememberIfVisible(s, m, result.Answer, conversation, result.NoteName, result.NoteSnapshot) != nil
 		return
 	}
 	result.Answer = enforceGarminChannelReply(garminRedirectChannelID(s, m.ChannelID.String()), result.Answer, garminUserText(messages))
@@ -536,7 +545,7 @@ func (b *Bot) prepareGarminAIConversation(ctx context.Context, s *bot.Client, m 
 	}
 	ctx, cancel := context.WithTimeout(ctx, garminAICompactionTimeout)
 	defer cancel()
-	compacted, err := b.compactGarminAIConversation(ctx, messages, b.garminDiscordContextForConversation(s, m, messages))
+	compacted, err := b.compactGarminAIConversation(ctx, messages, b.garminDiscordContextForConversation(s, m, messages), m.ChannelID.String() != garminAppSupportID)
 	if err != nil {
 		b.Logger.Warn("failed to compact Metrobot AI conversation")
 		return boundGarminAIConversation(messages)
@@ -544,7 +553,7 @@ func (b *Bot) prepareGarminAIConversation(ctx context.Context, s *bot.Client, m 
 	return compacted
 }
 
-func (b *Bot) compactGarminAIConversation(ctx context.Context, messages []cmd.GarminAIMessage, discordContext string) ([]cmd.GarminAIMessage, error) {
+func (b *Bot) compactGarminAIConversation(ctx context.Context, messages []cmd.GarminAIMessage, discordContext string, learnSharedMemory bool) ([]cmd.GarminAIMessage, error) {
 	start := 0
 	if len(messages) > 0 && messages[0].Name == garminAIConversationSummaryName {
 		start = 1
@@ -584,7 +593,7 @@ func (b *Bot) compactGarminAIConversation(ctx context.Context, messages []cmd.Ga
 	if summary == "" {
 		return nil, fmt.Errorf("conversation compaction returned no summary")
 	}
-	if len(sharedMemory) > 0 && b.garminMemory != nil && ctx.Err() == nil {
+	if learnSharedMemory && len(sharedMemory) > 0 && b.garminMemory != nil && ctx.Err() == nil {
 		if err := b.garminMemory.AppendLearned(sharedMemory); err != nil && b.Logger != nil {
 			b.Logger.Warn("failed to save learned Metrobot memory", zap.Error(err))
 		}
