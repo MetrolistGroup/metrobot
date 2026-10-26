@@ -35,3 +35,10 @@ disabled and is used when AI is enabled again.
 
 Prompt text is sent to the configured AI provider during inference. Do not put
 passwords, tokens or other secrets in it.
+
+## Conversation and shared memory
+
+Conversation history and its compacted summaries stay in RAM, with expiry and
+intentional clearing on restart or context reset. Summarization does not write
+inferred facts into shared memory. Existing shared-memory contents are preserved;
+updates through the agent require an explicit authorized owner request.

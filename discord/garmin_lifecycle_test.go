@@ -67,7 +67,7 @@ func TestGarminLifecycleCompactionRejectsMalformedAndEmptySummaries(t *testing.T
 			}
 		})
 	}
-	if summary, _ := parseGarminAICompaction("```json\n{\"summary\":\"valid summary\",\"shared_memory\":[]}\n```"); summary != "valid summary" {
+	if summary := parseGarminAICompaction("```json\n{\"summary\":\"valid summary\",\"shared_memory\":[]}\n```"); summary != "valid summary" {
 		t.Fatalf("valid fenced summary rejected: %q", summary)
 	}
 }
@@ -118,7 +118,7 @@ func TestGarminLifecycleCompactionCancellationAndContext(t *testing.T) {
 		cancel()
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: `{"summary":"late summary","shared_memory":[]}`}}, nil
 	}))
-	got, err := b.compactGarminAIConversation(ctx, messages, "", false)
+	got, err := b.compactGarminAIConversation(ctx, messages, "")
 	if !errors.Is(err, context.Canceled) || got != nil || messages[1].Reasoning == "" {
 		t.Fatalf("late compaction accepted or input mutated: %#v, %v", got, err)
 	}

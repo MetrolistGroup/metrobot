@@ -99,7 +99,7 @@ func TestGarminAIConversationCompactsEveryTwentyMessages(t *testing.T) {
 	}
 	messages = append(messages, cmd.GarminAIMessage{Role: "user", Name: "discord_100000000000000027", Content: "continue"})
 
-	got, err := bot.compactGarminAIConversation(context.Background(), messages, `{"tracked_conversation_users":[]}`, true)
+	got, err := bot.compactGarminAIConversation(context.Background(), messages, `{"tracked_conversation_users":[]}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,13 +122,13 @@ func TestGarminAIConversationCompactsEveryTwentyMessages(t *testing.T) {
 	model.summary = "merged summary"
 	secondCycle := append(copyGarminAIMessages(got[:1]), messages[:garminAICompactionMessages]...)
 	secondCycle = append(secondCycle, cmd.GarminAIMessage{Role: "user", Name: "discord_100000000000000027", Content: "next cycle"})
-	got, err = bot.compactGarminAIConversation(context.Background(), secondCycle, "context", true)
+	got, err = bot.compactGarminAIConversation(context.Background(), secondCycle, "context")
 	if err != nil || len(got) != recent+1 || got[len(got)-1].Content != "next cycle" || len(model.request.Messages) != len(secondCycle)-recent || model.request.Messages[0].Name != garminAIConversationSummaryName {
 		t.Fatalf("second compaction = %#v, request %#v, error %v", got, model.request, err)
 	}
 
 	model.request = cmd.GarminAIRequest{}
-	unchanged, err := bot.compactGarminAIConversation(context.Background(), messages[:garminAICompactionMessages], "", true)
+	unchanged, err := bot.compactGarminAIConversation(context.Background(), messages[:garminAICompactionMessages], "")
 	if err != nil || len(unchanged) != garminAICompactionMessages || len(model.request.Messages) != 0 {
 		t.Fatalf("exact boundary was compacted: %#v, %v", unchanged, err)
 	}
@@ -152,7 +152,7 @@ func TestGarminAICompactionPreservesCompleteExchanges(t *testing.T) {
 					messages = messages[:len(messages)-1]
 				}
 				model := &summaryGarminAI{summary: "earlier exchanges"}
-				got, err := (&Bot{garminAI: model}).compactGarminAIConversation(context.Background(), messages, "", true)
+				got, err := (&Bot{garminAI: model}).compactGarminAIConversation(context.Background(), messages, "")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -168,8 +168,15 @@ func TestGarminAICompactionPreservesCompleteExchanges(t *testing.T) {
 	}
 }
 
-func TestGarminAIConversationPersistsSharedMemory(t *testing.T) {
+func TestGarminAIConversationDoesNotPersistSharedMemory(t *testing.T) {
 	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := memory.Append("Owner-approved project fact"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := memory.Read()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +186,7 @@ func TestGarminAIConversationPersistsSharedMemory(t *testing.T) {
 	for index := range messages {
 		messages[index] = cmd.GarminAIMessage{Role: "user", Content: fmt.Sprintf("message %d", index)}
 	}
-	compacted, err := bot.compactGarminAIConversation(context.Background(), messages, "context", true)
+	compacted, err := bot.compactGarminAIConversation(context.Background(), messages, "context")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +194,7 @@ func TestGarminAIConversationPersistsSharedMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(compacted[0].Content, "the project decision was recorded") || !strings.Contains(learned, "Metrolist release notes use Markdown") {
+	if !strings.Contains(compacted[0].Content, "the project decision was recorded") || learned != before {
 		t.Fatalf("compacted = %#v, memory = %q", compacted, learned)
 	}
 }
@@ -320,7 +327,7 @@ func TestGarminAIStorageLeavesOldestBatchForCompactionAndStaysBounded(t *testing
 	if !reflect.DeepEqual(stored, history) {
 		t.Fatal("storage dropped details before compaction could summarize them")
 	}
-	if _, err := b.compactGarminAIConversation(context.Background(), stored, "", true); err != nil || model.request.Messages[0].Content != "detail 0" {
+	if _, err := b.compactGarminAIConversation(context.Background(), stored, ""); err != nil || model.request.Messages[0].Content != "detail 0" {
 		t.Fatalf("oldest detail missed compaction: %#v, %v", model.request, err)
 	}
 	now := time.Now()
