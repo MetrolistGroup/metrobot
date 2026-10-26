@@ -81,15 +81,23 @@ func TestRunGarminAIFetchesNanoReviewBeforeAnswering(t *testing.T) {
 		t.Fatal(err)
 	}
 	bot := &Bot{garminMemory: memory, nanoreview: nanoreview.New(database)}
+	calls := 0
 	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-		if !request.DisableReasoning || len(request.Tools) != 0 || !strings.Contains(request.Messages[len(request.Messages)-1].Content, "7300 mAh") {
+		calls++
+		if calls == 1 {
+			if !garminToolAvailable(request.Tools, "get_nanoreview_device") || len(request.Messages) != 1 {
+				t.Fatal("device tool unavailable or fetched before model choice")
+			}
+			return garminHistoryTestCall("get_nanoreview_device", `{"query":"OnePlus 15"}`), nil
+		}
+		if !request.DisableReasoning || !garminToolAvailable(request.Tools, "load_skill") || !strings.Contains(request.Messages[len(request.Messages)-1].Content, "7300 mAh") {
 			t.Fatalf("did not receive cached source before synthesis: %#v", request)
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "NanoReview lists a 7300 mAh battery."}}, nil
 	})
 	message := &discord.Message{ID: snowflakeID("1"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Content: "garmin, show NanoReview specs for OnePlus 15", Author: discord.User{ID: snowflakeID("100000000000000056")}}
 	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "show NanoReview specs for OnePlus 15"}})
-	if err != nil || result.ToolCalls != 1 || !strings.Contains(result.Answer, "7300 mAh") {
+	if err != nil || calls != 2 || result.ToolCalls != 1 || !strings.Contains(result.Answer, "7300 mAh") {
 		t.Fatalf("NanoReview run: %#v, %v", result, err)
 	}
 }
@@ -134,8 +142,11 @@ func TestGarminHardwareSourceAndSubject(t *testing.T) {
 		if got := garminHardwareQuery(messages, tc.tool); got != tc.query {
 			t.Fatalf("query for %q = %q, want %q", tc.prompt, got, tc.query)
 		}
-		if got := garminToolsForConversation(messages, false, false); !garminToolAvailable(got, tc.tool) || garminToolAvailable(got, "search_web") || garminToolAvailable(got, "get_gsmarena_phone") {
-			t.Fatalf("wrong tools for %q: %#v", tc.prompt, got)
+		tools := garminToolsForConversation(messages, false, false)
+		for _, name := range []string{tc.tool, "search_web", "get_gsmarena_phone", "get_nanoreview_device", "get_technicalcity_device", "load_skill", "load_support_guide"} {
+			if !garminToolAvailable(tools, name) {
+				t.Fatalf("discovery omitted %s for %q", name, tc.prompt)
+			}
 		}
 		messages = append(messages, cmd.GarminAIMessage{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{Function: cmd.GarminAIFunctionCall{Name: tc.tool, Arguments: `{"query":"` + tc.query + `"}`}}}}, cmd.GarminAIMessage{Role: "tool"}, cmd.GarminAIMessage{Role: "user", Content: "what about its performance?"})
 		if got := garminHardwareToolRequested(messages); got != tc.tool {

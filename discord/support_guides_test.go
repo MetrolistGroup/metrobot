@@ -15,25 +15,36 @@ func TestSupportSetupGuidesReachAgentAndEvidenceCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	messages := []cmd.GarminAIMessage{{Role: "user", Content: "How do I connect Discord?"}}
-	selected, err := loadGarminSupportAnswerSkill(messages)
+	selected, err := loadGarminSupportAnswerSkill()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"rpc", "login", "scrobbling", "playlists"} {
 		guide, err := loadGarminSupportGuide(name)
-		if err != nil || !strings.Contains(full, guide) || strings.Contains(selected, guide) != (name == "rpc") {
+		if err != nil || !strings.Contains(full, guide) || strings.Contains(selected, guide) {
 			t.Fatalf("wrong guide selection/evidence for %s: %v", name, err)
 		}
 	}
-	checked := false
+	checked, calls := false, 0
 	messages = append(messages, cmd.GarminAIMessage{Role: "assistant", Content: "Which variant?"}, cmd.GarminAIMessage{Role: "user", Content: "regular Android 13.7.0"})
 	b := &Bot{
 		garminAI: garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+			calls++
 			if !strings.Contains(request.SystemPrompt, selected) || strings.Contains(request.SystemPrompt, full) {
-				t.Fatal("agent did not receive only relevant setup context")
+				t.Fatal("agent must start with the dedicated support core only")
 			}
 			if strings.Contains(request.Context, "public search") || strings.Contains(request.Context, "PRIVATE_PROFILE") {
 				t.Fatal("support inherited unrelated web-search or personal profile context")
+			}
+			if !garminToolAvailable(request.Tools, "load_skill") || !garminToolAvailable(request.Tools, "load_support_guide") {
+				t.Fatal("dedicated support core removed static skill/guide discovery")
+			}
+			if calls == 1 {
+				return garminHistoryTestCall("load_support_guide", `{"name":"rpc"}`), nil
+			}
+			guide, _ := loadGarminSupportGuide("rpc")
+			if request.Messages[len(request.Messages)-1].Content != guide {
+				t.Fatal("model-selected guide did not reach synthesis")
 			}
 			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "Open the account menu, Integrations, then Discord. Log in and enable Rich Presence."}}, nil
 		}),
@@ -49,12 +60,12 @@ func TestSupportSetupGuidesReachAgentAndEvidenceCheck(t *testing.T) {
 	m.Content = messages[len(messages)-1].Content
 	m.Author.Username = "PRIVATE_PROFILE"
 	result, err := b.runGarminAI(context.Background(), nil, m, messages)
-	if err != nil || !checked || result.Silent {
+	if err != nil || !checked || result.Silent || calls != 2 {
 		t.Fatalf("guide-backed answer failed: %v, %+v", err, result)
 	}
 }
 
-func TestSupportCanRetrieveGuideWhenTopicHintMisses(t *testing.T) {
+func TestSupportCanRetrieveGuideWithoutTopicKeywords(t *testing.T) {
 	guide, err := loadGarminSupportGuide("rpc")
 	if err != nil {
 		t.Fatal(err)

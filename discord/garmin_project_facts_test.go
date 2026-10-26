@@ -35,15 +35,13 @@ func TestCasualChatCanCorrectLoginClaimAndRetrieveGuides(t *testing.T) {
 					t.Fatal("casual chat lost verified app facts or precedence over stale claims")
 				}
 				if calls == 1 {
-					if !garminToolAvailable(request.Tools, "load_support_guide") {
-						t.Fatal("casual follow-up cannot retrieve verified instructions")
+					if !garminToolAvailable(request.Tools, "load_support_guide") || !garminToolAvailable(request.Tools, "load_skill") {
+						t.Fatal("casual follow-up cannot discover skills or verified instructions")
 					}
-					if strings.Contains(prompt, "playlists") {
-						for _, name := range []string{"login", "playlists"} {
-							guide, _ := loadGarminSupportGuide(name)
-							if !strings.Contains(request.SystemPrompt, guide) {
-								t.Fatalf("reported setup request lacks %s guide", name)
-							}
+					for _, name := range []string{"login", "playlists"} {
+						guide, _ := loadGarminSupportGuide(name)
+						if strings.Contains(request.SystemPrompt, guide) {
+							t.Fatalf("setup wording preloaded %s guide", name)
 						}
 					}
 					return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{ToolCalls: []cmd.GarminAIToolCall{

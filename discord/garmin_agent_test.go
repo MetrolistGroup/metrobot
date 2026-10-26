@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,11 @@ import (
 	"github.com/MetrolistGroup/metrobot/config"
 	"github.com/MetrolistGroup/metrobot/db"
 	"github.com/MetrolistGroup/metrobot/firecrawl"
+	gh "github.com/MetrolistGroup/metrobot/github"
 	"github.com/MetrolistGroup/metrobot/gsmarena"
+	"github.com/MetrolistGroup/metrobot/nanoreview"
+	"github.com/MetrolistGroup/metrobot/technicalcity"
+	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/snowflake/v2"
 )
@@ -113,7 +118,7 @@ func TestRunGarminAIAmbientModeCanReplyReactOrStaySilent(t *testing.T) {
 		if !strings.Contains(request.Context, "active Metrobot conversation") {
 			t.Fatal("ambient decision instruction was not supplied")
 		}
-		if got, want := garminToolNames(request.Tools), []string{"react_to_message", "do_not_respond", "load_support_guide"}; !reflect.DeepEqual(got, want) {
+		if got, want := garminToolNames(request.Tools), []string{"do_not_respond", "calculate_math", "load_skill", "load_support_guide"}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("ambient request tools = %v, want %v", got, want)
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{ToolCalls: []cmd.GarminAIToolCall{{
@@ -133,52 +138,410 @@ func TestRunGarminAIAmbientModeCanReplyReactOrStaySilent(t *testing.T) {
 	}
 }
 
-func TestRunGarminAIAutomaticallyLoadsRelevantSkills(t *testing.T) {
-	tests := []struct {
-		name    string
-		prompt  string
-		skill   string
-		heading string
-	}{
-		{name: "support", prompt: "metrolist playback keeps stopping", skill: "support", heading: "# Metrolist support triage"},
-
-		{name: "project", prompt: "what is the latest Metrolist release?", skill: "metrolist", heading: "# Metrolist project reference"},
-
-		{name: "casual", prompt: "let's play 20 questions"},
+func garminDiscoveryTestBot(t *testing.T) *Bot {
+	t.Helper()
+	database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, test := range tests {
+	t.Cleanup(func() { database.Close() })
+	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Bot{
+		DB: database, Notes: &cmd.NotesHandler{DB: database}, garminMemory: memory,
+		Config:          &config.Config{DiscordGuildID: "100000000000000012"},
+		garminGitHub:    gh.NewAssistantClient("", "MetrolistGroup", "Metrolist"),
+		garminFirecrawl: firecrawl.NewClient([]string{"fake"}), gsmarena: gsmarena.New(database),
+		nanoreview: nanoreview.New(database), technicalCity: technicalcity.New(database),
+	}
+}
+
+func TestRunGarminAIDiscoversAllAuthorizedToolsWithoutKeywords(t *testing.T) {
+	original := http.DefaultTransport
+	http.DefaultTransport = garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		t.Fatalf("discovery forced an unrelated lookup: %s", request.URL)
+		return nil, nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = original })
+	b := garminDiscoveryTestBot(t)
+	session := garminHistoryTestSession(t, func(*http.Request) (string, error) {
+		t.Fatal("discovery fetched history")
+		return "[]", nil
+	})
+	for _, prompt := range []string{"hey", "yes it does", "and?", "let's play 20 questions", "metrolist playback keeps stopping", "what is the latest Metrolist release?", "who owns NanoReview?", "the GSMArena website is interesting", "the GitHub user interface is interesting", "the GitHub projects interface is interesting", "we are planning offline music projects"} {
+		t.Run(prompt, func(t *testing.T) {
+			b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+				want := garminToolNames(withoutGarminTools(garminAITools, "remember", "do_not_respond"))
+				if got := garminToolNames(request.Tools); !reflect.DeepEqual(got, want) {
+					t.Fatalf("keyword-free discovery = %v, want %v", got, want)
+				}
+				if strings.Count(request.SystemPrompt, "# Metrolist project reference") != 1 || strings.Contains(request.SystemPrompt, "# Metrolist support triage") {
+					t.Fatal("normal chat must retain only its always-on project reference")
+				}
+				for _, name := range []string{"rpc", "login", "scrobbling", "playlists"} {
+					guide, _ := loadGarminSupportGuide(name)
+					if strings.Contains(request.SystemPrompt, guide) {
+						t.Fatalf("keyword-preloaded %s guide", name)
+					}
+				}
+				for _, forced := range []string{"Call one of the supplied repository tools", "calculator tool before answering", "source tool before answering", "GSMArena tool before answering"} {
+					if strings.Contains(request.Context, forced) {
+						t.Fatalf("availability forced unrelated routing: %s", forced)
+					}
+				}
+				if len(request.Messages) != 1 {
+					t.Fatal("discovery ran a preflight")
+				}
+				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "answer"}}, nil
+			})
+			message := garminHistoryTestMessage()
+			message.Content = "garmin, " + prompt
+			result, err := b.runGarminAI(context.Background(), session, message, []cmd.GarminAIMessage{{Role: "user", Content: prompt}})
+			if err != nil || result.Answer != "answer" || result.ToolCalls != 0 || len(result.Skills) != 0 {
+				t.Fatalf("discovery result=%+v, error=%v", result, err)
+			}
+		})
+	}
+}
+
+func TestGarminPublicLookupsRejectSensitiveInputs(t *testing.T) {
+	original := http.DefaultTransport
+	http.DefaultTransport = garminRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("sensitive input reached a public lookup")
+		return nil, nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = original })
+	b := garminDiscoveryTestBot(t)
+	for _, test := range []struct{ request, query string }{
+		{"login fails; token=private-canary", "private-canary"},
+		{"login fails; password: private-canary", "login failure"},
+		{"login fails; refresh_token is private-canary", "login failure"},
+		{"My password hunter2 stopped working", "password hunter2"},
+		{"my password private-canary stopped working", "password private-canary"},
+		{"my password private-canary stopped working", "login failure"},
+		{"my API key private-canary stopped working", "login failure"},
+		{"my refresh token private-canary stopped working", "login failure"},
+		{"my client_secret private-canary stopped working", "login failure"},
+		{"my passphrase private-canary stopped working", "login failure"},
+		{"my cookie private-canary stopped working", "login failure"},
+		{"my credentials private-canary stopped working", "login failure"},
+		{"my session key private-canary stopped working", "login failure"},
+		{"my password swordfish stopped working", "login failure"},
+		{"my password, swordfish, stopped working", "login help"},
+		{"my API key;swordfish stopped working", "login help"},
+		{"my client secret/swordfish stopped working", "login help"},
+		{"my refresh token(swordfish) stopped working", "login help"},
+		{"my access token-swordfish stopped working", "login help"},
+		{"my id token.swordfish stopped working", "login help"},
+		{"my session key|swordfish stopped working", "login help"},
+		{"my passwd:swordfish stopped working", "login help"},
+		{"my passphrase!swordfish stopped working", "login help"},
+		{"login fails", "password,swordfish"},
+		{"login fails", "api%20key%2Cswordfish"},
+		{"password swordfish stopped working", "password swordfish"},
+		{"login help; Bearer swordfish", "login help"},
+		{"login help bearer swordfish", "bearer swordfish"},
+		{"ring bearer duties", "ring bearer duties"}, // Ambiguous Bearer labels also fail closed.
+		{"my cookie, swordfish", "login help"},
+		{"my secret swordfish", "login help"},
+		{"my-secret swordfish", "my-secret swordfish"},
+		{"my_secret swordfish", "my_secret swordfish"},
+		{"my.secret swordfish", "login help"},
+		{"my\u200bsecret swordfish", "login help"},
+		{"MY_APP_SECRET=swordfish", "login help"},
+		{"My Secret Santa gift ideas", "gift ideas"}, // Possessive credential labels fail closed too.
+		{"api key orchid stopped working", "api key orchid"},
+		{"access token violet stopped working", "access token violet"},
+		{"password reset instructions", "password reset instructions"}, // Ambiguous label/value forms fail closed.
+		{"my API key swordfish stopped working", "login failure"},
+		{"login fails", "password private-canary"},
+		{"login fails", "password%20private-canary"},
+		{"login fails", "password hunter2"},
+		{"login fails", "password%20hunter2"},
+		{"login fails", `password "swordfish"`},
+		{"login fails", "Bearer tiny"},
+		{"login fails", "Authorization Bearer tiny"},
+		{"login fails", "Bearer hunter2"},
+		{"login fails", `Bearer "tiny"`},
+		{"login fails", "Basic dXNlcjpwYXNz"},
+		{"login fails", "Basic dTo="},
+		{"login fails", "Basic dTo"},
+		{"login fails", `Basic "dXNlcjpwYXNz"`},
+		{"login fails; my email is person@example.test", "login failure"},
+		{"login fails", "Authorization: Bearer private-canary"},
+		{"login fails", "https://example.test/callback?code=private-canary"},
+		{"login fails", "token%3Dprivate-canary"},
+	} {
+		for _, name := range []string{"search_web", "search_metrolist_issues", "search_github_repositories", "get_github_user", "get_github_repository", "get_github_commits", "get_github_file", "get_gsmarena_phone", "get_nanoreview_device", "get_technicalcity_device"} {
+			t.Run(name+"/"+test.request+"/"+test.query, func(t *testing.T) {
+				message := garminHistoryTestMessage()
+				message.Content = "garmin, " + test.request
+				call := garminHistoryTestCall(name, mustJSON(map[string]string{
+					"query": test.query, "username": test.query, "repository": "public/" + test.query, "path": test.query,
+				})).Message.ToolCalls[0]
+				output, _, _ := b.executeGarminAITool(context.Background(), nil, message, call)
+				if !strings.Contains(garminToolResultError(output), "non-sensitive public subject") || strings.Contains(output, "private-canary") {
+					t.Fatalf("public lookup was not safely rejected: %s", output)
+				}
+			})
+		}
+	}
+	for _, explicit := range []bool{false, true} {
+		message := garminHistoryTestMessage()
+		prompt := "login fails; token=private-canary"
+		if explicit {
+			prompt = "search the web for " + prompt
+		}
+		message.Content = "garmin, " + prompt
+		b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+			if explicit {
+				t.Fatal("credential-bearing explicit search was not rejected before synthesis")
+			}
+			if !garminToolAvailable(request.Tools, "search_web") {
+				t.Fatal("safety validation must not restore keyword discovery gating")
+			}
+			return garminHistoryTestCall("search_web", `{"query":"private-canary"}`), nil
+		})
+		result, err := b.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: prompt}})
+		if err != nil || result.Answer != "web search failed just now." {
+			t.Fatalf("sensitive search result=%+v, error=%v", result, err)
+		}
+	}
+}
+
+func TestGarminOrdinaryCredentialReportCannotReachGitHub(t *testing.T) {
+	original := http.DefaultTransport
+	http.DefaultTransport = garminRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("an ordinary credential report reached GitHub")
+		return nil, nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = original })
+	b := garminDiscoveryTestBot(t)
+	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		if !garminToolAvailable(request.Tools, "search_metrolist_issues") {
+			t.Fatal("credential safety must not keyword-gate discovery")
+		}
+		return garminHistoryTestCall("search_metrolist_issues", `{"query":"password hunter2"}`), nil
+	})
+	message := garminHistoryTestMessage()
+	message.Content = "garmin, My password hunter2 stopped working"
+	result, err := b.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "My password hunter2 stopped working"}})
+	if err != nil || result.ToolCalls != 1 || result.Answer != "github lookup failed just now." {
+		t.Fatalf("credential report was not safely rejected: result=%+v, error=%v", result, err)
+	}
+	if output := result.Conversation[len(result.Conversation)-1].Content; !strings.Contains(garminToolResultError(output), "non-sensitive public subject") || strings.Contains(output, "hunter2") {
+		t.Fatalf("credential rejection lost its safe tool error: %s", output)
+	}
+}
+
+func TestGarminOrdinaryPublicSubjectsRemainSearchable(t *testing.T) {
+	for _, subject := range []string{"Secret Santa gift ideas", "Secret Garden book reviews", "basic arithmetic examples", "basic authentication documentation", "cookie recipes", "token ring networks"} {
+		t.Run(subject, func(t *testing.T) {
+			prompt := "search the web for " + subject
+			searches := 0
+			original := http.DefaultTransport
+			http.DefaultTransport = garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+				var args garminToolArgs
+				if err := json.NewDecoder(request.Body).Decode(&args); err != nil || args.Query != prompt {
+					t.Fatalf("unexpected public query: %q, error=%v", args.Query, err)
+				}
+				searches++
+				body := `{"success":true,"data":{"web":[{"url":"https://example.org/source","markdown":"Public subject evidence"}]}}`
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+			})
+			t.Cleanup(func() { http.DefaultTransport = original })
+			b := garminDiscoveryTestBot(t)
+			b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+				if !strings.Contains(request.Messages[len(request.Messages)-1].Content, "Public subject evidence") {
+					t.Fatal("ordinary subject lost its public lookup evidence")
+				}
+				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "A sourced public answer."}}, nil
+			})
+			message := garminHistoryTestMessage()
+			message.Content = "garmin, " + prompt
+			result, err := b.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: prompt}})
+			if err != nil || searches != 1 || result.ToolCalls != 1 || result.Answer != "A sourced public answer." {
+				t.Fatalf("ordinary subject was rejected: result=%+v, searches=%d, error=%v", result, searches, err)
+			}
+		})
+	}
+}
+
+func TestGarminPublicLookupAllowsSafeGitHubForms(t *testing.T) {
+	for _, test := range []struct {
+		name, tool, source string
+		args               garminToolArgs
+		want               bool
+	}{
+		{"open issues", "search_metrolist_issues", "find open issues about playback", garminToolArgs{Query: "playback is:open"}, true},
+		{"closed issues", "search_metrolist_issues", "find closed playback issues", garminToolArgs{Query: "is:closed playback"}, true},
+		{"language qualifier", "search_github_repositories", "find Kotlin music repositories", garminToolArgs{Query: "music language:kotlin"}, true},
+		{"account qualifier", "search_github_repositories", "find music repositories from example", garminToolArgs{Query: "music user:example"}, true},
+		{"quoted label", "search_metrolist_issues", "find issues about playback failure", garminToolArgs{Query: `label:"playback failure" is:open`}, true},
+		{"unclosed quote", "search_metrolist_issues", "find issues about playback failure", garminToolArgs{Query: `label:"playback failure is:open`}, false},
+		{"private subject", "search_metrolist_issues", "yes", garminToolArgs{Query: "annex meeting is:open"}, false},
+		{"appended private subject", "search_metrolist_issues", "find open playback issues", garminToolArgs{Query: "playback is:open annex"}, false},
+		{"private account", "search_metrolist_issues", "find open playback issues", garminToolArgs{Query: "playback author:hidden-person is:open"}, false},
+		{"unknown qualifier", "search_metrolist_issues", "find open playback issues", garminToolArgs{Query: "playback hidden-person:open"}, false},
+		{"empty qualifier value", "search_metrolist_issues", "find open playback issues", garminToolArgs{Query: "playback author:"}, false},
+		{"web remains literal", "search_web", "find open issues about playback", garminToolArgs{Query: "playback is:open"}, false},
+		{"README shorthand", "get_github_file", "Read the README in owner/repo", garminToolArgs{Repository: "owner/repo", Path: "README.md"}, true},
+		{"unknown file", "get_github_file", "Read the README in owner/repo", garminToolArgs{Repository: "owner/repo", Path: ".env"}, false},
+		{"unknown subdirectory", "get_github_file", "Read the README in owner/repo", garminToolArgs{Repository: "owner/repo", Path: "hidden/README.md"}, false},
+		{"unknown repository", "get_github_file", "Read the README in owner/repo", garminToolArgs{Repository: "hidden/repo", Path: "README.md"}, false},
+		{"unknown ref", "get_github_file", "Read the README in owner/repo", garminToolArgs{Repository: "owner/repo", Path: "README.md", Ref: "hidden-branch"}, false},
+	} {
 		t.Run(test.name, func(t *testing.T) {
-			memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
+			if got := garminPublicLookupArgumentsAllowed(test.tool, test.args, []string{test.source}); got != test.want {
+				t.Fatalf("authorized=%v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestRunGarminAIDerivedGitHubArgumentsReachLookup(t *testing.T) {
+	for _, test := range []struct{ prompt, tool, args, evidence string }{
+		{"find open issues about playback", "search_metrolist_issues", `{"query":"playback is:open"}`, "Playback issue"},
+		{"Read the README in owner/repo", "get_github_file", `{"repository":"owner/repo","path":"README.md"}`, "# README"},
+	} {
+		t.Run(test.tool, func(t *testing.T) {
+			requests := 0
+			original := http.DefaultTransport
+			http.DefaultTransport = garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+				requests++
+				var body string
+				switch request.URL.Path {
+				case "/search/issues":
+					if !strings.Contains(request.URL.Query().Get("q"), "playback is:open") {
+						t.Fatal("validated GitHub qualifier was removed from the actual lookup")
+					}
+					body = `{"items":[{"title":"Playback issue","repository_url":"https://api.github.com/repos/MetrolistGroup/Metrolist"}]}`
+				case "/repos/MetrolistGroup/Metrolist", "/repos/owner/repo":
+					body = mustJSON(map[string]any{"full_name": strings.TrimPrefix(request.URL.Path, "/repos/"), "private": false})
+				case "/repos/owner/repo/contents/README.md":
+					body = `{"type":"file","name":"README.md","encoding":"base64","content":"IyBSRUFETUU="}`
+				default:
+					t.Fatalf("unexpected public lookup: %s", request.URL)
+				}
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+			})
+			t.Cleanup(func() { http.DefaultTransport = original })
+			b := garminDiscoveryTestBot(t)
+			calls := 0
+			b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+				calls++
+				if calls == 1 {
+					return garminHistoryTestCall(test.tool, test.args), nil
+				}
+				last := request.Messages[len(request.Messages)-1]
+				if garminToolResultError(last.Content) != "" || !strings.Contains(last.Content, test.evidence) {
+					t.Fatalf("derived lookup was rejected or lost its evidence: %s", last.Content)
+				}
+				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "Found the requested source."}}, nil
+			})
+			message := garminHistoryTestMessage()
+			message.Content = "garmin, " + test.prompt
+			messages := []cmd.GarminAIMessage{{Role: "assistant", Content: "private annex meeting notes"}, {Role: "user", Content: test.prompt}}
+			result, err := b.runGarminAI(context.Background(), nil, message, messages)
+			if err != nil || calls != 2 || requests == 0 || result.ToolCalls != 1 || result.Answer != "Found the requested source." {
+				t.Fatalf("derived lookup failed: result=%+v, requests=%d, error=%v", result, requests, err)
+			}
+		})
+	}
+}
+
+func TestRunGarminAIDeviceSpecificationsRequireSourceEvidence(t *testing.T) {
+	original := http.DefaultTransport
+	http.DefaultTransport = garminRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("device discovery must not prefetch")
+		return nil, nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = original })
+	for _, available := range []bool{false, true} {
+		for _, test := range []struct{ prompt, tool string }{
+			{"what are the Redmi 6A specs?", "get_gsmarena_phone"},
+			{"show me the GSMArena page for Pixel 10", "get_gsmarena_phone"},
+			{"show NanoReview specs for OnePlus 15", "get_nanoreview_device"},
+			{"how much VRAM does RTX 5090 have?", "get_technicalcity_device"},
+			{"compare RTX 4090 and RX 7900", "get_technicalcity_device"},
+			{"compare Snapdragon 8 Elite and Dimensity 9400", "get_nanoreview_device"},
+		} {
+			t.Run(strconv.FormatBool(available)+"/"+test.tool, func(t *testing.T) {
+				b := &Bot{}
+				if available {
+					b = garminDiscoveryTestBot(t)
+				}
+				calls := 0
+				b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+					calls++
+					if calls == 1 && len(request.Messages) != 1 {
+						t.Fatal("device data was fetched before model tool choice")
+					}
+					if garminToolAvailable(request.Tools, test.tool) != available {
+						t.Fatal("device source availability did not match the configured service")
+					}
+					return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "INVENTED_SPEC: this device has 999 GB of memory."}}, nil
+				})
+				message := garminHistoryTestMessage()
+				message.Content = "garmin, " + test.prompt
+				result, err := b.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: test.prompt}})
+				if err != nil || result.Answer != "i couldn't verify those device specifications from a source." || result.ToolCalls != 0 {
+					t.Fatalf("unsourced device answer accepted: result=%+v, error=%v", result, err)
+				}
+				for _, turn := range result.Conversation {
+					if strings.Contains(turn.Content, "INVENTED_SPEC") {
+						t.Fatal("rejected device draft survived in the conversation")
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestRunGarminAILoadsSkillsOnShortFollowup(t *testing.T) {
+	for _, appSupport := range []bool{false, true} {
+		t.Run(strconv.FormatBool(appSupport), func(t *testing.T) {
+			full, err := loadGarminSkill("support")
 			if err != nil {
 				t.Fatal(err)
 			}
-			bot := &Bot{garminMemory: memory}
-			bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-				if slices.Contains(garminToolNames(request.Tools), "load_skill") {
-					t.Fatal("automatically loaded skill was still offered as a tool")
+			b := &Bot{}
+			calls := 0
+			b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+				calls++
+				if !garminToolAvailable(request.Tools, "load_skill") || !garminToolAvailable(request.Tools, "load_support_guide") {
+					t.Fatal("project reference or dedicated support core removed skill fallback")
 				}
-				if got := strings.Contains(request.SystemPrompt, "Automatically loaded "); got != (test.skill != "") {
-					t.Fatalf("automatically loaded skill present = %v", got)
+				if calls == 1 {
+					return garminHistoryTestCall("load_skill", `{"name":"metrolist"}`), nil
 				}
-				if test.heading != "" && !strings.Contains(request.SystemPrompt, test.heading) {
-					t.Fatalf("skill heading %q missing", test.heading)
+				if calls == 2 {
+					project, _ := loadGarminSkill("metrolist")
+					if request.Messages[len(request.Messages)-1].Content != project {
+						t.Fatal("first skill was not actually loaded")
+					}
+					return garminHistoryTestCall("load_skill", `{"name":"support"}`), nil
 				}
-				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "answer"}}, nil
+				if request.Messages[len(request.Messages)-1].Content != full {
+					t.Fatal("on-demand support skill lost guide text or scope")
+				}
+				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "Which app version are you using?"}}, nil
 			})
-			message := &discord.Message{
-				ID: snowflakeID("1"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Content: "garmin, " + test.prompt, Author: discord.User{ID: snowflakeID("100000000000000056")},
+			message := garminHistoryTestMessage()
+			if appSupport {
+				message.ChannelID = snowflakeID(garminAppSupportID)
 			}
-			result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: test.prompt}})
-			wantSkills := 0
-			if test.skill != "" {
-				wantSkills = 1
+			message.Content = "yes it does"
+			messages := []cmd.GarminAIMessage{{Role: "user", Content: "help me set it up"}, {Role: "assistant", Content: "That isn't supported."}, {Role: "user", Content: message.Content}}
+			result, err := b.runGarminAI(context.Background(), nil, message, messages)
+			if err != nil || result.Silent || result.ToolCalls != 2 || calls != 3 {
+				t.Fatalf("skill fallback result=%+v, calls=%d, error=%v", result, calls, err)
 			}
-			if err != nil || result.Answer != "answer" || len(result.Skills) != wantSkills {
-				t.Fatalf("result = %#v, error %v", result, err)
-			}
-			if test.skill != "" {
-				if _, loaded := result.Skills[test.skill]; !loaded {
-					t.Fatalf("skill %q was not recorded", test.skill)
+			for _, name := range []string{"metrolist", "support"} {
+				if _, ok := result.Skills[name]; !ok {
+					t.Fatalf("loaded skill %s was not recorded", name)
 				}
 			}
 		})
@@ -210,7 +573,12 @@ func TestRunGarminAIStopsRepositoryToolLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := 0
-	bot := &Bot{garminMemory: memory}
+	bot := &Bot{garminMemory: memory, garminGitHub: gh.NewAssistantClient("", "MetrolistGroup", "Metrolist")}
+	original := http.DefaultTransport
+	http.DefaultTransport = garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`)), Request: request}, nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = original })
 	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		calls++
 		names := garminToolNames(request.Tools)
@@ -222,9 +590,9 @@ func TestRunGarminAIStopsRepositoryToolLoop(t *testing.T) {
 		}}}}, nil
 	})
 	message := &discord.Message{
-		ID: snowflakeID("1"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Content: "garmin, what changes were last made in that repo", Author: discord.User{ID: snowflakeID("100000000000000056")},
+		ID: snowflakeID("1"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Content: "garmin, what changes were last made in the MetrolistGroup/Metrolist repo", Author: discord.User{ID: snowflakeID("100000000000000056")},
 	}
-	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "what changes were last made in that repo"}})
+	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "what changes were last made in the MetrolistGroup/Metrolist repo"}})
 	if err != nil || calls != 1 || result.Answer != "github lookup failed just now." || result.ToolCalls != 1 {
 		t.Fatalf("repository run = %#v, calls %d, error %v", result, calls, err)
 	}
@@ -237,7 +605,7 @@ func TestRunGarminAIMakesWebSearchAvailableForAnswers(t *testing.T) {
 	}
 	bot := &Bot{garminMemory: memory, garminFirecrawl: firecrawl.NewClient([]string{"key"})}
 	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-		if got, want := garminToolNames(request.Tools), []string{"load_support_guide", "search_web"}; !reflect.DeepEqual(got, want) {
+		if got, want := garminToolNames(request.Tools), []string{"calculate_math", "search_web", "load_skill", "load_support_guide"}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("general answer tools = %v, want %v", got, want)
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "a useful short answer."}}, nil
@@ -295,7 +663,48 @@ func TestRunGarminAIDirectlyExecutesExplicitWebSearch(t *testing.T) {
 	}
 }
 
-func TestRunGarminAIDirectlyFetchesPhoneSpecs(t *testing.T) {
+func TestGarminPublicLookupInvocationMention(t *testing.T) {
+	attempts := 0
+	original := http.DefaultTransport
+	http.DefaultTransport = garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		attempts++
+		return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`)), Request: request}, nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = original })
+	b := garminDiscoveryTestBot(t)
+	session := garminHistoryTestSession(t, func(*http.Request) (string, error) { t.Fatal("lookup fetched Discord history"); return "[]", nil })
+	const botID = "123456789012345678"
+	session.Caches.SetSelfUser(discord.OAuth2User{User: discord.User{ID: snowflakeID(botID)}})
+	for _, invocation := range []string{"<@" + botID + ">", "<@!" + botID + ">,", "garmin, <@" + botID + ">"} {
+		for _, name := range []string{"search_web", "get_github_repository", "get_gsmarena_phone"} {
+			message := garminHistoryTestMessage()
+			message.Content = invocation + " search the web for Warsaw weather"
+			before := attempts
+			output, _, _ := b.executeGarminAITool(context.Background(), session, message, garminHistoryTestCall(name, `{"query":"Warsaw weather","repository":"example/player"}`).Message.ToolCalls[0])
+			if attempts == before || strings.Contains(output, "non-sensitive public subject") {
+				t.Fatalf("invocation %q blocked %s: %s", invocation, name, output)
+			}
+		}
+	}
+	message := garminHistoryTestMessage()
+	message.Content = "<@" + botID + "> search for <@100000000000000056>"
+	before := attempts
+	output, _, _ := b.executeGarminAITool(context.Background(), session, message, garminHistoryTestCall("search_web", `{"query":"Warsaw weather"}`).Message.ToolCalls[0])
+	if attempts != before || !strings.Contains(garminToolResultError(output), "non-sensitive public subject") {
+		t.Fatalf("another user's mention was exempted: %s", output)
+	}
+	message.Content = "<@" + botID + "> search the web for Warsaw weather"
+	b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		t.Fatal("failing explicit search should stop before synthesis")
+		return nil, nil
+	})
+	result, err := b.runGarminAI(context.Background(), session, message, []cmd.GarminAIMessage{{Role: "user", Content: "search the web for Warsaw weather"}})
+	if err != nil || result.Answer != "web search failed just now." || attempts == before {
+		t.Fatalf("mention invocation did not reach the public search: result=%+v, error=%v", result, err)
+	}
+}
+
+func TestRunGarminAIModelChoosesPhoneLookup(t *testing.T) {
 	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -312,25 +721,56 @@ func TestRunGarminAIDirectlyFetchesPhoneSpecs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	calls := 0
-	bot := &Bot{garminMemory: memory, gsmarena: gsmarena.New(database)}
-	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-		calls++
-		if !request.DisableReasoning || len(request.Tools) != 0 {
-			t.Fatalf("phone synthesis reasoning = %v, tools = %#v", request.DisableReasoning, request.Tools)
-		}
-		last := request.Messages[len(request.Messages)-1]
-		if last.Role != "tool" || !strings.Contains(last.Content, "Xiaomi Redmi 6A") {
-			t.Fatalf("phone synthesis messages = %#v", request.Messages)
-		}
-		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "The Redmi 6A uses a Helio A22."}}, nil
-	})
-	message := &discord.Message{
-		ID: snowflakeID("1"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Content: "garmin, what are the specs of the redmi 6a?", Author: discord.User{ID: snowflakeID("100000000000000056")},
-	}
-	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "what are the specs of the redmi 6a?"}})
-	if err != nil || calls != 1 || result.Answer != "The Redmi 6A uses a Helio A22." || result.ToolCalls != 1 || result.ThinkingDuration != 0 {
-		t.Fatalf("phone run = %#v, calls %d, error %v", result, calls, err)
+	for _, test := range []struct {
+		prompt     string
+		draftFirst bool
+	}{
+		{"what are the specs of the redmi 6a?", false},
+		{"what are the specs of the redmi 6a?", true},
+		{"show me the GSMArena page for Redmi 6A", true},
+	} {
+		t.Run(test.prompt+"/"+strconv.FormatBool(test.draftFirst), func(t *testing.T) {
+			calls, lookupRound := 0, 1
+			if test.draftFirst {
+				lookupRound = 2
+			}
+			answer := "The Redmi 6A uses a Helio A22."
+			if strings.Contains(test.prompt, "GSMArena page") {
+				answer = "https://www.gsmarena.com/xiaomi_redmi_6a-9217.php"
+			}
+			bot := &Bot{garminMemory: memory, gsmarena: gsmarena.New(database)}
+			bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+				calls++
+				if calls == 1 && (!garminToolAvailable(request.Tools, "get_gsmarena_phone") || len(request.Messages) != 1) {
+					t.Fatal("phone discovery prefetched data or omitted the tool")
+				}
+				if test.draftFirst && calls == 1 {
+					return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "INVENTED_SPEC"}}, nil
+				}
+				for _, turn := range request.Messages {
+					if strings.Contains(turn.Content, "INVENTED_SPEC") {
+						t.Fatal("unsupported draft anchored the source retry")
+					}
+				}
+				if calls == lookupRound {
+					return garminHistoryTestCall("get_gsmarena_phone", `{"query":"Redmi 6A"}`), nil
+				}
+				if !request.DisableReasoning {
+					t.Fatal("phone synthesis did not disable reasoning")
+				}
+				last := request.Messages[len(request.Messages)-1]
+				if last.Role != "tool" || !strings.Contains(last.Content, "Xiaomi Redmi 6A") {
+					t.Fatalf("phone synthesis messages = %#v", request.Messages)
+				}
+				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: answer}}, nil
+			})
+			message := garminHistoryTestMessage()
+			message.Content = "garmin, " + test.prompt
+			result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: test.prompt}})
+			if err != nil || calls != lookupRound+1 || result.Answer != answer || result.ToolCalls != 1 {
+				t.Fatalf("phone run = %#v, calls %d, error %v", result, calls, err)
+			}
+		})
 	}
 }
 
@@ -368,23 +808,37 @@ func TestRunGarminAIStopsAfterWebSearchFailure(t *testing.T) {
 	}
 }
 
-func TestRunGarminAIExecutesTextualGitHubSearchAlias(t *testing.T) {
-	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	calls := 0
-	bot := &Bot{garminMemory: memory}
-	bot.garminAI = garminAITestFunc(func(_ context.Context, _ cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-		calls++
-		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "got it. searching github for metrolist forks now. ```json\n{\n  \"tool\": \"github_search\",\n  \"query\": \"MetrolistGroup Metrolist forks\"\n}\n```"}}, nil
+func TestRunGarminAITextualGitHubSearchRespectsAvailability(t *testing.T) {
+	original := http.DefaultTransport
+	http.DefaultTransport = garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`)), Request: request}, nil
 	})
-	message := &discord.Message{
-		ID: snowflakeID("1"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Content: "i mean its forks or something, just do a github search", Author: discord.User{ID: snowflakeID("100000000000000056")},
-	}
-	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: message.Content}})
-	if err != nil || calls != 1 || result.ToolCalls != 1 || result.Answer != "github lookup failed just now." {
-		t.Fatalf("textual search = %#v, calls %d, error %v", result, calls, err)
+	t.Cleanup(func() { http.DefaultTransport = original })
+	for _, available := range []bool{false, true} {
+		t.Run(strconv.FormatBool(available), func(t *testing.T) {
+			calls := 0
+			b := &Bot{}
+			if available {
+				b.garminGitHub = gh.NewAssistantClient("", "MetrolistGroup", "Metrolist")
+			}
+			b.garminAI = garminAITestFunc(func(_ context.Context, _ cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+				calls++
+				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "got it. searching github for metrolist forks now. ```json\n{\n  \"tool\": \"github_search\",\n  \"query\": \"MetrolistGroup Metrolist forks\"\n}\n```"}}, nil
+			})
+			message := garminHistoryTestMessage()
+			message.Content = "do a github search for MetrolistGroup Metrolist forks"
+			result, err := b.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: message.Content}})
+			if err != nil || calls != 1 {
+				t.Fatalf("textual search=%+v, calls=%d, error=%v", result, calls, err)
+			}
+			if available {
+				if result.ToolCalls != 1 || result.Answer != "github lookup failed just now." {
+					t.Fatalf("available textual search was not executed: %+v", result)
+				}
+			} else if result.ToolCalls != 0 || !result.Silent || result.Answer != "" {
+				t.Fatalf("unavailable textual search leaked or executed: %+v", result)
+			}
+		})
 	}
 }
 
@@ -398,14 +852,14 @@ func TestRunGarminAIUsesCalculatorBeforeAnswering(t *testing.T) {
 	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		calls++
 		if calls == 1 {
-			if names := garminToolNames(request.Tools); !reflect.DeepEqual(names, []string{"calculate_math", "load_support_guide"}) || !strings.Contains(request.Context, "calculator tool") {
+			if names := garminToolNames(request.Tools); !reflect.DeepEqual(names, []string{"calculate_math", "load_skill", "load_support_guide"}) || !strings.Contains(request.Context, "calculator tool") {
 				t.Fatalf("calculator request = %#v", request)
 			}
 			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{
 				ID: "math", Type: "function", Function: cmd.GarminAIFunctionCall{Name: "calculate_math", Arguments: `{"expression":"3^3"}`},
 			}}}}, nil
 		}
-		if len(request.Tools) != 0 || !strings.Contains(request.Messages[len(request.Messages)-1].Content, `"result":"27"`) {
+		if !garminToolAvailable(request.Tools, "load_skill") || !strings.Contains(request.Messages[len(request.Messages)-1].Content, `"result":"27"`) {
 			t.Fatalf("calculator result request = %#v", request)
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "3³ is 27."}}, nil
@@ -478,14 +932,14 @@ func TestGarminSystemPromptAndDiscordContextContainIdentityAndGlobalMemory(t *te
 	}
 }
 
-func TestGarminToolsForConversationUsesCurrentPromptOnly(t *testing.T) {
+func TestGarminToolsForConversationDoesNotGateFollowups(t *testing.T) {
 	messages := []cmd.GarminAIMessage{{Role: "user", Content: "what is the latest Metrolist release?"}, {Role: "assistant", Content: "The latest release is v1."}, {Role: "user", Content: "let's play 20 questions instead"}}
 	if got := garminToolNames(garminToolsForConversation(messages, false, false)); !reflect.DeepEqual(got, garminDefaultToolNames()) {
 		t.Fatalf("casual follow-up tools = %v, want default tools", got)
 	}
 }
 
-func TestGarminToolsForConversationSkipsCasualChat(t *testing.T) {
+func TestGarminToolsForConversationDoesNotGateCasualChat(t *testing.T) {
 	casualPrompts := []string{
 		"who said im human you catboy femboy",
 		"heavenly tung music plays on metrolist",
@@ -509,6 +963,16 @@ func TestGarminWebSearchRouting(t *testing.T) {
 	}
 	if !garminRepositorySubject("look up user/repo") || !garminRepositorySubject("look up GitHub r/project") {
 		t.Fatal("explicit GitHub repository references were mistaken for Reddit references")
+	}
+	for prompt, want := range map[string]bool{
+		"find github projects for offline music":       true,
+		"search github for an offline music project":   true,
+		"the github projects interface is interesting": false,
+		"find offline music projects":                  false,
+	} {
+		if got := garminRepositorySubject(prompt); got != want {
+			t.Errorf("repository subject for %q = %v, want %v", prompt, got, want)
+		}
 	}
 	for prompt, want := range map[string]string{
 		"look up the latest story from the guardian":      "news",
@@ -558,77 +1022,133 @@ func TestGarminWebSearchQueryRequiresNamedSubject(t *testing.T) {
 	}
 }
 
-func TestGarminToolsForConversationSelectsRelevantTools(t *testing.T) {
-	tests := []struct {
-		prompt string
-		admin  bool
-		want   []string
+func TestGarminToolsForConversationRequiresCurrentOwnerConsent(t *testing.T) {
+	for _, test := range []struct {
+		prompt          string
+		owner, remember bool
 	}{
-		{"what is the latest Metrolist release?", false, []string{"do_not_respond", "get_metrolist_status", "search_metrolist_issues", "read_channel_history", "load_skill"}},
-
-		{"what is Nyx's GitHub username?", false, []string{"do_not_respond", "get_github_user", "get_discord_profile", "search_discord_members", "read_channel_history"}},
-
-		{"search GitHub repos for a Kotlin music client", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file", "read_channel_history"}},
-
-		{"search GitHub for Android music clients", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file", "read_channel_history"}},
-
-		{"show details for the facebook/react repository", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file", "read_channel_history"}},
-
-		{"what is https://github.com/facebook/react?", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file", "read_channel_history"}},
-
-		{"search the web for today's Android news", false, []string{"do_not_respond", "search_web", "read_channel_history"}},
-
-		{"search GSMArena for OnePlus 15 specs", false, []string{"do_not_respond", "get_gsmarena_phone", "read_channel_history"}},
-
-		{"what chipset does the Pixel 10 use?", false, []string{"do_not_respond", "get_gsmarena_phone", "read_channel_history"}},
-
-		{"look up r/sssdfg", false, []string{"do_not_respond", "search_web", "read_channel_history"}},
-
-		{"list saved notes", false, []string{"do_not_respond", "list_notes", "get_note", "read_channel_history"}},
-
-		{"show me the playback note", false, []string{"do_not_respond", "list_notes", "get_note", "read_channel_history"}},
-
-		{"playback keeps stopping", false, []string{"do_not_respond", "list_notes", "get_note", "read_channel_history"}},
-
-		{"remember that releases happen on Fridays", true, []string{"do_not_respond", "read_channel_history", "remember"}},
-
-		{"remember that releases happen on Fridays", false, []string{"do_not_respond", "read_channel_history"}},
-
-		{"remember my pronouns are they/them", false, []string{"do_not_respond", "get_discord_profile", "search_discord_members", "read_channel_history"}},
-
-		{"what roles are on <@123456789012345678>'s user profile?", false, []string{"do_not_respond", "get_discord_profile", "search_discord_members", "read_channel_history"}},
-
-		{"what was posted in sneak-peeks?", false, []string{"do_not_respond", "read_channel_history", "read_community_channel"}},
-
-		{"show me the latest minky picture", false, []string{"do_not_respond", "read_channel_history", "read_community_channel"}},
-
-		{"react to this with thumb", false, []string{"react_to_message", "do_not_respond", "read_channel_history"}},
-
-		{"print i love :glup:", false, []string{"list_discord_emojis", "view_discord_emoji", "do_not_respond", "read_channel_history"}},
-
-		{"can you give me a link to that plugin", false, []string{"do_not_respond", "search_web", "read_channel_history"}},
-
-		{"can you get me an image of a moai", false, []string{"do_not_respond", "search_web", "read_channel_history"}},
-
-		{"give me a tenor link for a moai meme", false, []string{"do_not_respond", "search_web", "read_channel_history"}},
-
-		{"what changes were last made in that repo?", false, []string{"do_not_respond", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file", "read_channel_history"}},
-
-		{"what's 3³?", false, []string{"do_not_respond", "calculate_math", "read_channel_history"}},
-
-		{"what is 3-1?", false, []string{"do_not_respond", "calculate_math", "read_channel_history"}},
+		{"hey", false, false},
+		{"hey", true, false},
+		{"remember that releases happen on Fridays", false, false},
+		{"remember that releases happen on Fridays", true, true},
+		{"garmin, please remember that releases happen on Fridays", true, true},
+		{"Can you please remember that releases happen on Fridays?", true, true},
+		{"garmin, for future reference, remember that releases happen on Fridays", true, true},
+		{"for next time, please remember that releases happen on Fridays", true, true},
+		{"for future reference, do not remember that releases happen on Fridays", true, false},
+		{"do not save this, remember that releases happen on Fridays", true, false},
+		{"for future reference, remember that we do not release on Fridays", true, true},
+		{"for future reference, remember that releases happen on Fridays", false, false},
+		{"<@123456789012345678>, remember that releases happen on Fridays", true, true},
+		{"do not remember that releases happen on Fridays", true, false},
+		{"I never asked you to remember that", true, false},
+		{"what does remember that mean?", true, false},
+		{"remember my pronouns are they/them", true, false},
+		{"remember that I prefer short replies", true, false},
+	} {
+		messages := []cmd.GarminAIMessage{{Role: "user", Content: "remember that old fact"}, {Role: "assistant", Content: "remember that I promised to save it"}, {Role: "user", Content: test.prompt}}
+		tools := garminToolsForConversation(messages, test.owner, false)
+		want := garminDefaultToolNames()
+		if test.remember {
+			want = append(want, "remember")
+		}
+		if got := garminToolNames(tools); !reflect.DeepEqual(got, want) {
+			t.Errorf("tools for owner=%v, %q = %v, want %v", test.owner, test.prompt, got, want)
+		}
 	}
-	for _, test := range tests {
-		got := garminToolNames(garminToolsForConversation([]cmd.GarminAIMessage{{Role: "user", Content: test.prompt}}, test.admin, false))
-		if !reflect.DeepEqual(got, test.want) {
-			t.Errorf("tools for %q = %v, want %v", test.prompt, got, test.want)
+}
+
+func TestGarminToolsForRequestFiltersUnavailableCapabilities(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		disable func(*Bot, *bot.Client, *discord.Message)
+		blocked []string
+	}{
+		{"github", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.garminGitHub = nil }, []string{"get_metrolist_status", "search_metrolist_issues", "get_github_user", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
+		{"web", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.garminFirecrawl = nil }, []string{"search_web"}},
+		{"phone", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.gsmarena = nil }, []string{"get_gsmarena_phone"}},
+		{"nano", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.nanoreview = nil }, []string{"get_nanoreview_device"}},
+		{"technical city", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.technicalCity = nil }, []string{"get_technicalcity_device"}},
+		{"note catalog", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.DB = nil }, []string{"list_notes"}},
+		{"notes", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.Notes = nil }, []string{"get_note"}},
+		{"notes database", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.Notes.DB = nil }, []string{"get_note"}},
+		{"memory", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.garminMemory = nil }, []string{"remember"}},
+		{"discord rest", func(_ *Bot, s *bot.Client, _ *discord.Message) { s.Rest = nil }, []string{"react_to_message", "list_discord_emojis", "view_discord_emoji", "get_discord_profile", "search_discord_members", "read_channel_history", "read_community_channel"}},
+		{"discord cache", func(_ *Bot, s *bot.Client, _ *discord.Message) { s.Caches = nil }, []string{"read_channel_history"}},
+		{"guild config", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.Config = nil }, []string{"get_discord_profile", "search_discord_members"}},
+		{"invalid guild config", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.Config.DiscordGuildID = "invalid" }, []string{"get_discord_profile", "search_discord_members"}},
+		{"no consent", func(_ *Bot, _ *bot.Client, m *discord.Message) { m.Content = "hey" }, []string{"remember"}},
+		{"not an owner", func(_ *Bot, _ *bot.Client, m *discord.Message) { m.Author.ID = snowflakeID("100000000000000056") }, []string{"remember"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			b := garminDiscoveryTestBot(t)
+			session := garminHistoryTestSession(t, func(*http.Request) (string, error) { t.Fatal("discovery fetched history"); return "[]", nil })
+			message := garminHistoryTestMessage()
+			message.Author.ID = snowflakeID(garminNyxID)
+			message.Content = "for future reference, remember that releases happen on Fridays"
+			messages := []cmd.GarminAIMessage{{Role: "user", Content: message.Content}}
+			test.disable(b, session, message)
+			want := garminToolNames(withoutGarminTools(garminAITools, test.blocked...))
+			if got := garminToolNames(b.garminToolsForRequest(session, message, messages, false)); !reflect.DeepEqual(got, want) {
+				t.Fatalf("capability filter = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func TestRunGarminAIInvalidDiscordSessionKeepsOnlyUsableTools(t *testing.T) {
+	for _, session := range []*bot.Client{nil, {}} {
+		b := &Bot{garminAI: garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+			want := []string{"calculate_math", "load_skill", "load_support_guide"}
+			if got := garminToolNames(request.Tools); !reflect.DeepEqual(got, want) {
+				t.Fatalf("unusable capabilities advertised: %v, want %v", got, want)
+			}
+			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "hey"}}, nil
+		})}
+		message := garminHistoryTestMessage()
+		message.Content = "garmin, hey"
+		if _, err := b.runGarminAI(context.Background(), session, message, []cmd.GarminAIMessage{{Role: "user", Content: "hey"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestGarminAppSupportCapabilityAllowlist(t *testing.T) {
+	b := garminDiscoveryTestBot(t)
+	session := garminHistoryTestSession(t, func(*http.Request) (string, error) {
+		t.Fatal("app support performed a keyword-triggered community lookup")
+		return "[]", nil
+	})
+	message := garminHistoryTestMessage()
+	message.ChannelID = snowflakeID(garminAppSupportID)
+	message.Author.ID = snowflakeID(garminNyxID)
+	message.Content = "remember that minky is in coolchannel; what is the KMP preview status?"
+	messages := []cmd.GarminAIMessage{{Role: "user", Content: message.Content}}
+	want := []string{"do_not_respond", "get_metrolist_status", "search_metrolist_issues", "list_notes", "get_note", "load_skill", "load_support_guide"}
+	if got := garminToolNames(b.garminToolsForRequest(session, message, messages, false)); !reflect.DeepEqual(got, want) {
+		t.Fatalf("support capability scope = %v, want %v", got, want)
+	}
+	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		if len(request.Messages) != 1 {
+			t.Fatal("app support prefetched a disallowed source")
+		}
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: `react_to_message emoji="👍"`}}, nil
+	})
+	result, err := b.runGarminAI(context.Background(), session, message, messages)
+	if err != nil || !result.Silent || result.ToolCalls != 0 || result.Interacted {
+		t.Fatalf("support text action bypassed scope: result=%+v, error=%v", result, err)
+	}
+	for _, name := range []string{"search_web", "read_channel_history", "read_community_channel", "get_discord_profile", "search_discord_members", "remember"} {
+		output, _, updated := b.executeGarminAITool(context.Background(), session, message, garminHistoryTestCall(name, `{}`).Message.ToolCalls[0])
+		if !strings.Contains(garminToolResultError(output), "unavailable to the app-support agent") || updated {
+			t.Fatalf("direct support %s bypassed scope: %s", name, output)
 		}
 	}
 }
 
 func TestGarminGSMArenaToolFollowsPhoneSpecContext(t *testing.T) {
 	messages := []cmd.GarminAIMessage{{Role: "user", Content: "what are the OnePlus 15 specs?"}, {Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{Function: cmd.GarminAIFunctionCall{Name: "get_gsmarena_phone"}}}}, {Role: "tool", Content: `{"phone":{"name":"OnePlus 15"}}`}, {Role: "assistant", Content: "It uses a Snapdragon chipset."}, {Role: "user", Content: "what about battery?"}}
-	want := []string{"do_not_respond", "get_gsmarena_phone", "read_channel_history"}
+	want := garminDefaultToolNames()
 	if got := garminToolNames(garminToolsForConversation(messages, false, false)); !reflect.DeepEqual(got, want) {
 		t.Fatalf("GSMArena follow-up tools = %v, want %v", got, want)
 	}
@@ -682,12 +1202,8 @@ func TestGarminReadableChannelForConversation(t *testing.T) {
 	}
 }
 
-func garminActionToolNames() []string {
-	return []string{"do_not_respond"}
-}
-
 func garminDefaultToolNames() []string {
-	return []string{"do_not_respond", "read_channel_history"}
+	return []string{"react_to_message", "list_discord_emojis", "view_discord_emoji", "do_not_respond", "calculate_math", "get_nanoreview_device", "get_technicalcity_device", "get_gsmarena_phone", "search_web", "get_metrolist_status", "search_metrolist_issues", "get_github_user", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file", "list_notes", "get_note", "get_discord_profile", "search_discord_members", "read_channel_history", "read_community_channel", "load_skill", "load_support_guide"}
 }
 
 func garminToolNames(tools []cmd.GarminAITool) []string {
@@ -864,6 +1380,17 @@ func TestSanitizeGarminInternalToolDisclosure(t *testing.T) {
 	}
 }
 
+func TestGarminDiscoveryToolTextIsNotDisclosed(t *testing.T) {
+	for _, name := range []string{"load_skill", "load_support_guide", "list_notes", "get_note", "get_discord_profile", "search_discord_members", "read_community_channel"} {
+		if got := sanitizeGarminInternalToolDisclosure("which tool?", "i use "+name); strings.Contains(got, name) {
+			t.Errorf("internal tool disclosure escaped: %s", got)
+		}
+		if got := normalizeGarminAIAnswer(name + ` name="support"`); strings.Contains(got, name) {
+			t.Errorf("tool syntax escaped: %s", got)
+		}
+	}
+}
+
 func TestListNotesToolIncludesDescriptions(t *testing.T) {
 	database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
 	if err != nil {
@@ -914,12 +1441,19 @@ func TestRememberToolRequiresOwner(t *testing.T) {
 		t.Fatal("non-admin updated memory")
 	}
 
-	output, _, updated = bot.executeGarminAITool(context.Background(), nil, request(garminNyxID, "garmin, hello"), call)
-	if updated || !strings.Contains(output, "explicit request") {
-		t.Fatalf("implicit admin remember = (%q, %v)", output, updated)
+	for _, content := range []string{"garmin, hello", "garmin, do not remember that durable fact", "garmin, I never asked you to remember that", "garmin, for future reference, do not remember that durable fact"} {
+		output, _, updated = bot.executeGarminAITool(context.Background(), nil, request(garminNyxID, content), call)
+		if updated || !strings.Contains(output, "explicit request") {
+			t.Fatalf("implicit or denied owner consent %q = (%q, %v)", content, output, updated)
+		}
 	}
 
-	output, _, updated = bot.executeGarminAITool(context.Background(), nil, request(garminNyxID, "garmin, remember that durable fact"), call)
+	output, _, updated = bot.executeGarminAITool(context.Background(), nil, request(garminNyxID, "garmin, remember that I like music"), call)
+	if updated || !strings.Contains(output, "non-personal") {
+		t.Fatalf("personal memory = (%q, %v)", output, updated)
+	}
+
+	output, _, updated = bot.executeGarminAITool(context.Background(), nil, request(garminNyxID, "garmin, for future reference, remember that durable fact"), call)
 	if !updated || !strings.Contains(output, `"saved":true`) {
 		t.Fatalf("admin remember = (%q, %v)", output, updated)
 	}

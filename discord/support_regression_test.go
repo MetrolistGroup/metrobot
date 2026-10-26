@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
+	gh "github.com/MetrolistGroup/metrobot/github"
 	"github.com/MetrolistGroup/metrobot/internal/notefmt"
 )
 
@@ -119,7 +122,12 @@ func TestSupportSendsCheckedExcerptNotChangedOrFullNote(t *testing.T) {
 
 func TestSupportToolFailureDoesNotExposeUncheckedNoteReference(t *testing.T) {
 	b, _, _ := newSupportDecisionTestBot(t)
-	b.garminGitHub = nil
+	b.garminGitHub = gh.NewAssistantClient("", "MetrolistGroup", "Metrolist")
+	original := http.DefaultTransport
+	http.DefaultTransport = garminRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`)), Request: request}, nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = original })
 	b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{ToolCalls: []cmd.GarminAIToolCall{{
 			ID: "lookup", Type: "function", Function: cmd.GarminAIFunctionCall{Name: "search_metrolist_issues", Arguments: `{"query":"crash"}`},

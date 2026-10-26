@@ -47,7 +47,7 @@ func TestAppSupportIsolatesMemoryAndPromptOverrides(t *testing.T) {
 	}
 	b := &Bot{DB: database, garminMemory: memory}
 	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-		if !strings.HasPrefix(request.SystemPrompt, garminAppSupportSystemPrompt) || !strings.Contains(request.SystemPrompt, "Automatically loaded support skill:") {
+		if !strings.HasPrefix(request.SystemPrompt, garminAppSupportSystemPrompt) || !strings.Contains(request.SystemPrompt, "Dedicated support core:") {
 			t.Fatal("support request lost its dedicated prompt or skill")
 		}
 		for _, forbidden := range []string{"CASUAL_OVERRIDE", "STALE_MEMORY", "Persistent shared memory", "Be witty, playful"} {
@@ -60,7 +60,7 @@ func TestAppSupportIsolatesMemoryAndPromptOverrides(t *testing.T) {
 				t.Errorf("support evidence rule missing: %q", required)
 			}
 		}
-		want := []string{"do_not_respond", "get_metrolist_status", "search_metrolist_issues", "list_notes", "get_note", "load_support_guide"}
+		want := []string{"do_not_respond", "list_notes", "load_skill", "load_support_guide"}
 		if got := garminToolNames(request.Tools); !reflect.DeepEqual(got, want) {
 			t.Errorf("support tools = %v, want %v", got, want)
 		}
