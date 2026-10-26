@@ -115,6 +115,15 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 	typingDone := make(chan struct{})
 	defer close(typingDone)
 	b.keepGarminTyping(s, m.ChannelID.String(), typingDone)
+	supportMode, err := b.garminSupportMode(requestCtx, m, messages)
+	if err != nil {
+		b.Logger.Warn("Metrobot request classification failed")
+		if !ambient && requestCtx.Err() == nil {
+			b.sendGarminReplyIfVisible(s, m, "I couldn't answer that right now. Try again in a moment.")
+		}
+		return
+	}
+	requestCtx = context.WithValue(requestCtx, garminSupportModeContextKey{}, supportMode)
 	messages = b.prepareGarminAIConversation(requestCtx, s, m, messages)
 	if requestCtx.Err() != nil {
 		return
@@ -552,7 +561,13 @@ func (b *Bot) prepareGarminAIConversation(ctx context.Context, s *bot.Client, m 
 	}
 	ctx, cancel := context.WithTimeout(ctx, garminAICompactionTimeout)
 	defer cancel()
-	compacted, err := b.compactGarminAIConversation(ctx, messages, b.garminDiscordContextForConversation(s, m, messages))
+	var discordContext string
+	if supportMode, _ := ctx.Value(garminSupportModeContextKey{}).(bool); supportMode || m.ChannelID.String() == garminAppSupportID {
+		discordContext = garminSupportDiscordContext(messages)
+	} else {
+		discordContext = b.garminDiscordContextForConversation(s, m, messages)
+	}
+	compacted, err := b.compactGarminAIConversation(ctx, messages, discordContext)
 	if err != nil {
 		b.Logger.Warn("failed to compact Metrobot AI conversation")
 		return boundGarminAIConversation(messages)

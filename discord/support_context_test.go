@@ -7,9 +7,13 @@ func TestLoadGarminSupportAnswerSkillIsCoreOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	project, err := loadGarminSkill("metrolist")
+	if err != nil {
+		t.Fatal(err)
+	}
 	got, err := loadGarminSupportAnswerSkill()
-	if err != nil || got != string(core) {
-		t.Fatalf("dedicated support context must be the exact core without topic preloads: %v", err)
+	if err != nil || got != string(core)+"\n\nVerified project reference:\n"+project {
+		t.Fatalf("dedicated support context must contain only the core/project facts without setup preloads: %v", err)
 	}
 }
 

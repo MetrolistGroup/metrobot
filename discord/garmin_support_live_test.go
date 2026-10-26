@@ -74,6 +74,7 @@ func TestSupportAgentLive(t *testing.T) {
 		Error        bool             `json:"error,omitempty"`
 		PromptChars  int              `json:"prompt_chars"`
 		ModelCalls   int              `json:"model_calls"`
+		AppGuidance  *float64         `json:"app_guidance,omitempty"`
 	}
 	var reports []report
 	for i, test := range []struct {
@@ -88,10 +89,13 @@ func TestSupportAgentLive(t *testing.T) {
 		casual       bool
 		forbidden    []string
 	}{
+		{id: "casual-unrelated", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "hello, how are you?"}}, wantAnswer: true},
 		{id: "casual-login-playlists", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "explain login to him and how to get yt music playlists onto metrolist"}}, wantAnswer: true},
 		{id: "casual-correct-login", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "explain login and how to get youtube music playlists onto metrolist"}, {Role: "assistant", Content: "metrolist doesn't do login."}, {Role: "user", Content: "yes it does, explain how"}}, wantAnswer: true},
 		{id: "casual-short-correction", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "does Metrolist support login?"}, {Role: "assistant", Content: "metrolist doesn't do login."}, {Role: "user", Content: "yes it does"}}, wantAnswer: true},
 		{id: "casual-kmp-platforms", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "Is Metrolist strictly Android only? What about KMP?"}}, wantAnswer: true},
+		{id: "casual-kmp-requirements", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "What minimum Android, iOS and macOS versions does Metrolist KMP support? Is its Android APK an in-place update for standalone Metrolist?"}}, wantAnswer: true},
+		{id: "kmp-requirements", messages: []cmd.GarminAIMessage{{Role: "user", Content: "What minimum Android, iOS and macOS versions does Metrolist KMP support? Is its Android APK an in-place update for standalone Metrolist?"}}, wantAnswer: true, selectedNote: "kmp"},
 		{id: "casual-android-playlists", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "Regular Android Metrolist 13.7.0: how do I sign in and get my YouTube Music playlists?"}}, wantAnswer: true},
 		{id: "casual-kmp-only-followup", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "Can I log into YouTube Music in Metrolist?"}, {Role: "assistant", Content: "Google login is available."}, {Role: "user", Content: "is that a mkp feature only"}}, wantAnswer: true},
 		{id: "richpresence-wording", messages: []cmd.GarminAIMessage{{Role: "user", Content: "How do I turn on RichPresence in Metrolist?"}}, wantAnswer: true, forbidden: []string{"reinstall", "profile buttons"}},
@@ -149,6 +153,13 @@ func TestSupportAgentLive(t *testing.T) {
 				b.garminMemory = memory
 			}
 			b.garminDecisions = supportDecisionTestFunc(func(ctx context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+				if _, classifying := request.Questions["app_guidance"]; classifying {
+					response, err := decisions.Decide(ctx, request)
+					if response != nil {
+						r.AppGuidance = response.Answers["app_guidance"].Noul
+					}
+					return response, err
+				}
 				r.Draft, _ = request.State.(map[string]any)["proposed_answer"].(string)
 				response, err := decisions.Decide(ctx, request)
 				if err != nil {
@@ -196,7 +207,7 @@ func TestSupportAgentLive(t *testing.T) {
 			r.Milliseconds = time.Since(start).Milliseconds()
 			if err != nil {
 				r.Error = true
-				t.Errorf("%s: agent failed", test.id)
+				t.Errorf("%s: agent failed: %v", test.id, err)
 			} else {
 				r.Answer, r.Note, r.Suppressed = result.Answer, result.NoteName, result.Silent
 				if test.wantSilent && !result.Silent {
@@ -222,9 +233,15 @@ func TestSupportAgentLive(t *testing.T) {
 					}
 				}
 				for _, forbidden := range test.forbidden {
-					if strings.Contains(strings.ToLower(r.Answer), forbidden) {
+					if strings.Contains(strings.ReplaceAll(strings.ToLower(r.Answer), "not "+forbidden, ""), forbidden) {
 						t.Errorf("%s: review forbidden phrase %q", test.id, forbidden)
 					}
+				}
+				if test.casual && test.id != "casual-unrelated" && (r.AppGuidance == nil || *r.AppGuidance < 0.2 || r.Grounded < 0.95) {
+					t.Errorf("%s: casual app guidance bypassed the grounded support path", test.id)
+				}
+				if test.id == "casual-unrelated" && (r.AppGuidance == nil || *r.AppGuidance >= 0.2 || len(r.Checks) != 0) {
+					t.Error("unrelated casual chat loaded support evidence")
 				}
 				if test.wantNote != "" && r.Note != test.wantNote {
 					t.Errorf("%s: note = %q, want %q", test.id, r.Note, test.wantNote)

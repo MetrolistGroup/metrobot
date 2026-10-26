@@ -10,7 +10,27 @@ func loadGarminSupportAnswerSkill() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("loading support skill: %w", err)
 	}
-	return string(data), nil
+	project, err := loadGarminSkill("metrolist")
+	if err != nil {
+		return "", err
+	}
+	return string(data) + "\n\nVerified project reference:\n" + project, nil
+}
+
+// Keep the independent checker fully informed without preloading the answering agent.
+func loadGarminSupportEvidenceSkill() (string, error) {
+	content, err := loadGarminSupportAnswerSkill()
+	if err != nil {
+		return "", err
+	}
+	for _, name := range []string{"rpc", "login", "scrobbling", "playlists"} {
+		guide, err := loadGarminSupportGuide(name)
+		if err != nil {
+			return "", err
+		}
+		content += "\n\n" + guide
+	}
+	return content, nil
 }
 
 func loadGarminSupportGuide(name string) (string, error) {

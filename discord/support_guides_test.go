@@ -10,7 +10,7 @@ import (
 )
 
 func TestSupportSetupGuidesReachAgentAndEvidenceCheck(t *testing.T) {
-	full, err := loadGarminSkill("support")
+	full, err := loadGarminSupportEvidenceSkill()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -19,9 +19,13 @@ func TestSupportSetupGuidesReachAgentAndEvidenceCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	loaded, err := loadGarminSkill("support")
+	if err != nil || loaded != selected {
+		t.Fatalf("on-demand support skill must return only the core: %v", err)
+	}
 	for _, name := range []string{"rpc", "login", "scrobbling", "playlists"} {
 		guide, err := loadGarminSupportGuide(name)
-		if err != nil || !strings.Contains(full, guide) || strings.Contains(selected, guide) {
+		if err != nil || !strings.Contains(full, guide) || strings.Contains(loaded, guide) {
 			t.Fatalf("wrong guide selection/evidence for %s: %v", name, err)
 		}
 	}
