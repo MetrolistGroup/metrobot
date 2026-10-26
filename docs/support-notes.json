@@ -1,5 +1,10 @@
 [
   {
+    "name": "discover",
+    "short_desc": "Discover playlists and Your daily discover recommendations on standalone Android Home, including why the section can be missing. Not account sync.",
+    "content": "## Where is Discover?\nStandalone Android Metrolist v13.7.0 has **Your daily discover** on **Home**. It recommends songs based on your liked songs. It is a Home section, not a saved playlist in Library.\n\nThe section appears when the app has related recommendations and no Home filter chip is active. It can be absent with no liked songs or no related results.\n\nThese instructions are for standalone Android. If you mean a specific YouTube Music playlist or Metrolist-KMP, include that detail."
+  },
+  {
     "name": "appname",
     "short_desc": "Why Metrolist is called Metrolist; name origin only, not app setup or troubleshooting.",
     "content": "Metrolist gets its name from listening to music while taking the metro."

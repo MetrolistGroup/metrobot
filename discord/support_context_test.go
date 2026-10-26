@@ -21,6 +21,7 @@ func TestLoadGarminSupportGuide(t *testing.T) {
 	for _, test := range []struct{ name, file string }{
 		{"rpc", "rpc"},
 		{"playlists", "playlists"},
+		{"discovery", "discovery"},
 		{" LOGIN ", "login"},
 		{"\tScRoBbLiNg\n", "scrobbling"},
 	} {

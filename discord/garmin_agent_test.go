@@ -180,7 +180,7 @@ func TestRunGarminAIDiscoversAllAuthorizedToolsWithoutKeywords(t *testing.T) {
 				if strings.Count(request.SystemPrompt, "# Metrolist project reference") != 1 || strings.Contains(request.SystemPrompt, "# Metrolist support triage") {
 					t.Fatal("normal chat must retain only its always-on project reference")
 				}
-				for _, name := range []string{"rpc", "login", "scrobbling", "playlists"} {
+				for _, name := range []string{"rpc", "login", "scrobbling", "playlists", "discovery"} {
 					guide, _ := loadGarminSupportGuide(name)
 					if strings.Contains(request.SystemPrompt, guide) {
 						t.Fatalf("keyword-preloaded %s guide", name)

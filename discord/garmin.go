@@ -33,14 +33,16 @@ const (
 )
 
 type garminAIContext struct {
-	userID       string
-	requestID    string
-	replyID      string
-	guildID      string
-	channelID    string
-	messages     []cmd.GarminAIMessage
-	expiresAt    time.Time
-	ambientUntil time.Time
+	userID         string
+	requestID      string
+	replyID        string
+	guildID        string
+	channelID      string
+	messages       []cmd.GarminAIMessage
+	expiresAt      time.Time
+	ambientUntil   time.Time
+	unanswered     bool
+	pendingSources []string
 }
 
 const (
@@ -128,6 +130,9 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 	if requestCtx.Err() != nil {
 		return
 	}
+	if supportMode && !ambient {
+		messages = b.rememberGarminAIUnansweredContext(m, messages)
+	}
 	ctx, cancel := context.WithTimeout(requestCtx, garminAITimeout)
 	defer cancel()
 	result, err := b.runGarminAIWithMode(ctx, s, m, messages, ambient, ambientToken)
@@ -136,14 +141,19 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 	}
 	if err != nil {
 		b.Logger.Error("Metrobot AI request failed", zap.String("user", m.Author.ID.String()), zap.Error(err))
-		if ambient || (m.ChannelID.String() == garminAppSupportID && b.garminDecisions != nil) {
+		if ambient {
 			return
 		}
-		b.sendGarminReplyIfVisible(s, m, "I couldn't answer that right now. Try again in a moment.")
+		answer := supportUnavailableReply
+		conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: answer, Timestamp: time.Now().UTC()})
+		supportCompleted = b.sendGarminReplyAndRememberIfVisible(s, m, answer, conversation) != nil
 		return
 	}
 	if result.Silent {
-		supportCompleted = true
+		supportCompleted = !result.Unverified
+		if !result.Unverified && !result.Interacted {
+			b.clearGarminAIUnansweredContext(m)
+		}
 		if result.Interacted {
 			if ambient {
 				b.rememberGarminAmbientUserContext(m, messages, ambientToken)
@@ -748,14 +758,18 @@ func (b *Bot) garminAIHistory(m *discord.Message, referenceID string, ambientOnl
 			return nil, false
 		}
 		if b.garminContextVisibleLocked(context) && (!ambientOnly || now.Before(context.ambientUntil)) {
-			return copyGarminAIMessages(context.messages), true
+			messages := copyGarminAIMessages(context.messages)
+			if context.unanswered && context.requestID == m.ID.String() && len(messages) > 0 {
+				messages = messages[:len(messages)-1]
+			}
+			return messages, len(messages) > 0
 		}
 	}
 	return nil, false
 }
 
 func (b *Bot) garminContextVisibleLocked(retained garminAIContext) bool {
-	for _, id := range []string{retained.requestID, retained.replyID} {
+	for _, id := range append([]string{retained.requestID, retained.replyID}, retained.pendingSources...) {
 		if id != "" && !b.garminMessageVisibleLocked(retained.channelID, id) {
 			return false
 		}
@@ -763,23 +777,23 @@ func (b *Bot) garminContextVisibleLocked(retained garminAIContext) bool {
 	return true
 }
 
-// shortcut: deletion tracks direct turn IDs; add source lineage before promising erasure from older summaries.
+// shortcut: pending-question sources are tracked; general summary erasure still needs full lineage.
 func (b *Bot) forgetDeletedGarminContexts(channelID, messageID string) {
 	b.garminAIMu.Lock()
 	defer b.garminAIMu.Unlock()
 	for id, retained := range b.garminAIContexts {
-		if retained.channelID == channelID && (retained.requestID == messageID || retained.replyID == messageID) {
+		if retained.channelID == channelID && (retained.requestID == messageID || retained.replyID == messageID || slices.Contains(retained.pendingSources, messageID)) {
 			delete(b.garminAIContexts, id)
 		}
 	}
 	for key, retained := range b.garminAIUserContexts {
-		if retained.channelID == channelID && (retained.requestID == messageID || retained.replyID == messageID) {
+		if retained.channelID == channelID && (retained.requestID == messageID || retained.replyID == messageID || slices.Contains(retained.pendingSources, messageID)) {
 			delete(b.garminAIUserContexts, key)
 			delete(b.garminAIAmbientBusy, key)
 		}
 	}
 	for id, parent := range b.garminAIParents[channelID] {
-		if parent.requestID == messageID || parent.replyID == messageID {
+		if parent.requestID == messageID || parent.replyID == messageID || slices.Contains(parent.pendingSources, messageID) {
 			if cancel := b.garminAIRequests[channelID][id]; cancel != nil {
 				cancel()
 			}
@@ -936,7 +950,7 @@ func (b *Bot) registerGarminAIRequest(m *discord.Message, cancel context.CancelF
 			return false
 		}
 	}
-	if retained, ok := b.garminAIUserContexts[garminAIUserContextKey(m)]; ok && retained.requestID == m.ID.String() && (retained.replyID == "" || snowflakeID(retained.replyID) > m.ID) && now.Before(retained.expiresAt) {
+	if retained, ok := b.garminAIUserContexts[garminAIUserContextKey(m)]; ok && !retained.unanswered && retained.requestID == m.ID.String() && (retained.replyID == "" || snowflakeID(retained.replyID) > m.ID) && now.Before(retained.expiresAt) {
 		return false
 	}
 	channelID := m.ChannelID.String()
@@ -1084,6 +1098,46 @@ func (b *Bot) rememberGarminAIUserContext(m *discord.Message, messages []cmd.Gar
 	b.storeGarminAIContext("", m, messages)
 }
 
+// Retain the question after a rejected/failed answer without starting ambient replies.
+func (b *Bot) rememberGarminAIUnansweredContext(m *discord.Message, messages []cmd.GarminAIMessage) []cmd.GarminAIMessage {
+	key := garminAIUserContextKey(m)
+	if key == "" || len(messages) == 0 {
+		return messages
+	}
+	b.garminAIMu.Lock()
+	defer b.garminAIMu.Unlock()
+	if previous, ok := b.garminAIUserContexts[key]; ok && snowflakeID(previous.requestID) >= m.ID {
+		return messages
+	}
+	sources := b.garminAIUserContexts[key].pendingSources
+	if parent, ok := b.garminAIParents[m.ChannelID.String()][m.ID.String()]; ok {
+		sources = parent.pendingSources
+	}
+	sources = append(slices.Clone(sources), m.ID.String())
+	if len(sources) > 2*garminAICompactionMessages {
+		// Bound lineage by dropping the history whose sources would otherwise be forgotten.
+		messages = messages[len(messages)-1:]
+		sources = sources[len(sources)-1:]
+	}
+	b.storeGarminAIContextLocked("", m, messages, time.Now())
+	if retained, ok := b.garminAIUserContexts[key]; ok && retained.requestID == m.ID.String() {
+		retained.ambientUntil = time.Time{}
+		retained.unanswered = true
+		retained.pendingSources = sources
+		b.garminAIUserContexts[key] = retained
+	}
+	return messages
+}
+
+func (b *Bot) clearGarminAIUnansweredContext(m *discord.Message) {
+	key := garminAIUserContextKey(m)
+	b.garminAIMu.Lock()
+	defer b.garminAIMu.Unlock()
+	if retained, ok := b.garminAIUserContexts[key]; ok && retained.unanswered && retained.requestID == m.ID.String() {
+		delete(b.garminAIUserContexts, key)
+	}
+}
+
 func (b *Bot) rememberGarminAmbientUserContext(m *discord.Message, messages []cmd.GarminAIMessage, token uint64) {
 	b.garminAIMu.Lock()
 	defer b.garminAIMu.Unlock()
@@ -1159,15 +1213,31 @@ func (b *Bot) storeGarminAIContextLocked(messageID string, m *discord.Message, m
 		}
 		delete(b.garminAIUserContexts, oldestID)
 	}
+	previous := b.garminAIUserContexts[userKey]
+	sources := previous.pendingSources
+	if previous.requestID != m.ID.String() {
+		if parent, ok := b.garminAIParents[m.ChannelID.String()][m.ID.String()]; ok {
+			sources = parent.pendingSources
+		} else if snowflakeID(previous.requestID) > m.ID {
+			sources = nil
+		}
+	}
+	if snowflakeID(previous.requestID) > m.ID && !slices.Contains(sources, m.ID.String()) {
+		sources = append(slices.Clone(sources), m.ID.String())
+		if len(sources) > 2*garminAICompactionMessages {
+			return
+		}
+	}
 	context := garminAIContext{
-		userID:       m.Author.ID.String(),
-		requestID:    m.ID.String(),
-		replyID:      messageID,
-		guildID:      snowflakeString(m.GuildID),
-		channelID:    m.ChannelID.String(),
-		messages:     copyGarminAIMessages(messages),
-		expiresAt:    now.Add(garminAIContextTTL),
-		ambientUntil: now.Add(garminAIAmbientTTL),
+		pendingSources: slices.Clone(sources),
+		userID:         m.Author.ID.String(),
+		requestID:      m.ID.String(),
+		replyID:        messageID,
+		guildID:        snowflakeString(m.GuildID),
+		channelID:      m.ChannelID.String(),
+		messages:       copyGarminAIMessages(messages),
+		expiresAt:      now.Add(garminAIContextTTL),
+		ambientUntil:   now.Add(garminAIAmbientTTL),
 	}
 	if messageID != "" {
 		b.garminAIContexts[messageID] = context

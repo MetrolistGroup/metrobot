@@ -159,6 +159,9 @@ func TestSupportRewriteOnlySendsAndRetainsAcceptedAnswer(t *testing.T) {
 			if correction.Role != "system" || !strings.Contains(correction.Content, "source-verified common steps") || !strings.Contains(correction.Content, "only when the needed steps differ materially") {
 				t.Fatal("rewrite lost evidence correction or unnecessarily requires a variant")
 			}
+			return garminHistoryTestCall("load_skill", `{"name":"support"}`), nil
+		}
+		if calls == 3 {
 			answer = "Please paste the exact error."
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: answer}}, nil
@@ -173,12 +176,12 @@ func TestSupportRewriteOnlySendsAndRetainsAcceptedAnswer(t *testing.T) {
 	})
 	m := supportTestMessage(20)
 	b.handleGarminAI(client, m, []cmd.GarminAIMessage{{Role: "user", Content: "I get an error"}})
-	if calls != 2 || checks != 2 || sent.count() != 1 {
+	if calls != 3 || checks != 2 || sent.count() != 1 {
 		t.Fatalf("calls=%d checks=%d sends=%d", calls, checks, sent.count())
 	}
 	b.garminAILastUsed[m.Author.ID.String()] = time.Now().Add(-garminAICooldown)
 	b.handleGarminAI(client, m, []cmd.GarminAIMessage{{Role: "user", Content: "I get an error"}})
-	if calls != 2 || sent.count() != 1 {
+	if calls != 3 || sent.count() != 1 {
 		t.Fatal("duplicate explicit support event was answered twice")
 	}
 	history, ok := b.garminAIHistory(m, "", false)
@@ -220,7 +223,7 @@ func TestSupportChecksFullLongNoteSnapshot(t *testing.T) {
 	}
 }
 
-func TestExplicitSupportEvidenceErrorStaysSilentWithoutRewrite(t *testing.T) {
+func TestExplicitSupportEvidenceErrorNotifiesWithoutRewrite(t *testing.T) {
 	b, client, sent := newSupportDecisionTestBot(t)
 	calls := 0
 	b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
@@ -232,7 +235,11 @@ func TestExplicitSupportEvidenceErrorStaysSilentWithoutRewrite(t *testing.T) {
 	})
 	m := supportTestMessage(20)
 	b.handleGarminAI(client, m, []cmd.GarminAIMessage{{Role: "user", Content: m.Content}})
-	if calls != 1 || sent.count() != 0 {
+	if calls != 1 || sent.count() != 1 {
 		t.Fatalf("API failure generated %d calls and %d sends", calls, sent.count())
+	}
+	retained := b.garminAIUserContexts[garminAIUserContextKey(m)].messages
+	if len(retained) != 2 || retained[1].Content != supportUnavailableReply {
+		t.Fatal("API failure retained the unchecked draft instead of a safe notice")
 	}
 }

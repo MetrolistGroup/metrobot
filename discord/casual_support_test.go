@@ -30,7 +30,7 @@ func TestCasualAppGuidanceUsesIsolatedCheckedSupport(t *testing.T) {
 				}
 				checks++
 				skill := request.State.(map[string]any)["support_skill"].(string)
-				for _, name := range []string{"rpc", "login", "scrobbling", "playlists"} {
+				for _, name := range []string{"rpc", "login", "scrobbling", "playlists", "discovery"} {
 					guide, _ := loadGarminSupportGuide(name)
 					if !strings.Contains(skill, guide) {
 						t.Fatalf("checker lost %s", name)
@@ -50,6 +50,9 @@ func TestCasualAppGuidanceUsesIsolatedCheckedSupport(t *testing.T) {
 					if calls == 1 {
 						return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "REJECTED_APP_CLAIM"}}, nil
 					}
+					if calls == 2 {
+						return garminHistoryTestCall("load_skill", `{"name":"support"}`), nil
+					}
 					for _, turn := range request.Messages {
 						if strings.Contains(turn.Content, "REJECTED_APP_CLAIM") {
 							t.Fatal("rejected draft anchored the retry")
@@ -66,7 +69,7 @@ func TestCasualAppGuidanceUsesIsolatedCheckedSupport(t *testing.T) {
 			m.Content = "garmin, yes it does"
 			messages := []cmd.GarminAIMessage{{Role: "user", Content: "Can I sign into Metrolist?"}, {Role: "assistant", Content: "Login is unsupported."}, {Role: "user", Content: "yes it does"}}
 			result, err := b.runGarminAI(context.Background(), nil, m, messages)
-			if err != nil || result == nil || result.Silent || classified != 1 || (appGuidance && (checks != 2 || calls != 2)) || (!appGuidance && (checks != 0 || calls != 1)) {
+			if err != nil || result == nil || result.Silent || classified != 1 || (appGuidance && (checks != 2 || calls != 3)) || (!appGuidance && (checks != 0 || calls != 1)) {
 				t.Fatalf("result=%+v err=%v classified=%d checks=%d calls=%d", result, err, classified, checks, calls)
 			}
 		})

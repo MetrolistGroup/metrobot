@@ -23,7 +23,7 @@ func loadGarminSupportEvidenceSkill() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for _, name := range []string{"rpc", "login", "scrobbling", "playlists"} {
+	for _, name := range []string{"rpc", "login", "scrobbling", "playlists", "discovery"} {
 		guide, err := loadGarminSupportGuide(name)
 		if err != nil {
 			return "", err
@@ -36,13 +36,13 @@ func loadGarminSupportEvidenceSkill() (string, error) {
 func loadGarminSupportGuide(name string) (string, error) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	switch name {
-	case "rpc", "login", "scrobbling", "playlists":
+	case "rpc", "login", "scrobbling", "playlists", "discovery":
 		data, err := garminSkillFiles.ReadFile("garmin_skills/support_" + name + ".md")
 		if err != nil {
 			return "", fmt.Errorf("loading support guide %s: %w", name, err)
 		}
 		return string(data), nil
 	default:
-		return "", fmt.Errorf("unknown support guide %q; available guides: rpc, login, scrobbling, playlists", name)
+		return "", fmt.Errorf("unknown support guide %q; available guides: rpc, login, scrobbling, playlists, discovery", name)
 	}
 }

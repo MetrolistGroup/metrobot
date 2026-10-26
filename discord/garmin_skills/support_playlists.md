@@ -16,6 +16,14 @@ Use for account playlists and synchronization. Music-account login is supported,
 
 For a simple setup request, give sign-in and Library steps, then stop. Do not add import/editing internals or promise instant, complete synchronization.
 
+## Disable automatic account sync in standalone Android
+
+For standalone Android v13.7.0 and source M, open the profile/account menu and turn **Auto-sync with account** off. This stops the automatic account pulls used by Home and the liked/library screens. It does not remove items already imported into Liked, create a separate Metrolist-only YouTube likes collection, or prevent every account write. Explicit refresh can still request a sync, and liking a track can still update YouTube while signed in. Use a local playlist to organize a separate selection without promising that the account's Liked list becomes independent.
+
+These controls are standalone Android instructions. Do not invent an equivalent KMP toggle.
+
+Source checks: `ui/screens/settings/AccountSettings.kt` uses `YtmSyncKey`; `extensions/ContextExt.kt` defines `isSyncEnabled`; `utils/SyncUtils.kt` gates `tryAutoSync` but not `executeLikeSong`; `ui/screens/playlist/AutoPlaylistScreen.kt` gates initial liked-song sync, while `viewmodels/AutoPlaylistViewModel.kt` exposes explicit refresh. Paths use the A/M prefix below.
+
 ## What sync means
 
 - **A/M:** account sync pulls the saved-playlist list and tracks from YouTube Music. Home startup/refresh also requests sync, subject to a 30-minute automatic cooldown; Library → Playlists has a separate queued sync. It is not continuous background mirroring. A can preserve locally stored songs removed remotely and skip empty remote playlists. M has different reconciliation that preserves pending additions but can remove confirmed remote occurrences. Do not promise identical deletion propagation or lossless two-way sync.

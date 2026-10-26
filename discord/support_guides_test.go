@@ -23,7 +23,7 @@ func TestSupportSetupGuidesReachAgentAndEvidenceCheck(t *testing.T) {
 	if err != nil || loaded != selected {
 		t.Fatalf("on-demand support skill must return only the core: %v", err)
 	}
-	for _, name := range []string{"rpc", "login", "scrobbling", "playlists"} {
+	for _, name := range []string{"rpc", "login", "scrobbling", "playlists", "discovery"} {
 		guide, err := loadGarminSupportGuide(name)
 		if err != nil || !strings.Contains(full, guide) || strings.Contains(loaded, guide) {
 			t.Fatalf("wrong guide selection/evidence for %s: %v", name, err)

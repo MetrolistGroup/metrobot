@@ -20,6 +20,7 @@ The setup guides were also compared with KMP `c1e669d51ee021ca96f60ea9914b0d6b5a
 
 | Notes | Decision |
 | --- | --- |
+| `discover` | New note for standalone Android's Your daily discover section on Home. Source verification covers the stable v13.7.0 tag as well as current Android source. |
 | `kmp` | Add OS versions, chip/package choices, IPA signing and Android build details; remove unsupported Windows ARM64 and blanket Linux distribution promises. Preserve existing tester eligibility and no-date policy. |
 | `download` | Replace the expiring Discord video URL with source-verified standalone song-download instructions. |
 | `logs`, `playbackkmp` | Separate Android logcat from KMP playback events, correct export controls and add privacy/reproduction guidance. |
@@ -35,6 +36,6 @@ The setup guides were also compared with KMP `c1e669d51ee021ca96f60ea9914b0d6b5a
 
 ## Selective context
 
-Note short descriptions describe **when to invoke**, including important exclusions. Routing sees names/descriptions, not every body; `get_note` retrieves the selected content. Blank descriptions exclude joke/media notes from automatic support. `load_skill` advertises two short scopes and returns only the selected skill. `load_support_guide` advertises four distinct scopes and retrieves one guide, without automatically bundling the others. The small dedicated support core now includes the scoped project reference and minimal verified standalone login/library steps, not all setup guides. With Decisions configured, casual app-fact requests and short corrections use the isolated support path too; ordinary chat does not load full support evidence. The independent support evidence checker deliberately retains all four trusted guides; selective answering context must not weaken that safety check.
+Note short descriptions describe **when to invoke**, including important exclusions. Routing sees names/descriptions, not every body; `get_note` retrieves the selected content. Blank descriptions exclude joke/media notes from automatic support. `load_skill` advertises two short scopes and returns only the selected skill. `load_support_guide` advertises five distinct scopes and retrieves one guide, without automatically bundling the others. The small dedicated support core now includes the scoped project reference and minimal verified standalone login/library steps, not all setup guides. With Decisions configured, casual app-fact requests and short corrections use the isolated support path too; ordinary chat does not load full support evidence. The independent support evidence checker deliberately retains all five trusted guides; selective answering context must not weaken that safety check.
 
 Source review does not establish device compatibility, successful account login, or the quality of every model answer. Private model replays are small samples: unsafe drafts can still be generated and rejected, valid answers can be suppressed, and semantic routing is probabilistic. Classifier outages stop casual generation rather than risk unchecked app guidance. Tester channels/access policies were preserved, not independently reauthorized.

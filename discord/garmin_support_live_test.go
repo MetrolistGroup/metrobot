@@ -89,6 +89,10 @@ func TestSupportAgentLive(t *testing.T) {
 		casual       bool
 		forbidden    []string
 	}{
+		{id: "discover-question", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Is there a discover playlist in Metrolist?"}}, wantAnswer: true},
+		{id: "discover-note", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Where is Your daily discover in standalone Android?"}}, selectedNote: "discover", wantNote: "discover"},
+		{id: "discover-followup", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Is there a discover playlist in Metrolist?"}, {Role: "assistant", Content: "I'm ready to assist. What is your question?"}, {Role: "user", Content: "answer"}}, wantAnswer: true},
+		{id: "likes-auto-sync", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Standalone Android Metrolist 13.7.0: can I turn off automatic account sync so new YouTube likes stop appearing?"}}, wantAnswer: true, forbidden: []string{"reinstall", "clear app data", "delete your"}},
 		{id: "casual-unrelated", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "hello, how are you?"}}, wantAnswer: true},
 		{id: "casual-login-playlists", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "explain login to him and how to get yt music playlists onto metrolist"}}, wantAnswer: true},
 		{id: "casual-correct-login", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "explain login and how to get youtube music playlists onto metrolist"}, {Role: "assistant", Content: "metrolist doesn't do login."}, {Role: "user", Content: "yes it does, explain how"}}, wantAnswer: true},
@@ -242,6 +246,12 @@ func TestSupportAgentLive(t *testing.T) {
 				}
 				if test.id == "casual-unrelated" && (r.AppGuidance == nil || *r.AppGuidance >= 0.2 || len(r.Checks) != 0) {
 					t.Error("unrelated casual chat loaded support evidence")
+				}
+				if strings.HasPrefix(test.id, "discover-") && (!strings.Contains(strings.ToLower(r.Answer), "daily discover") || !strings.Contains(strings.ToLower(r.Answer), "home")) {
+					t.Error("Discover answer did not explain the actual Home section")
+				}
+				if test.id == "likes-auto-sync" && !strings.Contains(strings.ToLower(r.Answer), "auto-sync") {
+					t.Error("sync answer omitted the actual control")
 				}
 				if test.wantNote != "" && r.Note != test.wantNote {
 					t.Errorf("%s: note = %q, want %q", test.id, r.Note, test.wantNote)

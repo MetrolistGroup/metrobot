@@ -348,8 +348,20 @@ func TestSupportDecisionLiveCatalogAndStaleSelection(t *testing.T) {
 			})
 			m := supportTestMessage(20)
 			b.handleGarminAutomaticAppSupport(client, m, []cmd.GarminAIMessage{{Role: "user", Content: m.Content}})
-			if sent.count() != 0 {
-				t.Fatal("stale selection was sent")
+			want := 1 // A missing/withdrawn source gets only the safe lookup-failure notice.
+			if mutation == "description" {
+				want = 0
+			}
+			if sent.count() != want {
+				t.Fatal("stale selection or an unexpected response was sent")
+			}
+			if want == 1 {
+				sent.mu.Lock()
+				body := sent.bodies[0]
+				sent.mu.Unlock()
+				if !strings.Contains(body, supportUnavailableReply) {
+					t.Fatal("stale selection was exposed instead of the safe notice")
+				}
 			}
 			_, catalog, err := b.supportDecisionRequest(m, nil)
 			if err != nil {
@@ -554,7 +566,7 @@ func TestConfiguredSupportDecisionsUsedByMessageHandler(t *testing.T) {
 }
 
 func TestSupportDecisionAgentFailedHandoffCanRetry(t *testing.T) {
-	for _, failure := range []string{"busy", "cooldown", "model", "reply", "note"} {
+	for _, failure := range []string{"busy", "cooldown", "reply", "note"} {
 		t.Run(failure, func(t *testing.T) {
 			b, client, sent := newSupportDecisionTestBot(t)
 			decisionCalls := 0
@@ -564,11 +576,7 @@ func TestSupportDecisionAgentFailedHandoffCanRetry(t *testing.T) {
 				}
 				return supportTestDecision(request, "agent", .99, .99), nil
 			})
-			failed := true
 			b.garminAI = garminAITestFunc(func(ctx context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-				if failure == "model" && failed {
-					return nil, errors.New("synthetic model failure")
-				}
 				if failure == "note" {
 					return supportTestNoteAnswer("nightly", "Relevant nightly instructions.")(ctx, request)
 				}
@@ -591,7 +599,6 @@ func TestSupportDecisionAgentFailedHandoffCanRetry(t *testing.T) {
 				t.Fatal("failed handoff retained seen state or a note cooldown")
 			}
 			attempts := sent.count()
-			failed = false
 			sent.fail.Store(false)
 			if failure == "busy" {
 				for i := 0; i < cap(b.garminAISlots); i++ {
