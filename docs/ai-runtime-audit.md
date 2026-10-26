@@ -60,6 +60,7 @@ Remaining limits:
 
 - No live API replay, provider cache-hit measurement, latency/cost benchmark, Discord UI test, hardware check or production rollout was performed. Broader tool schemas and deferred history can cost more tokens or model rounds.
 - Tool discovery and source provenance do not establish semantic answer correctness. Device/source intent still uses heuristics; URL checks do not prove a page matches every claimed product or specification. Casual chat still lacks the support-only evidence gate. Previous live Qwen quality problems are not declared fixed.
+- Retained chat does not preserve trusted public-tool provenance. A public lookup whose subject appears only in earlier chat can require the user to restate it, even though the conversation itself is still retained.
 - Credential-shaped requests fail closed, including ambiguous benign password/Bearer/possessive-secret phrases. These patterns are not a complete secret detector. Users may need to restate a credential-free public subject.
 - Restarts, expiry, resets and bounded eviction still clear context. Compaction is lossy. Older summaries do not track complete deletion lineage or original permission provenance; deleting an old message does not prove its facts were erased from every summary.
 - Existing shared-memory claims were not audited or rewritten by this change. Stopping automatic learning does not correct old claims.
