@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/go-github/v60/github"
+	"github.com/google/go-github/v93/github"
 	"golang.org/x/oauth2"
 )
 
@@ -37,20 +37,23 @@ type WorkflowRunInfo struct {
 	HeadSHA    string
 }
 
-func NewActionsClient(token, owner, repo, workflowFile string) *ActionsClient {
+func NewActionsClient(token, owner, repo, workflowFile string) (*ActionsClient, error) {
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
 	tc := oauth2.NewClient(context.Background(), ts)
 	tc.Timeout = 15 * time.Second
 	tc.CheckRedirect = sameOriginRedirect
 	tc.Transport = boundedGitHubTransport{base: tc.Transport}
-	client := github.NewClient(tc)
+	client, err := github.NewClient(github.WithHTTPClient(tc))
+	if err != nil {
+		return nil, fmt.Errorf("creating GitHub Actions client: %w", err)
+	}
 
 	return &ActionsClient{
 		client:       client,
 		owner:        owner,
 		repo:         repo,
 		workflowFile: workflowFile,
-	}
+	}, nil
 }
 
 func (a *ActionsClient) FetchRuns(ctx context.Context) (*ActionsResult, error) {
@@ -77,7 +80,11 @@ func (a *ActionsClient) FetchRuns(ctx context.Context) (*ActionsResult, error) {
 		},
 	)
 	if isForbiddenGitHubError(err) {
-		runs, _, err = newPublicGitHubClient().Actions.ListWorkflowRunsByFileName(
+		client, err = newPublicGitHubClient()
+		if err != nil {
+			return nil, err
+		}
+		runs, _, err = client.Actions.ListWorkflowRunsByFileName(
 			ctx, a.owner, a.repo, a.workflowFile,
 			&github.ListWorkflowRunsOptions{
 				Branch:      "main",
@@ -152,19 +159,22 @@ type ReleasesClient struct {
 	fetchedAt time.Time
 }
 
-func NewReleasesClient(token, owner, repo string) *ReleasesClient {
+func NewReleasesClient(token, owner, repo string) (*ReleasesClient, error) {
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
 	tc := oauth2.NewClient(context.Background(), ts)
 	tc.Timeout = 15 * time.Second
 	tc.CheckRedirect = sameOriginRedirect
 	tc.Transport = boundedGitHubTransport{base: tc.Transport}
-	client := github.NewClient(tc)
+	client, err := github.NewClient(github.WithHTTPClient(tc))
+	if err != nil {
+		return nil, fmt.Errorf("creating GitHub releases client: %w", err)
+	}
 
 	return &ReleasesClient{
 		client: client,
 		owner:  owner,
 		repo:   repo,
-	}
+	}, nil
 }
 
 func (r *ReleasesClient) FetchReleases(ctx context.Context) ([]*ReleaseInfo, error) {
@@ -188,7 +198,11 @@ func (r *ReleasesClient) FetchReleases(ctx context.Context) ([]*ReleaseInfo, err
 		&github.ListOptions{PerPage: 50},
 	)
 	if isForbiddenGitHubError(err) {
-		releases, _, err = newPublicGitHubClient().Repositories.ListReleases(
+		client, err = newPublicGitHubClient()
+		if err != nil {
+			return nil, err
+		}
+		releases, _, err = client.Repositories.ListReleases(
 			ctx, r.owner, r.repo,
 			&github.ListOptions{PerPage: 50},
 		)
@@ -227,7 +241,10 @@ func (r *ReleasesClient) FetchReleases(ctx context.Context) ([]*ReleaseInfo, err
 func publicRepositoryClient(ctx context.Context, client *github.Client, owner, repo string) (*github.Client, error) {
 	repository, _, err := client.Repositories.Get(ctx, owner, repo)
 	if isForbiddenGitHubError(err) {
-		client = newPublicGitHubClient()
+		client, err = newPublicGitHubClient()
+		if err != nil {
+			return nil, err
+		}
 		repository, _, err = client.Repositories.Get(ctx, owner, repo)
 	}
 	if err != nil {
@@ -269,11 +286,11 @@ func (t boundedGitHubTransport) RoundTrip(req *http.Request) (*http.Response, er
 	return response, err
 }
 
-func newPublicGitHubClient() *github.Client {
-	return github.NewClient(&http.Client{
+func newPublicGitHubClient() (*github.Client, error) {
+	return github.NewClient(github.WithHTTPClient(&http.Client{
 		Timeout: 15 * time.Second, CheckRedirect: sameOriginRedirect,
 		Transport: boundedGitHubTransport{base: http.DefaultTransport},
-	})
+	}))
 }
 
 func firstLine(s string) string {

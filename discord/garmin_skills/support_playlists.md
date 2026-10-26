@@ -5,8 +5,8 @@ Use for account playlists and synchronization. Music-account login is supported,
 ## Verified scopes
 
 - **A:** standalone Android v13.7.0, `MetrolistGroup/Metrolist@7c5ba3ad22cb562d337897f82163a2b7fce665f3`.
-- **M:** Android main snapshot `6d08504262de76a4ba841dc24489a754e2f48e4f`; same entry flow, different deletion reconciliation noted below.
-- **K:** KMP snapshot `MetrolistGroup/Metrolist-KMP@2ac8e47c5566b5771133d798618d75cc69c2d039`, covering Android, desktop and iOS. This is source evidence, not proof of availability in a distributed KMP release.
+- **M:** Android source snapshot `876e355181fd3b04e7063b10442fef1b721d53b3`. The entry flow matches A. Deletion handling differs as noted below.
+- **K:** KMP source snapshot `MetrolistGroup/Metrolist-KMP@c1e669d51ee021ca96f60ea9914b0d6b5aba8ad6` covers Android, desktop and iOS. It does not prove availability in a distributed KMP release.
 
 ## Get existing YouTube Music playlists into Metrolist
 

@@ -5,8 +5,8 @@ Scrobbling sends Metrolist playback history; Now Playing is separate live status
 ## Build scope
 
 - **A: standalone Android v13.7.0 stable**, `Metrolist@7c5ba3ad22cb562d337897f82163a2b7fce665f3`: Last.fm only; no Libre.fm or ListenBrainz integration found.
-- Android checkout/origin/main: `6d08504262de76a4ba841dc24489a754e2f48e4f`, **not** stable; same Last.fm UI/manager/API as A.
-- **K: KMP source**, `Metrolist-KMP@2ac8e47c5566b5771133d798618d75cc69c2d039`: HEAD matched origin/main. Android/desktop/iOS UI and playback support Last.fm and ListenBrainz; no Libre.fm found. Released-build availability is **unverified**.
+- Android source snapshot `876e355181fd3b04e7063b10442fef1b721d53b3` is not stable. Its Last.fm UI, manager and API match A.
+- **K: KMP source**, `Metrolist-KMP@c1e669d51ee021ca96f60ea9914b0d6b5aba8ad6`. Android, desktop and iOS support Last.fm and ListenBrainz. No Libre.fm integration was found. This local snapshot does not verify released-build availability.
 
 Default English labels; match app/build, version and platform first.
 

@@ -1,4 +1,4 @@
-# Build and push metrobot Docker image to GHCR (Go 1.26.1, distroless)
+# Build and push the metrobot Docker image to GHCR (distroless runtime)
 name: Docker
 
 on:

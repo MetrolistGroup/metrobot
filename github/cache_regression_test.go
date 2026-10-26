@@ -7,14 +7,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	gh "github.com/google/go-github/v60/github"
+	gh "github.com/google/go-github/v93/github"
 )
 
 func TestIssueSearchUsesTokenAndFiltersUnverifiedRepositories(t *testing.T) {
@@ -136,8 +135,11 @@ func TestGitHubCachesReturnIndependentValues(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	api := gh.NewClient(server.Client())
-	api.BaseURL, _ = url.Parse(server.URL + "/")
+	baseURL := server.URL + "/"
+	api, err := gh.NewClient(gh.WithHTTPClient(server.Client()), gh.WithURLs(&baseURL, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
 	actions := &ActionsClient{client: api, owner: "owner", repo: "repo", workflowFile: "build.yml"}
 	releases := &ReleasesClient{client: api, owner: "owner", repo: "repo"}
 	ctx := context.Background()
@@ -198,8 +200,11 @@ func TestEmptyReleaseListIsCached(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	api := gh.NewClient(server.Client())
-	api.BaseURL, _ = url.Parse(server.URL + "/")
+	baseURL := server.URL + "/"
+	api, err := gh.NewClient(gh.WithHTTPClient(server.Client()), gh.WithURLs(&baseURL, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
 	client := &ReleasesClient{client: api, owner: "owner", repo: "repo"}
 	for range 2 {
 		if releases, err := client.FetchReleases(context.Background()); err != nil || len(releases) != 0 {
@@ -221,8 +226,11 @@ func TestActionsAndReleasesRejectPrivateRepositories(t *testing.T) {
 		fmt.Fprint(w, `{"private":true}`)
 	}))
 	defer server.Close()
-	api := gh.NewClient(server.Client())
-	api.BaseURL, _ = url.Parse(server.URL + "/")
+	baseURL := server.URL + "/"
+	api, err := gh.NewClient(gh.WithHTTPClient(server.Client()), gh.WithURLs(&baseURL, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	actions := &ActionsClient{client: api, owner: "owner", repo: "private", workflowFile: "build.yml"}
 	if _, err := actions.FetchRuns(ctx); err == nil || !strings.Contains(err.Error(), "private") {

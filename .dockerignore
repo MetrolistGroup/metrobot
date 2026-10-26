@@ -8,6 +8,9 @@
 *_test.go
 **/*_test.go
 config.json
+.env
+.env.*
+*.har
 bot.db*
 bot.log
 metrobot

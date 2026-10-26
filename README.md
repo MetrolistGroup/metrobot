@@ -16,6 +16,6 @@ The bot has no web interface or inbound HTTP listener.
 - [Automatic app-support routing](docs/support-routing.md): opt-in OpenRouter Decisions routing, note eligibility, privacy and rollout checks.
 - [Garmin base prompt](docs/prompt.md): stored overrides survive restarts and apply to new AI requests.
 
-Admins manage shared AI memory with `/memory view|append|replace|clear` when AI is enabled. Shared memory is limited to 16 KiB including its trailing newline.
+Admins can view shared AI memory with `/memory view`. Writing with `/memory append|replace|clear` also requires Nyx or Lamp. Shared memory is limited to 16 KiB including its trailing newline. Conversation summaries stay in RAM and cannot write shared memory.
 
 Keep the existing `bot.db` and shared memory file when replacing the binary. Back up the database before upgrading. The first markup-enabled run migrates legacy note behavior into explicit markup. Already-migrated databases must retain that markup and migration metadata.

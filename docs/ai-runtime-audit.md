@@ -1,6 +1,6 @@
 # AI runtime audit
 
-This is an offline code audit, not a deployment or evidence of optimal model performance. No production configuration, model, saved memory, notes or database was changed.
+This records the offline audit before the later support rollout. The audit itself changed no production data or configuration. Current support routing, casual app-guidance checks and shared-memory rules are documented in [support-routing.md](support-routing.md) and [prompt.md](prompt.md). The limits below describe the audited version, not the current deployment.
 
 ## Paths covered
 

@@ -5,8 +5,8 @@ Match variant/version/platform first. English labels. Music-account login, not D
 ## Source applicability
 
 - **A: standalone Android v13.7.0**, tag `7c5ba3ad22cb562d337897f82163a2b7fce665f3` in the Metrolist repository.
-- **M: standalone Android main**, HEAD/main `6d08504262de76a4ba841dc24489a754e2f48e4f` (`6d0850426`), not the stable tag. Traced login flow matches A.
-- **K: KMP**, the Metrolist-KMP repository HEAD equals local `origin/main`: `2ac8e47c5566b5771133d798618d75cc69c2d039`. Snapshot only, not remote freshness or proof of features/access in a user's release.
+- **M: standalone Android source**, `876e355181fd3b04e7063b10442fef1b721d53b3`, not the stable tag. The login flow matches A.
+- **K: KMP source**, `c1e669d51ee021ca96f60ea9914b0d6b5aba8ad6`. This local snapshot does not prove remote freshness or availability in a user's release.
 
 ## Standalone Android (A; also traced in M)
 
@@ -24,16 +24,16 @@ Top-bar profile button → **Sign in** while signed out (mobile popup/desktop me
 | --- | --- |
 | Android | **Sign in to YouTube Music**: in-app Android WebView, Google sign-in → YouTube Music; no system-browser callback. Initial login relaunches the app; channel switching returns. TV's **Sign in on TV** warns a keyboard/mouse may be needed. [K2] |
 | iOS | **Sign in to YouTube Music**: **WKWebView**, Google sign-in → YouTube Music. New login clears its cookies; switching preserves them. Completion returns and refreshes the app. [K3] |
-| Linux/macOS desktop | **Sign In - YouTube Music**: native WebView, Google sign-in → YouTube Music. Automatic completion; **Complete sign-in** retries completion if the view remains after reaching Music. Failed Linux WebKit detection shows **YouTube sign-in unavailable** / **Channel switch unavailable**. [K4] |
-| Windows desktop | **Windows Login Helper** auto-launches a separate **WebView2 helper window**, not the default browser. Sign in there; session returns automatically. **Start Login Process** is available when it is not running; missing/failed helpers show errors. [K4] |
+| Linux/macOS desktop | **Sign in to YouTube Music**: native WebView, Google sign-in → YouTube Music. Automatic completion; **Complete sign-in** retries completion if the view remains after reaching Music. Failed Linux WebKit detection shows **YouTube sign-in unavailable** / **Channel switch unavailable**. [K4] |
+| Windows desktop | **Windows login helper** opens a separate **WebView2 helper window**. Sign in there. The session returns to Metrolist. **Start login process** is available when it is not running; missing/failed helpers show errors. [K4] |
 
 - Do not append an app channel-picker/Continue step to Windows initial login: that step is verified only for the other platforms below. The Windows helper returns its session automatically.
-- Android/iOS/non-Windows desktop show **Choose a YouTube channel** when multiple channels are discovered: select one and **Continue**. Signed-in menus offer **Switch YouTube channel**. Windows switching lists only channels usable from the existing session; **Start Login Process** starts fresh helper login. Do not promise every channel is listed. [K1–K4]
+- Android/iOS/non-Windows desktop show **Choose a YouTube channel** when multiple channels are discovered: select one and **Continue**. Signed-in menus offer **Switch YouTube channel**. Windows switching lists only channels usable from the existing session; **Start login process** starts fresh helper login. Do not promise every channel is listed. [K1–K4]
 - For another Google login, the verified entry is **Sign in** after **Log out** and confirmation. No Keep/Clear choice here. Logout clears app credentials/web-session state, not Google sign-in elsewhere. Desktop can report **Signed out, but the WebView login profile could not be removed.** with **Retry cleanup**; do not claim cleanup succeeded. [K1, K5]
 
 ## Advanced mode / privacy
 
-A has **Log in with token**; K has **Login with token** → **Advanced sign-in** (iOS/TV also expose **Token login**). These edit local session credentials; prefer ordinary sign-in. [A1, K1–K4, K6]
+A has **Log in with token**; K has **Log in with token** → **Advanced sign-in** (iOS/TV also expose **Token login**). These edit local session credentials; prefer ordinary sign-in. [A1, K1–K4, K6]
 
 Tokens/cookies can grant account access. Never request passwords, cookies, tokens, HARs or credential-bearing screenshots/logs in chat, DMs or bot tools. Advanced credential entry belongs only in the user's own app. No extraction techniques or credentials sent to the bot.
 

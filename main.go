@@ -104,8 +104,14 @@ func main() {
 
 	logger.Info("database initialized")
 
-	actionsClient := gh.NewActionsClient(cfg.GitHubToken, cfg.GitHubOwner, cfg.GitHubRepo, cfg.ActionsWorkflowFile)
-	releasesClient := gh.NewReleasesClient(cfg.GitHubToken, cfg.GitHubOwner, cfg.GitHubRepo)
+	actionsClient, err := gh.NewActionsClient(cfg.GitHubToken, cfg.GitHubOwner, cfg.GitHubRepo, cfg.ActionsWorkflowFile)
+	if err != nil {
+		logger.Fatal("failed to initialize GitHub Actions client", zap.Error(err))
+	}
+	releasesClient, err := gh.NewReleasesClient(cfg.GitHubToken, cfg.GitHubOwner, cfg.GitHubRepo)
+	if err != nil {
+		logger.Fatal("failed to initialize GitHub releases client", zap.Error(err))
+	}
 
 	notesHandler := &cmd.NotesHandler{DB: database}
 	versionHandler := &cmd.VersionHandler{Releases: releasesClient}

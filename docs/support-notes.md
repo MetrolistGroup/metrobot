@@ -14,6 +14,8 @@ Reviewed all 18 saved notes against these sources on 26 October 2026:
 - RPC setup/privacy wording uses the immutable source scopes in `discord/garmin_skills/support_rpc.md`; no claim that OAuth is risk-free or local logout revokes remote authorization.
 - `metrosite2` branding/resources and both app repositories agree on the official website and donation destinations. Source is stronger evidence than stale website/download copy.
 
+The setup guides were also compared with KMP `c1e669d51ee021ca96f60ea9914b0d6b5aba8ad6` and standalone `876e355181fd3b04e7063b10442fef1b721d53b3`. The documented sign-in, playlist sync and integration flows still match. KMP's English labels now include **Log out**, **Log in with token** and **Windows login helper**. The guides use those labels and identify local snapshots without claiming they match the current remote branch.
+
 ## Inventory decisions
 
 | Notes | Decision |

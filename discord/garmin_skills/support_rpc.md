@@ -5,8 +5,8 @@ Use for setup/how-to questions. Match product, version and platform first. Label
 ## Verified scopes
 
 - **A: standalone Android v13.7.0**, tag commit `7c5ba3ad22cb562d337897f82163a2b7fce665f3`.
-- **B: standalone Android main source**, `6d08504262de76a4ba841dc24489a754e2f48e4f`; same menu/login/switch flow as A.
-- **C: KMP source**, `2ac8e47c5566b5771133d798618d75cc69c2d039` (checkout verified equal to origin/main); Android, desktop and iOS integration callers.
+- **B: standalone Android source**, `876e355181fd3b04e7063b10442fef1b721d53b3`. Its menu, login and switch flow matches A.
+- **C: KMP source**, `c1e669d51ee021ca96f60ea9914b0d6b5aba8ad6`. Checked Android, desktop and iOS integration callers. This is a local snapshot.
 
 Source-verified, not device-tested. B/C do not prove availability in distributed releases. Do not apply C's labels/lifecycle to A/B or call current source a released fix.
 
@@ -46,7 +46,7 @@ Platform authorization differences:
 - **Desktop:** uses an embedded authorization window; it intercepts the callback and closes after successful exchange. Webview availability/writable storage can block sign-in; no universal remedy is verified.
 - **iOS:** opens HTTPS authorization via the system URL opener and handles the app callback; this caller makes no explicit app-first attempt.
 
-- Stop sharing: turn **Enable Discord Rich Presence** off. The manager attempts to clear presence before suspending its connection; login remains. To remove saved authorization, use the **Logout** account row and confirm.
+- Stop sharing: turn **Enable Discord Rich Presence** off. The manager attempts to clear presence before suspending its connection; login remains. To remove saved authorization, use the **Log out** account row and confirm.
 - Unlike A/B, C clears presence when playback is paused or there is no current song. iOS explicitly attempts to keep RPC connected during background playback and disconnects when backgrounded without playback; OS suspension and actual background reliability are unverified.
 - **Advanced mode** exposes activity/text/button customization. **Refresh RPC** re-submits presence, requiring login, the enable switch, a current track and a ready manager. It is not a verified fix.
 

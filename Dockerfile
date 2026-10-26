@@ -1,5 +1,5 @@
-# Build stage: minimal Go 1.26.1 image
-FROM golang:1.26.1-alpine AS builder
+# Build stage: match the Go version required by go.mod
+FROM golang:1.27.3-alpine AS builder
 WORKDIR /src
 
 COPY go.mod go.sum ./
