@@ -11,6 +11,7 @@ do you want to selfhost this bot? don't. it's pretty custom-made for us, it won'
 
 The bot has no web interface or inbound HTTP listener.
 
+- [Media commands](docs/media.md): cartoon nuke GIFs, private OCR/English translation and offline SynthID research limitations.
 - [Note markup](docs/notes.md): random groups, interactive FAQs and authored Components V2 layouts. The bot migrates existing donate/KMP behavior once. Behavior depends on note content, not names.
 - [Support note maintenance](docs/support-notes.md): source-checked platform/build guidance and selective note/skill retrieval.
 - [Automatic app-support routing](docs/support-routing.md): opt-in OpenRouter Decisions routing, note eligibility, privacy and rollout checks.

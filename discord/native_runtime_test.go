@@ -66,7 +66,8 @@ func TestNativeStartupRegistersCommandsAfterReadyAndCleansFailures(t *testing.T)
 				}
 				for _, command := range commands {
 					commandNames = append(commandNames, command.Name)
-					if command.Name == "Clip" && command.Type != 3 || command.Name != "Clip" && command.Type != 1 {
+					isMessageCommand := command.Name == "Clip" || command.Name == "OCR Translate"
+					if isMessageCommand && command.Type != 3 || !isMessageCommand && command.Type != 1 {
 						t.Errorf("command %s has type %d", command.Name, command.Type)
 					}
 					if command.Name == "bulkrole" && (value(command.Permissions) != "268435456" || len(command.Options) != 2 || command.Options[0].Type != 8) {
@@ -104,7 +105,8 @@ func TestNativeStartupRegistersCommandsAfterReadyAndCleansFailures(t *testing.T)
 					t.Fatal("commands registered without readiness")
 				}
 			} else {
-				want := strings.Fields("help gsm nanoreview technicalcity gsmcompare nanoreviewcompare technicalcitycompare ctx-reset quote Clip notes note addnote editnote renamenote delnote version latest actions ban dban tban sban kick mute timeout warn warnings unwarn dehoist approvenick bulkrole addadmin removeadmin memory ping purge scanreactions refreshstarboard")
+				want := strings.Fields("help gsm nanoreview technicalcity gsmcompare nanoreviewcompare technicalcitycompare ctx-reset quote Clip nuke notes note addnote editnote renamenote delnote version latest actions ban dban tban sban kick mute timeout warn warnings unwarn dehoist approvenick bulkrole addadmin removeadmin memory ping purge scanreactions refreshstarboard")
+				want = slices.Insert(want, slices.Index(want, "nuke"), "OCR Translate")
 				if !slices.Equal(commandNames, want) {
 					t.Fatalf("command set changed: %v", commandNames)
 				}

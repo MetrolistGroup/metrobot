@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
@@ -60,6 +61,7 @@ type Bot struct {
 	messageLogMu         sync.Mutex
 	messageLogCache      map[string][]cachedLogMessage
 	youtubeWebhookMu     sync.Mutex
+	nukeBusy             atomic.Bool
 	TimedBanRestorer     func()
 	ready                chan struct{}
 	readyOnce            sync.Once
@@ -248,6 +250,14 @@ func (b *Bot) registerCommands() error {
 		Description: "Turn the previous message into a quote image",
 	}, discord.MessageCommandCreate{
 		Name: "Clip",
+	}, discord.MessageCommandCreate{
+		Name: "OCR Translate",
+	}, discord.SlashCommandCreate{
+		Name:        "nuke",
+		Description: "Nuke a user's avatar in a cartoon GIF",
+		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
+			Name: "user", Description: "User to nuke", Required: true,
+		}},
 	}, discord.SlashCommandCreate{
 		Name:        "notes",
 		Description: "List all available notes",
