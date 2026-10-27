@@ -264,17 +264,17 @@ func (b *Bot) runSupportDecisionAgent(s *bot.Client, m *discord.Message, message
 		if requestCtx.Err() != nil || !b.garminMessageVisible(m.ChannelID.String(), m.ID.String()) {
 			return false
 		}
-		conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: supportUnavailableReply, Timestamp: time.Now().UTC()})
-		return b.sendGarminAppSupportReplyAndRememberIfVisible(s, m, supportUnavailableReply, conversation, "") != nil
+		return b.sendGarminUnansweredReplyIfVisible(s, m, supportUnavailableReply, messages) != nil
 	}
 	if ctx.Err() != nil {
 		return false
 	}
 	if result.Silent {
-		if !result.Unverified {
-			b.clearGarminAIUnansweredContext(m)
+		if result.Unverified {
+			return b.sendGarminUnansweredReplyIfVisible(s, m, supportUnverifiedReply, messages) != nil
 		}
-		return !result.Unverified
+		b.clearGarminAIUnansweredContext(m)
+		return true
 	}
 	if strings.TrimSpace(result.Answer) == "" {
 		return false

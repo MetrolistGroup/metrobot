@@ -10,6 +10,7 @@ Reviewed all 18 saved notes against these sources on 26 October 2026:
 - KMP diagnostics: shared `ui/screens/AboutScreen.kt`, `ui/settings/PlaybackEventLogSection.kt`, `ui/mobile/MobileApp.kt`, Android/desktop `PlaybackEventLogSection.kt` and desktop `utils/AppLogger.kt`. Three logo taps unlock Devtools; current shared export button is **Share**, iOS exposes **Copy**. Desktop export is saved to the log directory.
 - KMP migration: shared `backup/{BackupFormat,LegacyBackupConversion,LegacyPreferencesProto}.kt`, platform backup/restore callers and desktop Spotify import. Restoration can replace destination data; do not promise migration of every platform setting, credential or audio file.
 - `MetrolistGroup/Metrolist@876e355181fd3b04e7063b10442fef1b721d53b3` and stable `v13.7.0` (`7c5ba3ad22cb562d337897f82163a2b7fce665f3`): `app/build.gradle.kts`, song menu, Player/Storage settings and release/nightly workflows. Standalone minimum API 26; FOSS/GMS/Izzy capabilities are distinct from KMP. Sibling checkout has unrelated local workflow/toolchain edits, which were neither changed nor treated as published behavior.
+- The same standalone v13.7.0 tag verifies the updater in `SettingsScreen.kt`, `UpdaterSettings.kt`, `MainActivity.kt` and string resources. GitHub FOSS/GMS builds enable it; Izzy disables it in `app/build.gradle.kts`. Automatic checks/notifications are distinct from silent automatic installation.
 - Live public GitHub release metadata confirms stable v13.7.0 APK names and the standalone nightly Google Cast asset. LogFox/Shizuku release-page links replace old version-pinned APK links.
 - RPC setup/privacy wording uses the immutable source scopes in `discord/garmin_skills/support_rpc.md`; no claim that OAuth is risk-free or local logout revokes remote authorization.
 - `metrosite2` branding/resources and both app repositories agree on the official website and donation destinations. Source is stronger evidence than stale website/download copy.
@@ -24,7 +25,8 @@ The setup guides were also compared with KMP `c1e669d51ee021ca96f60ea9914b0d6b5a
 | `kmp` | Add OS versions, chip/package choices, IPA signing and Android build details; remove unsupported Windows ARM64 and blanket Linux distribution promises. Preserve existing tester eligibility and no-date policy. |
 | `download` | Replace the expiring Discord video URL with source-verified standalone song-download instructions. |
 | `logs`, `playbackkmp` | Separate Android logcat from KMP playback events, correct export controls and add privacy/reproduction guidance. |
-| `nightly`, `up`, `ver` | Distinguish standalone and KMP, document verified minima/flavors, avoid pinned stable download URLs and unsafe uninstall advice. |
+| `up` | Document Settings → Updater, manual/automatic checks and notifications, with GitHub versus Izzy build scope. Preserve safe in-place APK installation; no KMP menu or live-version assumptions. |
+| `nightly`, `ver` | Distinguish standalone and KMP, document verified minima/flavors, avoid pinned stable download URLs and unsafe uninstall advice. |
 | `playback`, `rpc` | Remove blanket fix/privacy promises and routine logout advice; retain scoped, low-risk checks and actual setup. |
 | `repo` | Identify public standalone source without promising KMP source access. |
 | `appname`, `whatsnightly` | Add invocation descriptions; retain the name origin and clarify nightly's limits. |

@@ -312,7 +312,6 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 		noteReference = name
 	}
 	supportDraftRetried := false
-	supportRetryTools := 0
 	for round := 0; round < maxToolRounds; round++ {
 		if !b.garminMessageVisible(m.ChannelID.String(), m.ID.String()) {
 			result.Silent = true
@@ -495,14 +494,6 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 			historyReady = true
 			continue
 		}
-		if appSupport && supportDraftRetried && result.ToolCalls == supportRetryTools && len(assistantMessage.ToolCalls) == 0 {
-			if round+1 < maxToolRounds {
-				conversation = append(conversation, cmd.GarminAIMessage{Role: "system", Content: "Read the relevant evidence with a supplied tool before rewriting. Your unsourced draft was not sent."})
-				continue
-			}
-			result.Silent, result.Unverified, result.Conversation = true, true, conversation
-			return result, nil
-		}
 		conversation = append(conversation, assistantMessage)
 		if len(assistantMessage.ToolCalls) == 0 {
 			if parsedTextRepositoryCall {
@@ -571,11 +562,11 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 				if !grounded {
 					if !supportDraftRetried {
 						supportDraftRetried = true
-						supportRetryTools = result.ToolCalls
+						tools = withoutGarminTools(tools, "do_not_respond")
 						maxToolRounds = max(maxToolRounds, round+3)
 						finalOnly = false
 						conversation = conversation[:len(conversation)-1] // Do not anchor the retry on an undelivered, rejected draft.
-						conversation = append(conversation, cmd.GarminAIMessage{Role: "system", Content: "Your draft failed the support evidence check and was not sent. Before rewriting, use a supplied tool to read the evidence needed for this question. Read the matching guide or note for feature/setup instructions, or live release data for a current-version question. Do not guess a shorter version from memory. Then rewrite once in at most 60 words using only that reference, or ask one necessary missing detail. If no relevant reference exists, say which fact you cannot verify instead of inventing menus or claiming a feature is absent. Remove any person/contact, prerequisite, extra step, diagnosis or fix not explicitly supported. Do not blend Google login with Discord login, or mix platform-specific steps. For login or playlist setup with unknown app variant/platform, ask only which app/platform they use; give no setup steps in that retry. For other setup, use source-verified common steps and ask about variant/platform only when the needed steps differ materially. If the user only corrects a login denial, acknowledge that login is supported in both standalone Android and KMP, then stop. Never retry unsupported platform-specific steps. For unread attachments ask for pasted text, not another screenshot. Only claim a lookup occurred if its tool result is present. For current-release questions, use a returned latest_release tag/link; nightly installation is a separate saved procedure, not a claim about the current version. Do not mention this check."})
+						conversation = append(conversation, cmd.GarminAIMessage{Role: "system", Content: "Your draft failed the support evidence check and was not sent. Use the verified references already supplied; do not repeat a lookup when the loaded note already answers the question. Retrieve missing evidence with a supplied tool only when needed, including live release data for a current-version claim. Do not guess a shorter version from memory. Then answer once in at most 60 words. If the verified reference supplies a short answer, copy its applicable wording and conditions instead of paraphrasing it. Otherwise extract only the needed source sentences, or ask one concrete missing detail. Do not invent a menu entry to connect those sentences. If no relevant reference exists, say which fact you cannot verify instead of inventing menus or claiming a feature is absent. Remove any person/contact, prerequisite, extra step, diagnosis or fix not explicitly supported. Do not blend Google login with Discord login, or mix platform-specific steps. For login or playlist setup with unknown app variant/platform, ask only which app/platform they use; give no setup steps in that retry. For other setup, use source-verified common steps and ask about variant/platform only when the needed steps differ materially. If the user only corrects a login denial, acknowledge that login is supported in both standalone Android and KMP, then stop. Never retry unsupported platform-specific steps. For unread attachments ask for pasted text, not another screenshot. Only claim a lookup occurred if its tool result is present. For current-release questions, use a returned latest_release tag/link; nightly installation is a separate saved procedure, not a claim about the current version. Do not mention this check."})
 						continue
 					}
 					result.Silent, result.Unverified = true, true

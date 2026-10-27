@@ -348,20 +348,18 @@ func TestSupportDecisionLiveCatalogAndStaleSelection(t *testing.T) {
 			})
 			m := supportTestMessage(20)
 			b.handleGarminAutomaticAppSupport(client, m, []cmd.GarminAIMessage{{Role: "user", Content: m.Content}})
-			want := 1 // A missing/withdrawn source gets only the safe lookup-failure notice.
+			notice := supportUnavailableReply
 			if mutation == "description" {
-				want = 0
+				notice = supportUnverifiedReply
 			}
-			if sent.count() != want {
-				t.Fatal("stale selection or an unexpected response was sent")
+			if sent.count() != 1 {
+				t.Fatal("stale selection did not get a single safe failure notice")
 			}
-			if want == 1 {
-				sent.mu.Lock()
-				body := sent.bodies[0]
-				sent.mu.Unlock()
-				if !strings.Contains(body, supportUnavailableReply) {
-					t.Fatal("stale selection was exposed instead of the safe notice")
-				}
+			sent.mu.Lock()
+			body := sent.bodies[0]
+			sent.mu.Unlock()
+			if !strings.Contains(body, notice) {
+				t.Fatal("stale selection was exposed instead of the safe notice")
 			}
 			_, catalog, err := b.supportDecisionRequest(m, nil)
 			if err != nil {

@@ -57,8 +57,8 @@ func TestSupportLookupFailureNotifiesAndRetainsQuestion(t *testing.T) {
 	m.Content = "Is there a discover playlist?"
 	messages := []cmd.GarminAIMessage{{Role: "user", Content: m.Content}}
 	b.handleGarminAutomaticAppSupport(client, m, messages)
-	retained := b.garminAIUserContexts[garminAIUserContextKey(m)].messages
-	if sent.count() != 1 || len(retained) != 2 || retained[1].Content != supportUnavailableReply {
+	retained := b.garminAIUserContexts[garminAIUserContextKey(m)]
+	if sent.count() != 1 || len(retained.messages) != 1 || retained.messages[0].Content != m.Content || !retained.unanswered || !retained.ambientUntil.IsZero() {
 		t.Fatal("lookup failure did not send a safe notice and retain the question")
 	}
 	b.handleGarminAutomaticAppSupport(client, m, messages)
@@ -78,7 +78,7 @@ func TestSupportLookupFailureNotifiesAndRetainsQuestion(t *testing.T) {
 	}
 }
 
-func TestPostRejectionSilenceRemainsRetryable(t *testing.T) {
+func TestPostRejectionCannotChooseSilence(t *testing.T) {
 	b, client, sent := newSupportDecisionTestBot(t)
 	calls := 0
 	b.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
@@ -87,17 +87,20 @@ func TestPostRejectionSilenceRemainsRetryable(t *testing.T) {
 		}
 		return supportTestDecision(request, "agent", .01, .01), nil
 	})
-	b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		calls++
 		if calls == 1 {
 			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "UNSUPPORTED_DRAFT"}}, nil
+		}
+		if garminToolAvailable(request.Tools, "do_not_respond") {
+			t.Fatal("rejected support draft could abandon the request instead of correcting it")
 		}
 		return garminHistoryTestCall("do_not_respond", `{}`), nil
 	})
 	m := supportTestMessage(20)
 	b.handleGarminAutomaticAppSupport(client, m, []cmd.GarminAIMessage{{Role: "user", Content: m.Content}})
-	if calls != 2 || sent.count() != 0 || len(b.supportSeen) != 0 || !b.garminAIUserContexts[garminAIUserContextKey(m)].unanswered {
-		t.Fatal("post-rejection silence falsely completed the request")
+	if calls != garminAIMaxToolRounds || sent.count() != 1 || len(b.supportSeen) != 1 || !b.garminAIUserContexts[garminAIUserContextKey(m)].unanswered {
+		t.Fatal("post-rejection silence did not acknowledge the failure and retain the question")
 	}
 }
 
@@ -136,7 +139,10 @@ func TestExplicitNonHelpOutageUsesNeutralNotice(t *testing.T) {
 	m.Content = "garmin, thanks"
 	b.handleGarminAI(client, m, []cmd.GarminAIMessage{{Role: "user", Content: "thanks"}})
 	retained := b.garminAIUserContexts[garminAIUserContextKey(m)].messages
-	if sent.count() != 1 || len(retained) != 2 || retained[1].Content != supportUnavailableReply || strings.Contains(retained[1].Content, "lookup") {
+	sent.mu.Lock()
+	body := strings.Join(sent.bodies, "\n")
+	sent.mu.Unlock()
+	if sent.count() != 1 || len(retained) != 1 || !strings.Contains(body, supportUnavailableReply) || strings.Contains(body, "lookup") {
 		t.Fatal("explicit outage notice assumed an app-support lookup")
 	}
 }

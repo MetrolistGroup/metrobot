@@ -238,8 +238,8 @@ func TestExplicitSupportEvidenceErrorNotifiesWithoutRewrite(t *testing.T) {
 	if calls != 1 || sent.count() != 1 {
 		t.Fatalf("API failure generated %d calls and %d sends", calls, sent.count())
 	}
-	retained := b.garminAIUserContexts[garminAIUserContextKey(m)].messages
-	if len(retained) != 2 || retained[1].Content != supportUnavailableReply {
-		t.Fatal("API failure retained the unchecked draft instead of a safe notice")
+	retained := b.garminAIUserContexts[garminAIUserContextKey(m)]
+	if len(retained.messages) != 1 || retained.messages[0].Content != m.Content || !retained.unanswered || !retained.ambientUntil.IsZero() {
+		t.Fatal("API failure lost pending state, retained a draft or enabled ambient replies")
 	}
 }

@@ -16,6 +16,115 @@ import (
 	"go.uber.org/zap"
 )
 
+// Opt-in paid replay through the real message handler, with Discord delivery mocked.
+func TestSupportUpdateMessageLive(t *testing.T) {
+	configPath := os.Getenv("METROBOT_SUPPORT_LIVE_CONFIG")
+	if configPath == "" {
+		t.Skip("set the support live config, notes and report paths for a paid, non-posting replay")
+	}
+	read := func(path string, out any) {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(data, out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var config struct {
+		Keys          []string `json:"openrouter_api_keys"`
+		Model         string   `json:"openrouter_model"`
+		DecisionModel string   `json:"openrouter_decision_model"`
+	}
+	read(configPath, &config)
+	if len(config.Keys) == 0 || config.Model == "" || config.DecisionModel == "" {
+		t.Fatal("replay requires configured chat keys and models")
+	}
+	var notes []struct {
+		Name        string `json:"name"`
+		Description string `json:"short_desc"`
+		Content     string `json:"content"`
+	}
+	read(os.Getenv("METROBOT_SUPPORT_LIVE_NOTES"), &notes)
+	b, client, sent := newSupportDecisionTestBot(t)
+	existing, err := b.Notes.DB.ListNotes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, note := range existing {
+		if err := b.Notes.DeleteNote(note.Name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, note := range notes {
+		if err := b.DB.AddNote(note.Name, note.Description, note.Content); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b.garminAI = cmd.NewOpenRouterClient(config.Keys, config.Model)
+	decisions := cmd.NewDecisionsClient(config.Keys, config.DecisionModel)
+	var checks []map[string]any
+	b.garminDecisions = supportDecisionTestFunc(func(ctx context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+		response, err := decisions.Decide(ctx, request)
+		state, _ := request.State.(map[string]any)
+		if draft, ok := state["proposed_answer"]; ok {
+			check := map[string]any{"draft": draft, "api_error": err != nil}
+			if response != nil {
+				check["grounded"] = response.Answers["grounded"].Noul
+			}
+			checks = append(checks, check)
+		}
+		return response, err
+	})
+	b.garminGitHub = gh.NewAssistantClient("", "MetrolistGroup", "Metrolist")
+	m := supportTestMessage(20)
+	m.CreatedAt = time.Now().UTC()
+	m.Content = "how do i even update the app? how do i know theres an update"
+	b.onMessageCreate(client, m)
+	deadline := time.Now().Add(garminAITimeout + 10*time.Second)
+	for {
+		b.supportMu.Lock()
+		state, completed := b.supportSeen[m.ID.String()]
+		b.supportMu.Unlock()
+		if completed && !state.busy {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("full message handler did not complete the real update prompt")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	sent.mu.Lock()
+	body := strings.Join(sent.bodies, "\n")
+	deliveries := make([]json.RawMessage, len(sent.bodies))
+	for i, payload := range sent.bodies {
+		deliveries[i] = json.RawMessage(payload)
+	}
+	sent.mu.Unlock()
+	report, err := json.MarshalIndent(map[string]any{"deliveries": deliveries, "checks": checks}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("METROBOT_SUPPORT_LIVE_REPORT"), report, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lower := strings.ReplaceAll(strings.ToLower(body), "*", "")
+	if sent.count() != 1 || strings.Contains(body, supportUnverifiedReply) || strings.Contains(body, supportUnavailableReply) {
+		t.Fatal("real message did not deliver a useful Updater answer; inspect the private report")
+	}
+	for _, fact := range []string{"settings", "updater", "check for updates"} {
+		if !strings.Contains(lower, fact) {
+			t.Errorf("update answer omitted %q", fact)
+		}
+	}
+	for _, denial := range []string{"metrolist doesn't have an in-app update checker", "metrolist has no in-app updater", "metrolist doesn't have update notifications"} {
+		if strings.Contains(lower, denial) {
+			t.Errorf("update answer repeated unsupported denial %q", denial)
+		}
+	}
+}
+
 // Opt-in paid replay: temporary DB, read-only public GitHub, no Discord connection.
 // Phrase checks catch the reported regressions; the saved answers still need human review.
 func TestSupportAgentLive(t *testing.T) {
@@ -89,6 +198,9 @@ func TestSupportAgentLive(t *testing.T) {
 		casual       bool
 		forbidden    []string
 	}{
+		{id: "update-question", messages: []cmd.GarminAIMessage{{Role: "user", Content: "how do i even update the app? how do i know theres an update"}}, wantAnswer: true},
+		{id: "update-question-selected", messages: []cmd.GarminAIMessage{{Role: "user", Content: "how do i even update the app? how do i know theres an update"}}, selectedNote: "up", wantAnswer: true},
+		{id: "update-izzy", messages: []cmd.GarminAIMessage{{Role: "user", Content: "I installed standalone Metrolist from IzzyOnDroid. Where is the updater?"}}, selectedNote: "up", wantAnswer: true},
 		{id: "discover-question", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Is there a discover playlist in Metrolist?"}}, wantAnswer: true},
 		{id: "discover-note", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Where is Your daily discover in standalone Android?"}}, selectedNote: "discover", wantNote: "discover"},
 		{id: "discover-followup", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Is there a discover playlist in Metrolist?"}, {Role: "assistant", Content: "I'm ready to assist. What is your question?"}, {Role: "user", Content: "answer"}}, wantAnswer: true},
@@ -246,6 +358,13 @@ func TestSupportAgentLive(t *testing.T) {
 				}
 				if test.id == "casual-unrelated" && (r.AppGuidance == nil || *r.AppGuidance >= 0.2 || len(r.Checks) != 0) {
 					t.Error("unrelated casual chat loaded support evidence")
+				}
+				if strings.HasPrefix(test.id, "update-question") {
+					for _, fact := range []string{"settings", "updater", "check for updates"} {
+						if !strings.Contains(strings.ToLower(r.Answer), fact) {
+							t.Errorf("update answer omitted %q", fact)
+						}
+					}
 				}
 				if strings.HasPrefix(test.id, "discover-") && (!strings.Contains(strings.ToLower(r.Answer), "daily discover") || !strings.Contains(strings.ToLower(r.Answer), "home")) {
 					t.Error("Discover answer did not explain the actual Home section")
