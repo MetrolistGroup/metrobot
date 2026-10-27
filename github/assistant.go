@@ -480,13 +480,17 @@ func sameOriginRedirect(req *http.Request, via []*http.Request) error {
 }
 
 func (c *AssistantClient) get(ctx context.Context, path string, target any) error {
-	status, body, err := c.request(ctx, path, c.token)
+	return c.getLimit(ctx, path, target, 512<<10)
+}
+
+func (c *AssistantClient) getLimit(ctx context.Context, path string, target any, maxResponseBytes int) error {
+	status, body, err := c.request(ctx, path, c.token, maxResponseBytes)
 	if err != nil {
 		return err
 	}
 	// Invalid or organization-restricted tokens should not break public data.
 	if (status == http.StatusUnauthorized || status == http.StatusForbidden) && c.token != "" {
-		status, body, err = c.request(ctx, path, "")
+		status, body, err = c.request(ctx, path, "", maxResponseBytes)
 		if err != nil {
 			return err
 		}
@@ -508,7 +512,7 @@ func (c *AssistantClient) get(ctx context.Context, path string, target any) erro
 	return nil
 }
 
-func (c *AssistantClient) request(ctx context.Context, path, token string) (int, []byte, error) {
+func (c *AssistantClient) request(ctx context.Context, path, token string, maxResponseBytes int) (int, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.apiBase, "/")+path, nil)
 	if err != nil {
 		return 0, nil, fmt.Errorf("creating GitHub request: %w", err)
@@ -525,13 +529,12 @@ func (c *AssistantClient) request(ctx context.Context, path, token string) (int,
 		return 0, nil, fmt.Errorf("calling GitHub: %w", err)
 	}
 	defer response.Body.Close()
-	const maxResponseBytes = 512 << 10
-	body, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
+	body, err := io.ReadAll(io.LimitReader(response.Body, int64(maxResponseBytes)+1))
 	if err != nil {
 		return 0, nil, fmt.Errorf("reading GitHub response: %w", err)
 	}
 	if len(body) > maxResponseBytes {
-		return 0, nil, fmt.Errorf("GitHub response exceeded 512 KiB")
+		return 0, nil, fmt.Errorf("GitHub response exceeded %d KiB", maxResponseBytes>>10)
 	}
 	return response.StatusCode, body, nil
 }

@@ -18,6 +18,19 @@ import (
 
 // Opt-in paid replay through the real message handler, with Discord delivery mocked.
 func TestSupportUpdateMessageLive(t *testing.T) {
+	testSupportMessageLive(t, "how do i even update the app? how do i know theres an update",
+		[]string{"settings", "updater", "check for updates"},
+		[]string{"metrolist doesn't have an in-app update checker", "metrolist has no in-app updater", "metrolist doesn't have update notifications"}, "")
+}
+
+func TestSupportSlowDownloadMessageLive(t *testing.T) {
+	testSupportMessageLive(t, "why is metrolist download speeds so slow",
+		[]string{"nightly", "back", "unstable"}, nil,
+		"9dbe585f65a6950e9a8c088f1603e01742401838")
+}
+
+func testSupportMessageLive(t *testing.T, prompt string, want, forbidden []string, expectedFix string) {
+	t.Helper()
 	configPath := os.Getenv("METROBOT_SUPPORT_LIVE_CONFIG")
 	if configPath == "" {
 		t.Skip("set the support live config, notes and report paths for a paid, non-posting replay")
@@ -62,13 +75,35 @@ func TestSupportUpdateMessageLive(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	b.garminAI = cmd.NewOpenRouterClient(config.Keys, config.Model)
+	model := cmd.NewOpenRouterClient(config.Keys, config.Model)
+	var tools []string
+	b.garminAI = garminAITestFunc(func(ctx context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		completion, err := model.Complete(ctx, request)
+		if completion != nil {
+			for _, call := range completion.Message.ToolCalls {
+				tools = append(tools, call.Function.Name)
+			}
+		}
+		return completion, err
+	})
 	decisions := cmd.NewDecisionsClient(config.Keys, config.DecisionModel)
 	var checks []map[string]any
+	var sources []supportLiveSource
 	b.garminDecisions = supportDecisionTestFunc(func(ctx context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
 		response, err := decisions.Decide(ctx, request)
 		state, _ := request.State.(map[string]any)
 		if draft, ok := state["proposed_answer"]; ok {
+			encoded, encodeErr := json.Marshal(state["tool_results"])
+			var supplied []supportLiveSource
+			if encodeErr != nil || json.Unmarshal(encoded, &supplied) != nil {
+				t.Error("could not record tool provenance")
+			}
+			sources = nil
+			for _, source := range supplied {
+				if source.Tool == "get_metrolist_changes" || source.Tool == "get_metrolist_commit" {
+					sources = append(sources, source)
+				}
+			}
 			check := map[string]any{"draft": draft, "api_error": err != nil}
 			if response != nil {
 				check["grounded"] = response.Answers["grounded"].Noul
@@ -77,10 +112,14 @@ func TestSupportUpdateMessageLive(t *testing.T) {
 		}
 		return response, err
 	})
-	b.garminGitHub = gh.NewAssistantClient("", "MetrolistGroup", "Metrolist")
+	var githubConfig struct {
+		Token string `json:"github_token"`
+	}
+	read(configPath, &githubConfig)
+	b.garminGitHub = gh.NewAssistantClient(githubConfig.Token, "MetrolistGroup", "Metrolist")
 	m := supportTestMessage(20)
 	m.CreatedAt = time.Now().UTC()
-	m.Content = "how do i even update the app? how do i know theres an update"
+	m.Content = prompt
 	b.onMessageCreate(client, m)
 	deadline := time.Now().Add(garminAITimeout + 10*time.Second)
 	for {
@@ -102,7 +141,7 @@ func TestSupportUpdateMessageLive(t *testing.T) {
 		deliveries[i] = json.RawMessage(payload)
 	}
 	sent.mu.Unlock()
-	report, err := json.MarshalIndent(map[string]any{"deliveries": deliveries, "checks": checks}, "", "  ")
+	report, err := json.MarshalIndent(map[string]any{"deliveries": deliveries, "checks": checks, "tools": tools, "sources": sources}, "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,16 +150,21 @@ func TestSupportUpdateMessageLive(t *testing.T) {
 	}
 	lower := strings.ReplaceAll(strings.ToLower(body), "*", "")
 	if sent.count() != 1 || strings.Contains(body, supportUnverifiedReply) || strings.Contains(body, supportUnavailableReply) {
-		t.Fatal("real message did not deliver a useful Updater answer; inspect the private report")
+		t.Fatal("real message did not deliver a useful answer; inspect the private report")
 	}
-	for _, fact := range []string{"settings", "updater", "check for updates"} {
+	for _, fact := range want {
 		if !strings.Contains(lower, fact) {
 			t.Errorf("update answer omitted %q", fact)
 		}
 	}
-	for _, denial := range []string{"metrolist doesn't have an in-app update checker", "metrolist has no in-app updater", "metrolist doesn't have update notifications"} {
+	for _, denial := range forbidden {
 		if strings.Contains(lower, denial) {
-			t.Errorf("update answer repeated unsupported denial %q", denial)
+			t.Errorf("answer repeated unsupported denial %q", denial)
+		}
+	}
+	if expectedFix != "" {
+		if err := verifyNightlyReplayEvidence(sources, body, expectedFix); err != nil {
+			t.Error(err)
 		}
 	}
 }
@@ -190,7 +234,7 @@ func TestSupportAgentLive(t *testing.T) {
 		id           string
 		messages     []cmd.GarminAIMessage
 		attachment   bool
-		wantTool     string
+		wantRelease  bool
 		wantNote     string
 		selectedNote string
 		wantAnswer   bool
@@ -234,7 +278,7 @@ func TestSupportAgentLive(t *testing.T) {
 		}, forbidden: []string{"since you're on nightly", "try reinstalling", "clear data"}},
 		{id: "unread-image", attachment: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "I keep getting this from time to time on multiple songs"}}, forbidden: []string{"cut off", "truncated", "latest nightly", "firefox", "reinstall"}},
 		{id: "io-2000", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Metrolist version: 13.7.0\nAndroid version: 17\nIt was on auto play\nMany songs\nError Code: IO UNSPECIFIED (2000)"}}, forbidden: []string{"has been fixed", "fixed in recent", "latest nightly", "connectivity hiccup"}},
-		{id: "current-release-vs-nightly", messages: []cmd.GarminAIMessage{{Role: "user", Content: "what is the current release is the nightly better or ?"}}, wantTool: "get_metrolist_status"},
+		{id: "current-release-vs-nightly", messages: []cmd.GarminAIMessage{{Role: "user", Content: "what is the current release is the nightly better or ?"}}, wantRelease: true},
 		{id: "debug-vs-release-crash", messages: []cmd.GarminAIMessage{{Role: "user", Content: "After changing phones, stable and nightly crash at startup but debug works. What can I test?"}}, forbidden: []string{"signing", "signed", "permission", "library mismatch", "clear data", "reinstall", "settings → about", "settings > about"}},
 		{id: "chrome-download", messages: []cmd.GarminAIMessage{{Role: "user", Content: "The Metrolist APK download fails in Chrome before reaching the Android installer. Which browser should I try?"}}},
 		{id: "kmp-access", messages: []cmd.GarminAIMessage{{Role: "user", Content: "What are the requirements for getting Metrolist KMP tester access?"}}, wantNote: "kmp", selectedNote: "kmp"},
@@ -335,7 +379,7 @@ func TestSupportAgentLive(t *testing.T) {
 						r.Tools = append(r.Tools, call.Function.Name)
 					}
 				}
-				if (test.wantAnswer || test.wantNote != "" || test.wantTool != "" || test.id == "chrome-download" || test.id == "unread-image") && (r.Answer == "" || result.Silent) {
+				if (test.wantAnswer || test.wantNote != "" || test.wantRelease || test.id == "chrome-download" || test.id == "unread-image") && (r.Answer == "" || result.Silent) {
 					t.Errorf("%s: no useful answer", test.id)
 				}
 				if strings.HasPrefix(test.id, "rpc-setup-") && r.Answer != "" {
@@ -375,7 +419,7 @@ func TestSupportAgentLive(t *testing.T) {
 				if test.wantNote != "" && r.Note != test.wantNote {
 					t.Errorf("%s: note = %q, want %q", test.id, r.Note, test.wantNote)
 				}
-				if test.wantTool != "" && !strings.Contains(strings.Join(r.Tools, ","), test.wantTool) {
+				if test.wantRelease && !containsAnyGarminPhrase(strings.Join(r.Tools, ","), "get_metrolist_status", "get_metrolist_changes") {
 					t.Errorf("%s: expected release lookup and synthesis, got tools=%v note=%q", test.id, r.Tools, r.Note)
 				}
 				if test.id == "chrome-download" && !strings.Contains(strings.ToLower(r.Answer), "firefox") {

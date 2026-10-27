@@ -29,6 +29,16 @@ The embedded references are `support_rpc.md`, `support_login.md`, `support_scrob
 
 The thresholds were checked against labeled replays, not calibrated into accuracy guarantees. A high probability does not prove a diagnosis or fix. This change adds no crash diagnoses or data-clearing instructions.
 
+## Release-to-build evidence
+
+`get_metrolist_status` remains a compact overview with five tip commits, not a complete changelog. For bug symptoms, `get_metrolist_changes` compares the latest stable release with either a pinned default-branch SHA or the published standalone nightly. The nightly tag is resolved (including annotated tags), checked against its declared immutable build SHA, and required to have an uploaded APK. Main-only changes do not establish nightly contents.
+
+History lookup scans the newest three comparison pages, up to 300 commits, and filters locally by a literal keyword/phrase. It returns at most ten matching commits, with full SHAs, build/release links and explicit history/match/message coverage flags. Truncated or empty partial history does not prove no fix exists. Queries are not sent to GitHub search. Comparison responses alone have a bounded 2 MiB HTTP budget because GitHub includes file patches on the first page; ordinary endpoints keep their 512 KiB budget.
+
+`get_metrolist_commit` reads a public-sourced full SHA from the configured public standalone repository, returning up to five changed-file patches with explicit UTF-8-safe clipping flags. Both new tool payloads remain valid JSON within 10 KiB, below the shared 12 KiB result cap. Commit arguments retain the public-subject guard; these tools do not grant private KMP source access.
+
+A relevant inspected change in a verified published-nightly range supports a conditional backed-up nightly trial with an instability warning. It does not establish the reporter's exact cause, guarantee success, or show every future nightly contains the change. Current stable metadata can come from the actual status or comparison tool, never similarly named fields in a saved note. `TestSupportSlowDownloadMessageLive` replays the reported slow-download question through the full handler and checks the compared nightly, inspected fix SHA, uploaded build link and source patches, rather than merely checking tool names. Its current fixture covers the post-v13.7.0 download-range fix; review it when that fix reaches stable.
+
 ## Note opt-in and changes
 
 The catalog is rebuilt from `Notes.DB.ListNotes()` on every classification. Only notes with a nonblank `short_desc` are eligible as automatic support sources. Blank-description notes remain manual-only. Explicit note commands are unchanged.
