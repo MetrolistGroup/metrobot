@@ -130,7 +130,7 @@ func TestSupportToolFailureDoesNotExposeUncheckedNoteReference(t *testing.T) {
 	t.Cleanup(func() { http.DefaultTransport = original })
 	b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{ToolCalls: []cmd.GarminAIToolCall{{
-			ID: "lookup", Type: "function", Function: cmd.GarminAIFunctionCall{Name: "search_metrolist_issues", Arguments: `{"query":"crash"}`},
+			ID: "lookup", Type: "function", Function: cmd.GarminAIFunctionCall{Name: "get_metrolist_status", Arguments: `{}`},
 		}}}}, nil
 	})
 	ctx := context.WithValue(context.Background(), supportSelectedNoteContextKey{}, "nightly")

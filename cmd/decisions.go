@@ -16,7 +16,7 @@ import (
 
 const (
 	decisionsEndpoint = "https://openrouter.ai/api/alpha/decisions"
-	decisionsBodyMax  = 64 << 10
+	DecisionsBodyMax  = 64 << 10
 	DecisionsTimeout  = 4 * time.Second
 )
 
@@ -92,7 +92,7 @@ func (c *DecisionsClient) Decide(ctx context.Context, request DecisionRequest) (
 		Model    string         `json:"model"`
 		Provider map[string]any `json:"provider"`
 	}{request, c.model, map[string]any{"data_collection": "deny", "require_parameters": true, "sort": "latency"}})
-	if err != nil || len(body) > decisionsBodyMax {
+	if err != nil || len(body) > DecisionsBodyMax {
 		return nil, errors.New("invalid or oversized Decisions request")
 	}
 	start := int((c.next.Add(1) - 1) % uint64(len(c.keys)))
@@ -146,11 +146,11 @@ func (c *DecisionsClient) attempt(ctx context.Context, key string, body []byte, 
 			err:        fmt.Errorf("Decisions HTTP status %d", resp.StatusCode),
 		}
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, decisionsBodyMax+1))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, DecisionsBodyMax+1))
 	if err != nil {
 		return nil, true, errors.New("reading Decisions response failed")
 	}
-	if len(data) > decisionsBodyMax {
+	if len(data) > DecisionsBodyMax {
 		return nil, false, errors.New("oversized Decisions response")
 	}
 	var response DecisionResponse

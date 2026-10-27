@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -225,5 +226,29 @@ func TestAssistantClientSearchCodeStaysInRepository(t *testing.T) {
 	}
 	if _, err := NewAssistantClient("", "MetrolistGroup", "Metrolist").SearchCode(context.Background(), "x"); err == nil {
 		t.Error("code search without a token should fail clearly")
+	}
+}
+
+func TestAssistantClientFileExcerptShowsMatchContext(t *testing.T) {
+	var lines []string
+	for i := 1; i <= 200; i++ {
+		lines = append(lines, fmt.Sprintf("line %d", i))
+	}
+	lines[99] = "title = stringResource(R.string.ai_lyrics_translation)"
+	encoded := base64.StdEncoding.EncodeToString([]byte(strings.Join(lines, "\n")))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/MetrolistGroup/Metrolist" {
+			_, _ = w.Write([]byte(`{"private":false}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"type":"file","path":"LyricsMenu.kt","encoding":"base64","content":"` + encoded + `"}`))
+	}))
+	defer server.Close()
+	client := NewAssistantClient("", "MetrolistGroup", "Metrolist")
+	client.apiBase = server.URL
+	client.httpClient = server.Client()
+	result, err := client.FileExcerpt(context.Background(), "LyricsMenu.kt", "AI_LYRICS_TRANSLATION", "")
+	if err != nil || !strings.Contains(result, "80: line 80") || !strings.Contains(result, "120: line 120") || strings.Contains(result, "79: line 79") || !strings.Contains(result, `"matches_shown":1`) {
+		t.Fatalf("FileExcerpt() = %s, %v", result, err)
 	}
 }

@@ -190,6 +190,7 @@ func TestSupportAgentLive(t *testing.T) {
 		Keys          []string `json:"openrouter_api_keys"`
 		Model         string   `json:"openrouter_model"`
 		DecisionModel string   `json:"openrouter_decision_model"`
+		GitHubToken   string   `json:"github_token"`
 	}
 	read(configPath, &config)
 	if len(config.Keys) == 0 || config.Model == "" || config.DecisionModel == "" {
@@ -297,11 +298,20 @@ func TestSupportAgentLive(t *testing.T) {
 		{id: "android-music-login", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Where do I sign in to my YouTube Music account in regular Android Metrolist 13.7.0?"}}, wantAnswer: true, forbidden: []string{"settings > account", "settings → account", "send me your", "reinstall"}},
 		{id: "kmp-windows-login", messages: []cmd.GarminAIMessage{{Role: "user", Content: "How do I log into YouTube Music in Metrolist KMP on Windows?"}}, wantAnswer: true, forbidden: []string{"settings > account", "settings → account", "send me your", "reinstall"}},
 		{id: "android-lastfm-setup", messages: []cmd.GarminAIMessage{{Role: "user", Content: "How do I set up Last.fm scrobbling in regular Android Metrolist 13.7.0?"}}, wantAnswer: true, forbidden: []string{"settings > account", "settings → account", "send me your", "reinstall"}},
+		// Production misses from 27 October 2026 that ended in the fixed "couldn't verify" notice.
+		{id: "lyrics-translation", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Gn! Could someone tell me how to add the lyrics translation to my native language (Portuguese) below the original lyrics? I'm having trouble setting it up..."}}, wantAnswer: true, forbidden: []string{"reinstall", "clear app data"}},
+		{id: "login-keeps-library", messages: []cmd.GarminAIMessage{{Role: "user", Content: "help. If I make an account now after ive used this app without being logged in, do I lose all my liked songs and playlists?"}}, wantAnswer: true, forbidden: []string{"reinstall", "clear app data"}},
+		{id: "latest-download-link", messages: []cmd.GarminAIMessage{
+			{Role: "user", Content: "My metrolist refused to play songs, it keeps saying error"},
+			{Role: "assistant", Content: "I can't verify a fix for that error without more details. Does it affect every song, and what is the exact error text?"},
+			{Role: "user", Content: "Well, if there's a link to download the latest version, could i have that pls"},
+		}, wantRelease: true},
+		{id: "rpc-gone", messages: []cmd.GarminAIMessage{{Role: "user", Content: "my rpc is gone what do i do"}}, wantAnswer: true, forbidden: []string{"reinstall", "clear app data", "send me your"}},
 		{id: "kmp-listenbrainz-setup", messages: []cmd.GarminAIMessage{{Role: "user", Content: "How do I connect ListenBrainz in Metrolist KMP?"}}, wantAnswer: true, forbidden: []string{"settings > account", "settings → account", "send me your", "reinstall"}},
 	} {
 		t.Run(test.id, func(t *testing.T) {
 			r := report{ID: test.id}
-			b := &Bot{DB: database, Notes: &cmd.NotesHandler{DB: database}, Logger: zap.NewNop(), garminGitHub: gh.NewAssistantClient("", "MetrolistGroup", "Metrolist")}
+			b := &Bot{DB: database, Notes: &cmd.NotesHandler{DB: database}, Logger: zap.NewNop(), garminGitHub: gh.NewAssistantClient(config.GitHubToken, "MetrolistGroup", "Metrolist")}
 			if test.casual {
 				memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
 				if err != nil {
@@ -330,6 +340,9 @@ func TestSupportAgentLive(t *testing.T) {
 					r.Grounded = *response.Answers["grounded"].Noul
 				}
 				check := map[string]any{"draft": r.Draft, "grounded": r.Grounded, "api_error": err != nil}
+				if response != nil {
+					check["problem"] = response.Answers["problem"].Choice
+				}
 				if response != nil && response.Answers["note_used"].Noul != nil {
 					check["note_used"] = *response.Answers["note_used"].Noul
 				}
@@ -360,7 +373,7 @@ func TestSupportAgentLive(t *testing.T) {
 			}
 			requestCtx := context.WithValue(context.Background(), automaticSupportContextKey{}, true)
 			requestCtx = context.WithValue(requestCtx, supportSelectedNoteContextKey{}, test.selectedNote)
-			ctx, cancel := context.WithTimeout(requestCtx, garminAITimeout)
+			ctx, cancel := context.WithTimeout(requestCtx, garminSupportTimeout)
 			start := time.Now()
 			result, err := b.runGarminAI(ctx, nil, message, test.messages)
 			cancel()

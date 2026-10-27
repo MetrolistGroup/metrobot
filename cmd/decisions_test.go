@@ -101,7 +101,7 @@ func TestDecisionsRejectInvalidResponses(t *testing.T) {
 }
 
 func TestDecisionsBodyLimitsAndRedaction(t *testing.T) {
-	for _, body := range []string{strings.Repeat("x", decisionsBodyMax+1), `{"error":{"message":"private text private-key https://private.example"}}`, decisionTestResponse + ` {}`} {
+	for _, body := range []string{strings.Repeat("x", DecisionsBodyMax+1), `{"error":{"message":"private text private-key https://private.example"}}`, decisionTestResponse + ` {}`} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, body) }))
 		client := newDecisionsClient([]string{"private-key"}, "model", server.URL, server.Client())
 		_, err := client.Decide(context.Background(), decisionTestRequest())
@@ -112,7 +112,7 @@ func TestDecisionsBodyLimitsAndRedaction(t *testing.T) {
 	}
 	client := newDecisionsClient([]string{"key"}, "model", ":bad", http.DefaultClient)
 	request := decisionTestRequest()
-	request.State = strings.Repeat("x", decisionsBodyMax)
+	request.State = strings.Repeat("x", DecisionsBodyMax)
 	if _, err := client.Decide(context.Background(), request); err == nil {
 		t.Fatal("oversize request accepted")
 	}

@@ -3,11 +3,13 @@ package discord
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
+	gh "github.com/MetrolistGroup/metrobot/github"
 )
 
 func supportNoulDecision(name string, p float64) *cmd.DecisionResponse {
@@ -120,5 +122,50 @@ func TestConfirmedSupportFixFollowsDeliveredAnswer(t *testing.T) {
 	note, _ := b.Notes.DB.GetNote(supportConfirmedFixesNote)
 	if !strings.Contains(note, "Confirmed answer: Open lyrics, then tap Translate.") || !strings.Contains(note, "how do I translate lyrics?") || sent.count() != 1 {
 		t.Fatalf("confirmation was not learned: note=%q sent=%d", note, sent.count())
+	}
+}
+
+func TestSupportEvidenceCheckFitsLargeResearch(t *testing.T) {
+	messages := []cmd.GarminAIMessage{{Role: "user", Content: "search shows no results"}}
+	conversation := copyGarminAIMessages(messages)
+	for i := 0; i < 8; i++ {
+		id := fmt.Sprintf("call-%d", i)
+		conversation = append(conversation,
+			cmd.GarminAIMessage{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{ID: id, Function: cmd.GarminAIFunctionCall{Name: "get_metrolist_issue", Arguments: `{"number":1}`}}}},
+			cmd.GarminAIMessage{Role: "tool", ToolCallID: id, Content: strings.Repeat("x", 12<<10)})
+	}
+	b := &Bot{garminDecisions: supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+		if body, _ := json.Marshal(request); len(body) > cmd.DecisionsBodyMax-512 {
+			t.Fatalf("evidence request is %d bytes", len(body))
+		}
+		return supportNoulDecision("grounded", .9), nil
+	})}
+	if accepted, _, err := b.supportAnswerGrounded(context.Background(), supportTestMessage(5), messages, conversation, "draft", nil); err != nil || !accepted {
+		t.Fatalf("accepted=%v err=%v", accepted, err)
+	}
+}
+
+func TestSupportResearchToolBudget(t *testing.T) {
+	b := &Bot{garminDecisions: supportDecisionTestFunc(func(context.Context, cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+		return supportNoulDecision("grounded", .99), nil
+	})}
+	// Without a token, code search fails before any network call; the budget is counted either way.
+	b.garminGitHub = gh.NewAssistantClient("", "MetrolistGroup", "Metrolist")
+	var refused int
+	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		refused = 0
+		for _, message := range request.Messages {
+			if message.Role == "tool" && strings.Contains(message.Content, "budget used") {
+				refused++
+			}
+		}
+		if refused == 0 && request.Tools != nil {
+			return garminHistoryTestCall("search_metrolist_code", `{"query":"lyrics translation"}`), nil
+		}
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "answer"}}, nil
+	})
+	result, err := b.runGarminAI(context.Background(), nil, supportTestMessage(6), []cmd.GarminAIMessage{{Role: "user", Content: "how do I translate lyrics?"}})
+	if err != nil || result.Answer != "answer" || refused != 1 {
+		t.Fatalf("result=%+v err=%v refused=%d", result, err, refused)
 	}
 }

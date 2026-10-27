@@ -1,6 +1,7 @@
 package github
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -443,50 +444,60 @@ func (c *AssistantClient) Commits(ctx context.Context, repository string, limit 
 	}{fullName, githubCommitResults(commits)})
 }
 
-func (c *AssistantClient) File(ctx context.Context, repository, path, ref string) (string, error) {
+type githubFile struct {
+	Type        string `json:"type"`
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	SHA         string `json:"sha"`
+	HTMLURL     string `json:"html_url"`
+	DownloadURL string `json:"download_url"`
+	Encoding    string `json:"encoding"`
+	Content     string `json:"content"`
+}
+
+func (c *AssistantClient) fileContent(ctx context.Context, repository, path, ref string) (string, githubFile, []byte, error) {
+	var file githubFile
 	owner, name, err := githubRepositoryName(repository, c.owner)
 	if err != nil {
-		return "", err
+		return "", file, nil, err
 	}
 	path = strings.Trim(strings.TrimSpace(path), "/")
 	if path == "" {
-		return "", fmt.Errorf("repository file path is required")
+		return "", file, nil, fmt.Errorf("repository file path is required")
 	}
 	for _, part := range strings.Split(path, "/") {
 		if part == "." || part == ".." {
-			return "", fmt.Errorf("repository file path cannot contain dot segments")
+			return "", file, nil, fmt.Errorf("repository file path cannot contain dot segments")
 		}
 	}
 	fullName := owner + "/" + name
 	if _, err := c.Repository(ctx, fullName); err != nil {
-		return "", err
+		return "", file, nil, err
 	}
 	endpoint := fmt.Sprintf("/repos/%s/%s/contents/%s", url.PathEscape(owner), url.PathEscape(name), escapeGitHubPath(path))
 	if ref = strings.TrimSpace(ref); ref != "" {
 		endpoint += "?" + url.Values{"ref": {ref}}.Encode()
 	}
-	var file struct {
-		Type        string `json:"type"`
-		Name        string `json:"name"`
-		Path        string `json:"path"`
-		SHA         string `json:"sha"`
-		HTMLURL     string `json:"html_url"`
-		DownloadURL string `json:"download_url"`
-		Encoding    string `json:"encoding"`
-		Content     string `json:"content"`
-	}
 	if err := c.get(ctx, endpoint, &file); err != nil {
-		return "", err
+		return "", file, nil, err
 	}
 	if file.Type != "file" || file.Encoding != "base64" {
-		return "", fmt.Errorf("GitHub path is not a readable file")
+		return "", file, nil, fmt.Errorf("GitHub path is not a readable file")
 	}
 	content, err := base64.StdEncoding.DecodeString(file.Content)
 	if err != nil {
-		return "", fmt.Errorf("decoding GitHub file: %w", err)
+		return "", file, nil, fmt.Errorf("decoding GitHub file: %w", err)
 	}
 	if !utf8.Valid(content) {
-		return "", fmt.Errorf("binary GitHub files are not supported")
+		return "", file, nil, fmt.Errorf("binary GitHub files are not supported")
+	}
+	return fullName, file, content, nil
+}
+
+func (c *AssistantClient) File(ctx context.Context, repository, path, ref string) (string, error) {
+	fullName, file, content, err := c.fileContent(ctx, repository, path, ref)
+	if err != nil {
+		return "", err
 	}
 	const contentLimit = 8 << 10
 	truncated := len(content) > contentLimit
@@ -506,7 +517,48 @@ func (c *AssistantClient) File(ctx context.Context, repository, path, ref string
 		DownloadURL string `json:"download_url"`
 		Content     string `json:"content"`
 		Truncated   bool   `json:"truncated"`
-	}{fullName, file.Path, ref, file.SHA, file.HTMLURL, file.DownloadURL, string(content), truncated})
+	}{fullName, file.Path, strings.TrimSpace(ref), file.SHA, file.HTMLURL, file.DownloadURL, string(content), truncated})
+}
+
+// FileExcerpt returns numbered lines around case-insensitive matches in a project file, so large sources stay readable.
+func (c *AssistantClient) FileExcerpt(ctx context.Context, path, query, ref string) (string, error) {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return "", fmt.Errorf("a search term is required to excerpt a file")
+	}
+	_, file, content, err := c.fileContent(ctx, c.owner+"/"+c.repo, path, ref)
+	if err != nil {
+		return "", err
+	}
+	const around, matchLimit, excerptLimit = 20, 4, 8 << 10
+	lines := strings.Split(string(content), "\n")
+	var excerpt strings.Builder
+	matches, shownUntil := 0, -1
+	for i, line := range lines {
+		if matches == matchLimit || !strings.Contains(strings.ToLower(line), query) {
+			continue
+		}
+		matches++
+		if i <= shownUntil {
+			continue
+		}
+		if excerpt.Len() > 0 {
+			excerpt.WriteString("...\n")
+		}
+		for j := max(i-around, shownUntil+1); j < min(i+around+1, len(lines)); j++ {
+			fmt.Fprintf(&excerpt, "%d: %s\n", j+1, lines[j])
+		}
+		shownUntil = min(i+around, len(lines)-1)
+	}
+	return marshalToolResult(struct {
+		Path      string `json:"path"`
+		Ref       string `json:"ref"`
+		URL       string `json:"url"`
+		Lines     int    `json:"total_lines"`
+		Matches   int    `json:"matches_shown"`
+		Excerpt   string `json:"excerpt"`
+		Truncated bool   `json:"truncated"`
+	}{file.Path, cmp.Or(strings.TrimSpace(ref), "default branch (main)"), file.HTMLURL, len(lines), matches, githubTextPrefix(excerpt.String(), excerptLimit), excerpt.Len() > excerptLimit})
 }
 
 type githubRepository struct {
