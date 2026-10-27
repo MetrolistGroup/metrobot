@@ -25,9 +25,11 @@ import (
 )
 
 const (
-	garminAIMaxToolRounds     = 4
-	garminAIToolResultSize    = 12 * 1024
-	garminAIHistoryResultSize = 128 * 1024
+	garminAIMaxToolRounds      = 4
+	garminAIToolResultSize     = 12 * 1024
+	garminSupportMaxToolRounds = 8
+	supportMaxRetries          = 2
+	garminAIHistoryResultSize  = 128 * 1024
 )
 
 //go:embed garmin_skills/*.md
@@ -59,6 +61,7 @@ type garminToolArgs struct {
 	Expression string   `json:"expression"`
 	Content    string   `json:"content"`
 	Limit      int      `json:"limit"`
+	Number     int      `json:"number"`
 	Emoji      string   `json:"emoji"`
 	Emojis     []string `json:"emojis"`
 }
@@ -75,9 +78,9 @@ var (
 	garminAIMathSubtractionPattern  = regexp.MustCompile(`[0-9]\s*-\s*[0-9]`)
 	garminAICommitRequestPattern    = regexp.MustCompile(`\bcommits?\b`)
 	garminGitHubSearchTermPattern   = regexp.MustCompile(`(?:[^\s"]+|"[^"]*")+`)
-	garminAITextActionLinePattern   = regexp.MustCompile(`(?im)^\s*(?:get_metrolist_changes|get_metrolist_commit|react_to_message|list_discord_emojis|view_discord_emoji|do_not_respond|remember_user_info|forget_user_info|search_github_repositories|get_github_repository|get_github_commits|get_github_file|search_web|read_channel_history|calculate_math|get_gsmarena_phone|get_nanoreview_device|get_technicalcity_device|get_metrolist_status|search_metrolist_issues|get_github_user|list_notes|get_note|get_discord_profile|search_discord_members|read_community_channel|load_skill|load_support_guide)\b[^\r\n]*(?:\r?\n|$)`)
+	garminAITextActionLinePattern   = regexp.MustCompile(`(?im)^\s*(?:get_metrolist_changes|get_metrolist_commit|get_metrolist_issue|search_metrolist_code|react_to_message|list_discord_emojis|view_discord_emoji|do_not_respond|remember_user_info|forget_user_info|search_github_repositories|get_github_repository|get_github_commits|get_github_file|search_web|read_channel_history|calculate_math|get_gsmarena_phone|get_nanoreview_device|get_technicalcity_device|get_metrolist_status|search_metrolist_issues|get_github_user|list_notes|get_note|get_discord_profile|search_discord_members|read_community_channel|load_skill|load_support_guide)\b[^\r\n]*(?:\r?\n|$)`)
 	garminAIUserMemoryOfferPattern  = regexp.MustCompile(`(?i)\b(?:(?:do you want|would you like|want me|should i|shall i|can i|could i|may i)(?:\s+me)?\s+(?:to\s+)?(?:save|store|remember|retain|keep|note)\b|(?:do you want|would you like|want)\s+(?:this|that|it)\s+(?:saved|stored|remembered|retained|kept|noted)\b|(?:let me|how about i|i\s+(?:can|could|will|'ll|would like to|'d like to))\s+(?:save|store|remember|retain|keep|note)\s+(?:this|that|it|your)\b)`)
-	garminAIInternalToolNamePattern = regexp.MustCompile(`(?i)\b(?:get_metrolist_changes|get_metrolist_commit|do_not_respond|react_to_message|list_discord_emojis|view_discord_emoji|search_github_repositories|get_github_repository|get_github_commits|get_github_file|search_web|read_channel_history|calculate_math|get_gsmarena_phone|get_nanoreview_device|get_technicalcity_device|get_metrolist_status|search_metrolist_issues|get_github_user|list_notes|get_note|get_discord_profile|search_discord_members|read_community_channel|load_skill|load_support_guide)\b`)
+	garminAIInternalToolNamePattern = regexp.MustCompile(`(?i)\b(?:get_metrolist_changes|get_metrolist_commit|get_metrolist_issue|search_metrolist_code|do_not_respond|react_to_message|list_discord_emojis|view_discord_emoji|search_github_repositories|get_github_repository|get_github_commits|get_github_file|search_web|read_channel_history|calculate_math|get_gsmarena_phone|get_nanoreview_device|get_technicalcity_device|get_metrolist_status|search_metrolist_issues|get_github_user|list_notes|get_note|get_discord_profile|search_discord_members|read_community_channel|load_skill|load_support_guide)\b`)
 	garminAIContextOnlyQueryPattern = regexp.MustCompile(`(?i)\b(?:(?:that|this|those|these|the(?: same)?)\s+(?:plugin|extension|package|library|project|repository|repo|app|tool|website|page|article|paper|image|picture|gif|one)|(?:to|for|of|about)\s+(?:it|them))\s*(?:,\s*)?(?:please)?[.!?]*$`)
 	garminDNRPattern                = regexp.MustCompile(`(?i)\bdnr\b`)
 )
@@ -238,6 +241,10 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 	}
 	// Allow sequential required lookups without consuming the retry/history/synthesis allowance.
 	maxToolRounds := garminAIMaxToolRounds + max(0, requiredPublicTools-1)
+	if appSupport {
+		// Support research chains issue search, issue reading, code search and release changes.
+		maxToolRounds = max(maxToolRounds, garminSupportMaxToolRounds)
+	}
 	mathToolRequired := explicitlyTriggered && garminMathRequested(prompt) && garminToolAvailable(tools, "calculate_math")
 	repositoryToolUsed := false
 	publicDraftRetried, deviceURLDraftRetried := false, false
@@ -311,7 +318,7 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 		conversation = append(conversation, cmd.GarminAIMessage{Role: "tool", ToolCallID: call.ID, Content: output})
 		noteReference = name
 	}
-	supportDraftRetried := false
+	supportRetries := 0
 	for round := 0; round < maxToolRounds; round++ {
 		if !b.garminMessageVisible(m.ChannelID.String(), m.ID.String()) {
 			result.Silent = true
@@ -515,7 +522,7 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 			}
 			answer := normalizeGarminAIAnswer(assistantMessage.Content)
 			if garminAISilentAnswer(answer) {
-				result.Unverified = appSupport && supportDraftRetried
+				result.Unverified = appSupport && supportRetries > 0
 				result.Silent = true
 				result.Conversation = conversation
 				return result, nil
@@ -555,18 +562,19 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 			}
 			result.Conversation = conversation
 			if appSupport {
-				grounded, err := b.supportAnswerGrounded(ctx, m, messages, conversation, answer, &noteReference)
+				grounded, hint, err := b.supportAnswerGrounded(ctx, m, messages, conversation, answer, &noteReference)
 				if err != nil {
 					return nil, err
 				}
 				if !grounded {
-					if !supportDraftRetried {
-						supportDraftRetried = true
+					if supportRetries < supportMaxRetries {
+						supportRetries++
 						tools = withoutGarminTools(tools, "do_not_respond")
-						maxToolRounds = max(maxToolRounds, round+3)
+						// Leave room for a few research lookups before the rewrite.
+						maxToolRounds = max(maxToolRounds, round+5)
 						finalOnly = false
 						conversation = conversation[:len(conversation)-1] // Do not anchor the retry on an undelivered, rejected draft.
-						conversation = append(conversation, cmd.GarminAIMessage{Role: "system", Content: "Your draft failed the support evidence check and was not sent. Use the verified references already supplied; do not repeat a lookup when the loaded note already answers the question. Retrieve missing evidence with a supplied tool only when needed, including live release data for a current-version claim. Do not guess a shorter version from memory. Then answer once in at most 60 words. If the verified reference supplies a short answer, copy its applicable wording and conditions instead of paraphrasing it. Otherwise extract only the needed source sentences, or ask one concrete missing detail. Do not invent a menu entry to connect those sentences. If no relevant reference exists, say which fact you cannot verify instead of inventing menus or claiming a feature is absent. Remove any person/contact, prerequisite, extra step, diagnosis or fix not explicitly supported. Do not blend Google login with Discord login, or mix platform-specific steps. For login or playlist setup with unknown app variant/platform, ask only which app/platform they use; give no setup steps in that retry. For other setup, use source-verified common steps and ask about variant/platform only when the needed steps differ materially. If the user only corrects a login denial, acknowledge that login is supported in both standalone Android and KMP, then stop. Never retry unsupported platform-specific steps. For unread attachments ask for pasted text, not another screenshot. Only claim a lookup occurred if its tool result is present. For current-release questions, use a returned latest_release tag/link; nightly installation is a separate saved procedure, not a claim about the current version. Do not mention this check."})
+						conversation = append(conversation, cmd.GarminAIMessage{Role: "system", Content: "Your draft failed the support evidence check and was not sent. " + hint + " Use the verified references already supplied; do not repeat a lookup when the loaded note already answers the question. Retrieve missing evidence with a supplied tool only when needed, including live release data for a current-version claim. Do not guess a shorter version from memory. Then answer once in at most 60 words. If the verified reference supplies a short answer, copy its applicable wording and conditions instead of paraphrasing it. Otherwise extract only the needed source sentences, or ask one concrete missing detail. Do not invent a menu entry to connect those sentences. If no relevant reference exists, say which fact you cannot verify instead of inventing menus or claiming a feature is absent. Remove any person/contact, prerequisite, extra step, diagnosis or fix not explicitly supported. Do not blend Google login with Discord login, or mix platform-specific steps. For login or playlist setup with unknown app variant/platform, ask only which app/platform they use; give no setup steps in that retry. For other setup, use source-verified common steps and ask about variant/platform only when the needed steps differ materially. If the user only corrects a login denial, acknowledge that login is supported in both standalone Android and KMP, then stop. Never retry unsupported platform-specific steps. For unread attachments ask for pasted text, not another screenshot. Only claim a lookup occurred if its tool result is present. For current-release questions, use a returned latest_release tag/link; nightly installation is a separate saved procedure, not a claim about the current version. Do not mention this check."})
 						continue
 					}
 					result.Silent, result.Unverified = true, true
@@ -593,7 +601,9 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 					continue
 				}
 			}
-			if garminPublicQueryToolName(toolCall.Function.Name) {
+			// Public app-support research may use its own keywords against the fixed official repository; the sensitive-text filter still applies.
+			supportResearch := appSupport && (toolCall.Function.Name == "search_metrolist_issues" || toolCall.Function.Name == "search_metrolist_code")
+			if garminPublicQueryToolName(toolCall.Function.Name) && !supportResearch {
 				var args garminToolArgs
 				if json.Unmarshal([]byte(toolCall.Function.Arguments), &args) != nil || !garminPublicLookupArgumentsAllowed(toolCall.Function.Name, args, publicLookupSources) {
 					conversation = append(conversation, cmd.GarminAIMessage{Role: "tool", ToolCallID: toolCall.ID, Content: toolError(fmt.Errorf("public lookup arguments must come from the current user request or this request's public lookup results, not retained conversation text"))})
@@ -621,7 +631,7 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 				continue
 			}
 			if handled {
-				result.Unverified = appSupport && supportDraftRetried
+				result.Unverified = appSupport && supportRetries > 0
 				result.Interacted = toolCall.Function.Name == "react_to_message"
 				result.Silent = true
 				result.Conversation = conversation
@@ -846,7 +856,7 @@ func garminGitHubToolName(name string) bool {
 		return true
 	}
 	switch name {
-	case "get_metrolist_status", "get_metrolist_changes", "get_metrolist_commit", "search_metrolist_issues", "get_github_user":
+	case "get_metrolist_status", "get_metrolist_changes", "get_metrolist_commit", "search_metrolist_issues", "get_metrolist_issue", "search_metrolist_code", "get_github_user":
 		return true
 	default:
 		return false
@@ -1163,6 +1173,10 @@ func (b *Bot) executeGarminAITool(ctx context.Context, s *bot.Client, m *discord
 		output, err = b.garminGitHub.ProjectCommit(ctx, args.Ref)
 	case "search_metrolist_issues":
 		output, err = b.garminGitHub.SearchIssues(ctx, args.Query)
+	case "get_metrolist_issue":
+		output, err = b.garminGitHub.Issue(ctx, args.Number)
+	case "search_metrolist_code":
+		output, err = b.garminGitHub.SearchCode(ctx, args.Query)
 	case "get_github_user":
 		output, err = b.garminGitHub.User(ctx, args.Username)
 	case "search_github_repositories":
@@ -1862,7 +1876,7 @@ func garminToolsForConversation(messages []cmd.GarminAIMessage, isOwner, _ bool)
 }
 
 func garminAppSupportTools(tools []cmd.GarminAITool) []cmd.GarminAITool {
-	return onlyGarminTools(tools, "do_not_respond", "list_notes", "get_note", "search_metrolist_issues", "get_metrolist_status", "get_metrolist_changes", "get_metrolist_commit", "load_skill", "load_support_guide")
+	return onlyGarminTools(tools, "do_not_respond", "list_notes", "get_note", "search_metrolist_issues", "get_metrolist_issue", "search_metrolist_code", "get_metrolist_status", "get_metrolist_changes", "get_metrolist_commit", "load_skill", "load_support_guide")
 }
 
 func (b *Bot) garminToolsForRequest(s *bot.Client, m *discord.Message, messages []cmd.GarminAIMessage, ambient bool) []cmd.GarminAITool {
@@ -2324,7 +2338,9 @@ var garminAITools = []cmd.GarminAITool{
 	garminTool("get_metrolist_status", "Get live Metrolist repository status, latest release, and five tip commits. Use get_metrolist_changes to find fixes since the latest stable release; these five commits are not a complete changelog.", `{"type":"object","properties":{},"additionalProperties":false}`),
 	garminTool("get_metrolist_changes", "Compare the latest stable Metrolist release with main or a published nightly build. Find post-release fixes using one literal keyword such as download, not a full symptom sentence. Returns pinned build/release SHAs, matching commits and coverage flags over up to 300 recent commits. Nightly results establish which changes its published build includes; main alone does not. Fetch a matching commit's code with get_metrolist_commit before recommending a fix.", `{"type":"object","properties":{"ref":{"type":"string","enum":["main","nightly"],"description":"Default main; use nightly to verify a published build contains a fix"},"query":{"type":"string","maxLength":100,"description":"Optional literal keyword or phrase; retry a shorter keyword if nothing matches. Filtering is local."}},"additionalProperties":false}`),
 	garminTool("get_metrolist_commit", "Read a known public Metrolist commit's message and up to five changed-file patches. Use the full SHA returned by get_metrolist_changes to inspect relevant fixes; respect patch/coverage limits. This does not itself prove a published build includes the commit.", `{"type":"object","properties":{"ref":{"type":"string","pattern":"^[a-fA-F0-9]{40}$","description":"Full 40-character SHA from public project evidence"}},"required":["ref"],"additionalProperties":false}`),
-	garminTool("search_metrolist_issues", "Search current and past issues in the official Metrolist GitHub repository.", `{"type":"object","properties":{"query":{"type":"string","description":"Short GitHub issue search terms, optionally including is:open or is:closed"}},"required":["query"],"additionalProperties":false}`),
+	garminTool("search_metrolist_issues", "Search current and past issues in the official Metrolist GitHub repository. Returns titles, states, comment counts and body snippets. Try a few short keyword variants (synonyms, feature names) before concluding nothing matches, then read promising issues with get_metrolist_issue.", `{"type":"object","properties":{"query":{"type":"string","maxLength":100,"description":"Short GitHub issue search terms, optionally including is:open or is:closed"}},"required":["query"],"additionalProperties":false}`),
+	garminTool("get_metrolist_issue", "Read one official Metrolist issue: body, labels and newest comments with each author's association. OWNER/MEMBER/COLLABORATOR comments are maintainer answers; other comments are user reports.", `{"type":"object","properties":{"number":{"type":"integer","minimum":1,"description":"Issue number from search_metrolist_issues"}},"required":["number"],"additionalProperties":false}`),
+	garminTool("search_metrolist_code", "Search the official Metrolist source on its default branch and return matching file paths with code fragments. Use it to find real setting/menu labels (for example strings.xml entries) and how a feature behaves. Results reflect main, not necessarily the released build.", `{"type":"object","properties":{"query":{"type":"string","maxLength":100,"description":"Literal code-search terms, optionally with path: or extension: qualifiers, such as translat path:res/values"}},"required":["query"],"additionalProperties":false}`),
 	garminTool("get_github_user", "Get a public GitHub profile by exact GitHub username. Do not use it to guess which Discord member owns an account.", `{"type":"object","properties":{"username":{"type":"string"}},"required":["username"],"additionalProperties":false}`),
 	garminTool("search_github_repositories", "Search public GitHub repositories using keywords and GitHub search qualifiers. Returns up to eight relevant repositories with descriptions and metadata.", `{"type":"object","properties":{"query":{"type":"string","description":"Repository keywords and optional GitHub qualifiers such as language:kotlin, user:name, org:name, or topic:music"}},"required":["query"],"additionalProperties":false}`),
 	garminTool("get_github_repository", "Get public details and description for an exact GitHub repository. Use owner/name from the user or repository search results.", `{"type":"object","properties":{"repository":{"type":"string","description":"Exact owner/name or github.com repository URL"}},"required":["repository"],"additionalProperties":false}`),

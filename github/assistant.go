@@ -159,6 +159,8 @@ func (c *AssistantClient) SearchIssues(ctx context.Context, query string) (strin
 			State         string     `json:"state"`
 			StateReason   string     `json:"state_reason"`
 			HTMLURL       string     `json:"html_url"`
+			Body          string     `json:"body,omitempty"`
+			Comments      int        `json:"comments"`
 			CreatedAt     *time.Time `json:"created_at"`
 			UpdatedAt     *time.Time `json:"updated_at"`
 			User          struct {
@@ -177,6 +179,7 @@ func (c *AssistantClient) SearchIssues(ctx context.Context, query string) (strin
 	items := search.Items[:0]
 	for _, issue := range search.Items {
 		if strings.EqualFold(issue.RepositoryURL, repositoryURL) {
+			issue.Body = githubTextPrefix(issue.Body, 300)
 			items = append(items, issue)
 		}
 	}
@@ -186,6 +189,144 @@ func (c *AssistantClient) SearchIssues(ctx context.Context, query string) (strin
 	}
 	search.Items = items
 	return marshalToolResult(search)
+}
+
+type githubIssueComment struct {
+	Author      string     `json:"author"`
+	Association string     `json:"author_association"`
+	Body        string     `json:"body"`
+	CreatedAt   *time.Time `json:"created_at"`
+}
+
+// Issue reads one project issue with its newest comments; maintainer replies carry an OWNER/MEMBER/COLLABORATOR association.
+func (c *AssistantClient) Issue(ctx context.Context, number int) (string, error) {
+	if number <= 0 {
+		return "", fmt.Errorf("issue number is required")
+	}
+	if _, err := c.Repository(ctx, c.owner+"/"+c.repo); err != nil {
+		return "", err
+	}
+	base := fmt.Sprintf("/repos/%s/%s/issues/%d", url.PathEscape(c.owner), url.PathEscape(c.repo), number)
+	var issue struct {
+		Number      int        `json:"number"`
+		Title       string     `json:"title"`
+		State       string     `json:"state"`
+		StateReason string     `json:"state_reason"`
+		HTMLURL     string     `json:"html_url"`
+		Body        string     `json:"body"`
+		Comments    int        `json:"comments"`
+		CreatedAt   *time.Time `json:"created_at"`
+		ClosedAt    *time.Time `json:"closed_at"`
+		PullRequest *struct{}  `json:"pull_request"`
+		User        struct {
+			Login string `json:"login"`
+		} `json:"user"`
+		Association string `json:"author_association"`
+		Labels      []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
+	}
+	if err := c.get(ctx, base, &issue); err != nil {
+		return "", err
+	}
+	if issue.PullRequest != nil {
+		return "", fmt.Errorf("#%d is a pull request, not an issue", number)
+	}
+	// Sized to stay under the agent's 12 KiB tool-result budget so the newest replies are never truncated.
+	const commentLimit = 8
+	type issueComment struct {
+		User struct {
+			Login string `json:"login"`
+		} `json:"user"`
+		Association string     `json:"author_association"`
+		Body        string     `json:"body"`
+		CreatedAt   *time.Time `json:"created_at"`
+	}
+	var comments []issueComment
+	// Newest replies matter most (workarounds, fix notes); read the last page and top it up from the one before.
+	for page := (issue.Comments + commentLimit - 1) / commentLimit; page >= 1 && len(comments) < commentLimit; page-- {
+		var batch []issueComment
+		if err := c.get(ctx, fmt.Sprintf("%s/comments?per_page=%d&page=%d", base, commentLimit, page), &batch); err != nil {
+			return "", err
+		}
+		comments = append(batch[max(0, len(batch)-(commentLimit-len(comments))):], comments...)
+		if len(batch) == 0 {
+			break
+		}
+	}
+	result := struct {
+		Number      int                  `json:"number"`
+		Title       string               `json:"title"`
+		State       string               `json:"state"`
+		StateReason string               `json:"state_reason,omitempty"`
+		URL         string               `json:"url"`
+		Author      string               `json:"author"`
+		Association string               `json:"author_association"`
+		Labels      []string             `json:"labels,omitempty"`
+		CreatedAt   *time.Time           `json:"created_at"`
+		ClosedAt    *time.Time           `json:"closed_at,omitempty"`
+		Body        string               `json:"body"`
+		Comments    []githubIssueComment `json:"comments,omitempty"`
+		Omitted     int                  `json:"older_comments_omitted,omitempty"`
+	}{issue.Number, issue.Title, issue.State, issue.StateReason, issue.HTMLURL, issue.User.Login, issue.Association, nil, issue.CreatedAt, issue.ClosedAt, githubTextPrefix(issue.Body, 2000), nil, max(0, issue.Comments-len(comments))}
+	for _, label := range issue.Labels {
+		result.Labels = append(result.Labels, label.Name)
+	}
+	for _, comment := range comments {
+		result.Comments = append(result.Comments, githubIssueComment{comment.User.Login, comment.Association, githubTextPrefix(comment.Body, 800), comment.CreatedAt})
+	}
+	return marshalToolResult(result)
+}
+
+// SearchCode searches the project's default branch; GitHub requires a token for code search.
+func (c *AssistantClient) SearchCode(ctx context.Context, query string) (string, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return "", fmt.Errorf("search query is required")
+	}
+	if c.token == "" {
+		return "", fmt.Errorf("code search requires a configured GitHub token")
+	}
+	for _, field := range strings.Fields(strings.ToLower(query)) {
+		if strings.HasPrefix(strings.TrimPrefix(field, "-"), "repo:") || strings.HasPrefix(strings.TrimPrefix(field, "-"), "org:") || strings.HasPrefix(strings.TrimPrefix(field, "-"), "user:") {
+			return "", fmt.Errorf("code search is limited to the official repository")
+		}
+	}
+	if _, err := c.Repository(ctx, c.owner+"/"+c.repo); err != nil {
+		return "", err
+	}
+	values := url.Values{"q": {fmt.Sprintf("repo:%s/%s %s", c.owner, c.repo, query)}, "per_page": {"8"}}
+	var search struct {
+		TotalCount int `json:"total_count"`
+		Items      []struct {
+			Path        string `json:"path"`
+			HTMLURL     string `json:"html_url"`
+			TextMatches []struct {
+				Fragment string `json:"fragment"`
+			} `json:"text_matches"`
+		} `json:"items"`
+	}
+	if err := c.getAccept(ctx, "/search/code?"+values.Encode(), "application/vnd.github.text-match+json", &search, 512<<10); err != nil {
+		return "", err
+	}
+	type match struct {
+		Path      string   `json:"path"`
+		URL       string   `json:"url"`
+		Fragments []string `json:"fragments,omitempty"`
+	}
+	result := struct {
+		Ref        string  `json:"ref"`
+		TotalCount int     `json:"total_count"`
+		Matches    []match `json:"matches"`
+	}{Ref: "default branch (main), not necessarily released", TotalCount: search.TotalCount}
+	for _, item := range search.Items {
+		found := match{Path: item.Path, URL: item.HTMLURL}
+		for _, text := range item.TextMatches {
+			found.Fragments = append(found.Fragments, githubTextPrefix(text.Fragment, 400))
+		}
+		result.Matches = append(result.Matches, found)
+	}
+	return marshalToolResult(result)
 }
 
 func (c *AssistantClient) User(ctx context.Context, username string) (string, error) {
@@ -484,13 +625,17 @@ func (c *AssistantClient) get(ctx context.Context, path string, target any) erro
 }
 
 func (c *AssistantClient) getLimit(ctx context.Context, path string, target any, maxResponseBytes int) error {
-	status, body, err := c.request(ctx, path, c.token, maxResponseBytes)
+	return c.getAccept(ctx, path, "application/vnd.github+json", target, maxResponseBytes)
+}
+
+func (c *AssistantClient) getAccept(ctx context.Context, path, accept string, target any, maxResponseBytes int) error {
+	status, body, err := c.request(ctx, path, c.token, accept, maxResponseBytes)
 	if err != nil {
 		return err
 	}
 	// Invalid or organization-restricted tokens should not break public data.
 	if (status == http.StatusUnauthorized || status == http.StatusForbidden) && c.token != "" {
-		status, body, err = c.request(ctx, path, "", maxResponseBytes)
+		status, body, err = c.request(ctx, path, "", accept, maxResponseBytes)
 		if err != nil {
 			return err
 		}
@@ -512,12 +657,12 @@ func (c *AssistantClient) getLimit(ctx context.Context, path string, target any,
 	return nil
 }
 
-func (c *AssistantClient) request(ctx context.Context, path, token string, maxResponseBytes int) (int, []byte, error) {
+func (c *AssistantClient) request(ctx context.Context, path, token, accept string, maxResponseBytes int) (int, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.apiBase, "/")+path, nil)
 	if err != nil {
 		return 0, nil, fmt.Errorf("creating GitHub request: %w", err)
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Accept", accept)
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", "Metrobot-Garmin")
 	if token != "" {

@@ -19,8 +19,8 @@ func TestSupportAnswerGroundingFailsClosed(t *testing.T) {
 		missing, apiError, want bool
 	}{
 		{name: "supported", probability: 0.99, want: true},
-		{name: "threshold", probability: 0.95, want: true},
-		{name: "uncertain", probability: 0.94},
+		{name: "threshold", probability: supportGroundedMin, want: true},
+		{name: "uncertain", probability: supportGroundedMin - 0.01},
 		{name: "unsupported", probability: 0.01},
 		{name: "missing", missing: true},
 		{name: "API failure", probability: 1, apiError: true},
@@ -45,7 +45,7 @@ func TestSupportAnswerGroundingFailsClosed(t *testing.T) {
 				if !strings.Contains(string(state), `"tool":"get_note"`) || strings.Contains(string(state), `"tool":"get_metrolist_status"`) || !strings.Contains(string(state), `"arguments":`) {
 					t.Fatal("saved note was not attributed to its actual tool and arguments")
 				}
-				if len(request.Questions) != 1 || request.Questions["grounded"].Type != "noul" || len(request.Questions["grounded"].Criteria) != 2 {
+				if len(request.Questions) != 2 || request.Questions["grounded"].Type != "noul" || len(request.Questions["grounded"].Criteria) != 2 || request.Questions["problem"].Type != "choice" {
 					t.Fatal("wrong grounding question")
 				}
 				if test.apiError {
@@ -56,7 +56,7 @@ func TestSupportAnswerGroundingFailsClosed(t *testing.T) {
 				}
 				return &cmd.DecisionResponse{Answers: map[string]cmd.DecisionAnswer{"grounded": {Type: "noul", Noul: &test.probability}}}, nil
 			})}
-			if got, _ := b.supportAnswerGrounded(context.Background(), supportTestMessage(101), messages, conversation, "try a clean install", nil); got != test.want {
+			if got, _, _ := b.supportAnswerGrounded(context.Background(), supportTestMessage(101), messages, conversation, "try a clean install", nil); got != test.want {
 				t.Fatalf("grounded = %v, want %v", got, test.want)
 			}
 		})
@@ -88,7 +88,7 @@ func TestSupportNoteReferenceRequiresPositiveVerdict(t *testing.T) {
 			}
 			name := "rpc"
 			messages := []cmd.GarminAIMessage{{Role: "user", Content: "How do I connect Discord?"}}
-			accepted, err := b.supportAnswerGrounded(context.Background(), supportTestMessage(20), messages, messages, "Which Metrolist variant are you using?", &name)
+			accepted, _, err := b.supportAnswerGrounded(context.Background(), supportTestMessage(20), messages, messages, "Which Metrolist variant are you using?", &name)
 			if tc.invalid {
 				if err == nil || accepted {
 					t.Fatal("invalid reference verdict did not fail closed")
@@ -124,7 +124,7 @@ func TestSupportEvidenceTracksCurrentAttachmentAvailability(t *testing.T) {
 			m := supportTestMessage(101)
 			m.Attachments = test.attachments
 			messages := []cmd.GarminAIMessage{{Role: "user", Content: "see attached", Images: test.images}}
-			if _, err := b.supportAnswerGrounded(context.Background(), m, messages, messages, "Please paste the error text.", nil); err != nil {
+			if _, _, err := b.supportAnswerGrounded(context.Background(), m, messages, messages, "Please paste the error text.", nil); err != nil {
 				t.Fatal(err)
 			}
 		})

@@ -99,7 +99,7 @@ func TestPostRejectionCannotChooseSilence(t *testing.T) {
 	})
 	m := supportTestMessage(20)
 	b.handleGarminAutomaticAppSupport(client, m, []cmd.GarminAIMessage{{Role: "user", Content: m.Content}})
-	if calls != garminAIMaxToolRounds || sent.count() != 1 || len(b.supportSeen) != 1 || !b.garminAIUserContexts[garminAIUserContextKey(m)].unanswered {
+	if calls != garminSupportMaxToolRounds || sent.count() != 1 || len(b.supportSeen) != 1 || !b.garminAIUserContexts[garminAIUserContextKey(m)].unanswered {
 		t.Fatal("post-rejection silence did not acknowledge the failure and retain the question")
 	}
 }

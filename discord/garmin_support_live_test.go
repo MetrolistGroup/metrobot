@@ -397,7 +397,7 @@ func TestSupportAgentLive(t *testing.T) {
 						t.Errorf("%s: review forbidden phrase %q", test.id, forbidden)
 					}
 				}
-				if test.casual && test.id != "casual-unrelated" && (r.AppGuidance == nil || *r.AppGuidance < 0.2 || r.Grounded < 0.95) {
+				if test.casual && test.id != "casual-unrelated" && (r.AppGuidance == nil || *r.AppGuidance < 0.2 || r.Grounded < supportGroundedMin) {
 					t.Errorf("%s: casual app guidance bypassed the grounded support path", test.id)
 				}
 				if test.id == "casual-unrelated" && (r.AppGuidance == nil || *r.AppGuidance >= 0.2 || len(r.Checks) != 0) {

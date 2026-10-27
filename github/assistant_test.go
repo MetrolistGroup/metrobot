@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -157,5 +158,72 @@ func TestAssistantClientIncludesForksWhenRequested(t *testing.T) {
 	}
 	if query != "MetrolistGroup Metrolist forks fork:true is:public" {
 		t.Fatalf("fork search query = %q", query)
+	}
+}
+
+func TestAssistantClientIssueReadsNewestComments(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/MetrolistGroup/Metrolist":
+			_, _ = w.Write([]byte(`{"private":false}`))
+		case "/repos/MetrolistGroup/Metrolist/issues/7":
+			_, _ = w.Write([]byte(`{"number":7,"title":"Translation","state":"closed","body":"How?","comments":10,"user":{"login":"reporter"},"author_association":"NONE"}`))
+		case "/repos/MetrolistGroup/Metrolist/issues/7/comments":
+			// 10 comments at 8 per page: page 2 holds 9-10, page 1 supplies 3-8.
+			first := 1
+			if r.URL.Query().Get("page") == "2" {
+				first = 9
+			}
+			var items []string
+			for i := first; i <= min(first+7, 10); i++ {
+				association := "NONE"
+				if i == 10 {
+					association = "MEMBER"
+				}
+				items = append(items, fmt.Sprintf(`{"user":{"login":"u%d"},"author_association":%q,"body":"c%d"}`, i, association, i))
+			}
+			_, _ = w.Write([]byte("[" + strings.Join(items, ",") + "]"))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client := NewAssistantClient("", "MetrolistGroup", "Metrolist")
+	client.apiBase = server.URL
+	client.httpClient = server.Client()
+	result, err := client.Issue(context.Background(), 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(result, `"c2"`) || !strings.Contains(result, `"c3"`) || !strings.Contains(result, `"author_association":"MEMBER","body":"c10"`) || !strings.Contains(result, `"older_comments_omitted":2`) {
+		t.Fatalf("Issue() = %s", result)
+	}
+}
+
+func TestAssistantClientSearchCodeStaysInRepository(t *testing.T) {
+	var query, accept string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/MetrolistGroup/Metrolist" {
+			_, _ = w.Write([]byte(`{"private":false}`))
+			return
+		}
+		query, accept = r.URL.Query().Get("q"), r.Header.Get("Accept")
+		_, _ = w.Write([]byte(`{"total_count":1,"items":[{"path":"app/src/main/res/values/strings.xml","html_url":"https://example/x","text_matches":[{"fragment":"<string name=\"translate_lyrics\">Translate lyrics</string>"}]}]}`))
+	}))
+	defer server.Close()
+	client := NewAssistantClient("token", "MetrolistGroup", "Metrolist")
+	client.apiBase = server.URL
+	client.httpClient = server.Client()
+	result, err := client.SearchCode(context.Background(), "translate path:res/values")
+	if err != nil || query != "repo:MetrolistGroup/Metrolist translate path:res/values" || accept != "application/vnd.github.text-match+json" || !strings.Contains(result, "Translate lyrics") {
+		t.Fatalf("SearchCode() = %s, %v (q=%q accept=%q)", result, err, query, accept)
+	}
+	for _, escape := range []string{"x repo:other/repo", "x -org:other", "x USER:other"} {
+		if _, err := client.SearchCode(context.Background(), escape); err == nil {
+			t.Errorf("SearchCode(%q) left the official repository", escape)
+		}
+	}
+	if _, err := NewAssistantClient("", "MetrolistGroup", "Metrolist").SearchCode(context.Background(), "x"); err == nil {
+		t.Error("code search without a token should fail clearly")
 	}
 }

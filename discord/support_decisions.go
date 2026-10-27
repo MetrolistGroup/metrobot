@@ -22,6 +22,8 @@ const (
 	supportAnswerMin = 0.80
 	supportRouteMin  = 0.85
 	supportMarginMin = 0.20
+	// 0.95 refused routine answers (download links, account questions); unsafe labeled drafts score far lower.
+	supportGroundedMin = 0.80
 )
 
 type supportRequestState struct {
@@ -207,6 +209,9 @@ func (b *Bot) handleGarminSupportDecision(s *bot.Client, m *discord.Message, mes
 	}
 	b.Logger.Info("app-support decision", fields...)
 	switch action {
+	case "none":
+		// Silent follow-ups include "that worked"; keep confirmed answers so repeats need no fresh research.
+		b.recordConfirmedSupportFix(ctx, m, messages)
 	case "note", "agent":
 		// The agent registers its own cancellable request; keep message dedup claimed until it finishes.
 		b.unregisterGarminAIRequest(m)
@@ -256,7 +261,7 @@ func (b *Bot) runSupportDecisionAgent(s *bot.Client, m *discord.Message, message
 	}
 	messages = b.prepareGarminAIConversation(requestCtx, s, m, messages)
 	messages = b.rememberGarminAIUnansweredContext(m, messages)
-	ctx, cancelAgent := context.WithTimeout(requestCtx, garminAITimeout)
+	ctx, cancelAgent := context.WithTimeout(requestCtx, garminSupportTimeout)
 	defer cancelAgent()
 	result, err := b.runGarminAI(ctx, s, m, messages)
 	if err != nil {

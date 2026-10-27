@@ -29,6 +29,7 @@ const (
 	garminAICompactionMessages = 20
 	garminAICompactionTimeout  = 20 * time.Second
 	garminAITimeout            = 45 * time.Second
+	garminSupportTimeout       = 90 * time.Second
 	garminAIMaxImages          = 20
 )
 
@@ -133,7 +134,11 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 	if supportMode && !ambient {
 		messages = b.rememberGarminAIUnansweredContext(m, messages)
 	}
-	ctx, cancel := context.WithTimeout(requestCtx, garminAITimeout)
+	timeout := garminAITimeout
+	if supportMode {
+		timeout = garminSupportTimeout
+	}
+	ctx, cancel := context.WithTimeout(requestCtx, timeout)
 	defer cancel()
 	result, err := b.runGarminAIWithMode(ctx, s, m, messages, ambient, ambientToken)
 	if requestCtx.Err() != nil || !b.garminMessageVisible(m.ChannelID.String(), m.ID.String()) {

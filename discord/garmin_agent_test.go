@@ -1064,7 +1064,7 @@ func TestGarminToolsForRequestFiltersUnavailableCapabilities(t *testing.T) {
 		disable func(*Bot, *bot.Client, *discord.Message)
 		blocked []string
 	}{
-		{"github", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.garminGitHub = nil }, []string{"get_metrolist_status", "get_metrolist_changes", "get_metrolist_commit", "search_metrolist_issues", "get_github_user", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
+		{"github", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.garminGitHub = nil }, []string{"get_metrolist_status", "get_metrolist_changes", "get_metrolist_commit", "search_metrolist_issues", "get_metrolist_issue", "search_metrolist_code", "get_github_user", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file"}},
 		{"web", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.garminFirecrawl = nil }, []string{"search_web"}},
 		{"phone", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.gsmarena = nil }, []string{"get_gsmarena_phone"}},
 		{"nano", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.nanoreview = nil }, []string{"get_nanoreview_device"}},
@@ -1124,7 +1124,7 @@ func TestGarminAppSupportCapabilityAllowlist(t *testing.T) {
 	message.Author.ID = snowflakeID(garminNyxID)
 	message.Content = "remember that minky is in coolchannel; what is the KMP preview status?"
 	messages := []cmd.GarminAIMessage{{Role: "user", Content: message.Content}}
-	want := []string{"do_not_respond", "get_metrolist_status", "get_metrolist_changes", "get_metrolist_commit", "search_metrolist_issues", "list_notes", "get_note", "load_skill", "load_support_guide"}
+	want := []string{"do_not_respond", "get_metrolist_status", "get_metrolist_changes", "get_metrolist_commit", "search_metrolist_issues", "get_metrolist_issue", "search_metrolist_code", "list_notes", "get_note", "load_skill", "load_support_guide"}
 	if got := garminToolNames(b.garminToolsForRequest(session, message, messages, false)); !reflect.DeepEqual(got, want) {
 		t.Fatalf("support capability scope = %v, want %v", got, want)
 	}
@@ -1203,7 +1203,7 @@ func TestGarminReadableChannelForConversation(t *testing.T) {
 }
 
 func garminDefaultToolNames() []string {
-	return []string{"react_to_message", "list_discord_emojis", "view_discord_emoji", "do_not_respond", "calculate_math", "get_nanoreview_device", "get_technicalcity_device", "get_gsmarena_phone", "search_web", "get_metrolist_status", "get_metrolist_changes", "get_metrolist_commit", "search_metrolist_issues", "get_github_user", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file", "list_notes", "get_note", "get_discord_profile", "search_discord_members", "read_channel_history", "read_community_channel", "load_skill", "load_support_guide"}
+	return []string{"react_to_message", "list_discord_emojis", "view_discord_emoji", "do_not_respond", "calculate_math", "get_nanoreview_device", "get_technicalcity_device", "get_gsmarena_phone", "search_web", "get_metrolist_status", "get_metrolist_changes", "get_metrolist_commit", "search_metrolist_issues", "get_metrolist_issue", "search_metrolist_code", "get_github_user", "search_github_repositories", "get_github_repository", "get_github_commits", "get_github_file", "list_notes", "get_note", "get_discord_profile", "search_discord_members", "read_channel_history", "read_community_channel", "load_skill", "load_support_guide"}
 }
 
 func garminToolNames(tools []cmd.GarminAITool) []string {
