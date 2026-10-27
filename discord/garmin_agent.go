@@ -153,7 +153,7 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *bot.Client, m *discord
 				return nil, err
 			}
 		}
-		systemPrompt, err = b.garminSystemPromptWithMemory(memory)
+		systemPrompt, err = b.garminSystemPromptWithMemory(memory, garminRedirectChannelID(s, m.ChannelID.String()) == garminGeneralID)
 		if err != nil {
 			return nil, err
 		}
@@ -1346,9 +1346,12 @@ func (b *Bot) executeGarminAITool(ctx context.Context, s *bot.Client, m *discord
 	return output, skill, memoryUpdated
 }
 
-func (b *Bot) garminSystemPromptWithMemory(memory string) (string, error) {
+func (b *Bot) garminSystemPromptWithMemory(memory string, general bool) (string, error) {
 	base := cmd.GarminSystemPrompt()
-	if b.DB != nil {
+	if general {
+		// The stored override replaces the full prompt only; #general keeps its short one.
+		base = cmd.GarminGeneralSystemPrompt()
+	} else if b.DB != nil {
 		content, overridden, err := b.DB.GetGarminSystemPrompt()
 		if err != nil {
 			return "", fmt.Errorf("reading Garmin base system prompt: %w", err)

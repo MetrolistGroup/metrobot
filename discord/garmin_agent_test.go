@@ -912,7 +912,7 @@ func TestGarminSystemPromptAndDiscordContextContainIdentityAndGlobalMemory(t *te
 			GlobalName: ptr("Exact Name"),
 		},
 	}
-	prompt, err := (&Bot{}).garminSystemPromptWithMemory("# Metrobot Memory\nKnown fact")
+	prompt, err := (&Bot{}).garminSystemPromptWithMemory("# Metrobot Memory\nKnown fact", false)
 	if err != nil {
 		t.Fatal(err)
 	}
