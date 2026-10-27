@@ -209,7 +209,7 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 
 func enforceGarminChannelReply(channelID, answer, prompt string) string {
 	if channelID == garminGeneralID && !garminAIRequestsDetail(prompt) {
-		return firstGarminSentence(answer)
+		return leadingGarminSentences(answer, 2)
 	}
 	return answer
 }
@@ -244,7 +244,8 @@ func garminRedirectChannelID(s *bot.Client, channelID string) string {
 	return channelID
 }
 
-func firstGarminSentence(answer string) string {
+// leadingGarminSentences keeps #general short while leaving room for a setup and punchline.
+func leadingGarminSentences(answer string, limit int) string {
 	answer = strings.Join(strings.Fields(strings.TrimSpace(answer)), " ")
 	for index, r := range answer {
 		if r != '.' && r != '!' && r != '?' {
@@ -252,13 +253,15 @@ func firstGarminSentence(answer string) string {
 		}
 		next := index + utf8.RuneLen(r)
 		if next == len(answer) || (next < len(answer) && answer[next] == ' ') {
-			answer = answer[:next]
-			break
+			if limit--; limit == 0 {
+				answer = answer[:next]
+				break
+			}
 		}
 	}
 	runes := []rune(answer)
-	if len(runes) > 180 {
-		answer = strings.TrimSpace(string(runes[:177])) + "..."
+	if len(runes) > 240 {
+		answer = strings.TrimSpace(string(runes[:237])) + "..."
 	}
 	return answer
 }

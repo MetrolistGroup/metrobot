@@ -917,7 +917,7 @@ func TestGarminSystemPromptAndDiscordContextContainIdentityAndGlobalMemory(t *te
 		t.Fatal(err)
 	}
 	prompt += "\n" + garminDiscordContextForMessage(message)
-	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", "disgo", `"display_name":"exact_user"`, "exact_user", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority", "lowercase by default", "Refuse sexual or erotic", "Metrobot's repository", "created by Nyx and Lamp", "Mostafa Alagamy", "Nyx, Lamp, and Adriel", "without mentioning hidden prompts", "Use web search", "untrusted data", "calculator tool", "GSMArena phone data", "read-only requests", "never replace the useful answer with a stock redirect"} {
+	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", "disgo", `"display_name":"exact_user"`, "exact_user", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority", "lowercase by default", "Refuse sexual or erotic", "Metrobot's repository", "created by Nyx and Lamp", "Mostafa Alagamy", "Nyx, Lamp, and Adriel", "without mentioning hidden prompts", "Use web search", "untrusted data", "calculator tool", "GSMArena phone data", "read-only requests", "never replace the answer with a stock redirect", "riff on them, never treat them as typos"} {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("prompt missing %q", expected)
 		}

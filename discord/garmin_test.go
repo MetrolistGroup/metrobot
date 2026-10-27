@@ -576,8 +576,8 @@ func TestGarminEmojiToolsListAndViewLiveGuildEmojis(t *testing.T) {
 }
 
 func TestEnforceGarminGeneralReplyIsShortWithoutRedirect(t *testing.T) {
-	got := enforceGarminChannelReply(garminGeneralID, "the setting is under Settings > Playback. here's some extra detail.", "where is the setting?")
-	want := "the setting is under Settings > Playback."
+	got := enforceGarminChannelReply(garminGeneralID, "the setting is under Settings > Playback. it's been there forever! here's some extra detail.", "where is the setting?")
+	want := "the setting is under Settings > Playback. it's been there forever!"
 	if got != want {
 		t.Fatalf("enforceGarminChannelReply() = %q, want %q", got, want)
 	}
@@ -590,13 +590,13 @@ func TestEnforceGarminGeneralReplyIsShortWithoutRedirect(t *testing.T) {
 }
 
 func TestEnforceGarminGeneralReplyAllowsRequestedDetail(t *testing.T) {
-	answer := "we chose option B.\n- Lamp corrected the date.\n- the release is still undecided."
+	answer := "we chose option B.\n- Lamp corrected the date.\n- the release is still undecided.\n- nobody objected."
 	for _, prompt := range []string{"Summarize this conversation", "give me a recap", "more details please", "explain in detail", "what did we talk about?", "who said what?", "show our conversation history"} {
 		if got := enforceGarminChannelReply(garminGeneralID, answer, prompt); got != answer {
 			t.Errorf("requested detail %q was truncated: %q", prompt, got)
 		}
 	}
-	if got := enforceGarminChannelReply(garminGeneralID, answer, "hello"); got != "we chose option B." {
+	if got := enforceGarminChannelReply(garminGeneralID, answer, "hello"); got != "we chose option B. - Lamp corrected the date." {
 		t.Fatalf("ordinary general policy changed: %q", got)
 	}
 }
@@ -608,8 +608,8 @@ func TestEnforceGarminThreadUnderGeneralStaysShort(t *testing.T) {
 	state.Caches.AddChannel(testChannel(t, map[string]any{"id": "100000000000000011", "guild_id": "100000000000000012", "parent_id": garminGeneralID, "name": "thread", "type": discord.ChannelTypeGuildPublicThread}))
 
 	session := state
-	got := enforceGarminChannelReply(garminRedirectChannelID(session, "100000000000000011"), "the answer is 42. here's some extra detail.", "what is the answer?")
-	if got != "the answer is 42." {
+	got := enforceGarminChannelReply(garminRedirectChannelID(session, "100000000000000011"), "the answer is 42. obviously. here's some extra detail.", "what is the answer?")
+	if got != "the answer is 42. obviously." {
 		t.Fatalf("thread reply = %q", got)
 	}
 }
