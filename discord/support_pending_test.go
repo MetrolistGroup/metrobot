@@ -76,7 +76,7 @@ func TestRejectedSupportQuestionNotifiesAndSurvivesFollowup(t *testing.T) {
 			sent.mu.Lock()
 			body := sent.bodies[0]
 			sent.mu.Unlock()
-			if !strings.Contains(body, "Exact saved nightly instructions.") || strings.Contains(body, "UNSUPPORTED_DRAFT") || !retained.unanswered || !retained.ambientUntil.IsZero() || len(retained.messages) != 1 {
+			if !strings.Contains(body, supportUnavailableReply) || strings.Contains(body, "UNSUPPORTED_DRAFT") || !retained.unanswered || !retained.ambientUntil.IsZero() || len(retained.messages) != 1 {
 				t.Fatal("rejected answer was silent, leaked a draft, lost the question or enabled ambient replies")
 			}
 			beforeRetry := modelCalls

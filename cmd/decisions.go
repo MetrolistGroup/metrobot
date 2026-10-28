@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	decisionsEndpoint = "https://openrouter.ai/api/alpha/decisions"
-	DecisionsBodyMax  = 64 << 10
-	DecisionsTimeout  = 4 * time.Second
+	decisionsEndpoint       = "https://openrouter.ai/api/alpha/decisions"
+	DecisionsBodyMax        = 64 << 10
+	DecisionsTimeout        = 8 * time.Second
+	decisionsAttemptTimeout = 4 * time.Second
 )
 
 type DecisionQuestion struct {
@@ -100,7 +101,7 @@ func (c *DecisionsClient) Decide(ctx context.Context, request DecisionRequest) (
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		attemptCtx, cancelAttempt := context.WithTimeout(ctx, 2*time.Second)
+		attemptCtx, cancelAttempt := context.WithTimeout(ctx, decisionsAttemptTimeout)
 		response, retry, err := c.attempt(attemptCtx, c.keys[(start+attempt)%len(c.keys)], body, request)
 		cancelAttempt()
 		if ctx.Err() != nil {

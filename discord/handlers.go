@@ -190,6 +190,13 @@ func (b *Bot) onMessageCreate(s *bot.Client, m *discord.Message) {
 		if b.autoWarnGarminAbuse(s, m, prompt) {
 			return
 		}
+		if len(m.Attachments) == 0 && len(m.StickerItems) == 0 {
+			switch greeting := strings.ToLower(strings.Trim(prompt, " !.?")); greeting {
+			case "hi", "hello", "hey":
+				go b.sendGarminReplyIfVisible(s, m, greeting)
+				return
+			}
+		}
 		go b.handleGarminAI(s, m, b.garminAITriggeredConversation(m, prompt))
 		return
 	}

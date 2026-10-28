@@ -39,7 +39,7 @@ Every generated support answer is checked against the conversation and this run'
 
 ### Unhandled questions
 
-When an accepted support request fails generation or checking, or produces no answer, the bot sends general guidance from the current `.playback` note. If that note is missing, invalid or opted out, it tries `.nightly`. Both must have nonblank routing descriptions. If neither is available, it sends the fixed unavailable notice.
+When an accepted playback request fails generation or checking, or produces no answer, the bot can send general standalone-Android guidance from the current `.playback` note. If that note is missing, invalid or opted out, it tries `.nightly`. Both must have nonblank routing descriptions. The fallback requires playback wording in the latest message and excludes KMP; other topics and missing notes get the neutral unavailable notice, not unrelated playback advice. Explicit "hi", "hello" and "hey" greetings bypass the model.
 
 Fallback notes are read at delivery time, require no extra model call and are labeled as general guidance, not a confirmed fix. Long content is attached rather than truncated. The question stays pending for a follow-up; the fallback does not start ambient replies or become an accepted diagnosis.
 
@@ -74,7 +74,7 @@ A matching inspected change can support a backed-up, in-place nightly trial with
 - Casual app-guidance classification can also use 20 prior turns and a 2,000-byte summary. Support generation/compaction gets timestamps rather than Discord profiles.
 - Automatic attachment-only requests are ignored. Images are removed from automatic handoff; filenames do not establish their contents. Ask for exact error text when an attachment was not read.
 - Decisions bodies are capped at 64 KiB. The catalog allows 128 eligible notes, 256-byte names and 640-byte descriptions. Invalid IDs, probabilities, distributions, types or envelopes fail closed.
-- Decisions has two slots, separate from the three answering-model slots. Its four-second deadline includes two-second attempts, at most one retry, a 100 ms pause and bounded key failover. Redirects are refused.
+- Decisions has two slots, separate from the three answering-model slots. Its eight-second deadline includes four-second attempts, at most one retry, a 100 ms pause and bounded key failover. Redirects are refused.
 - Provider preferences deny data collection, require supported parameters and sort by latency. Providers still receive the selected text: this is not local inference. No fixed cross-user session ID is sent.
 - Seen/in-flight maps hold at most 1,024 entries. Completed events are deduplicated for ten minutes; failed delivery can retry after normal limits. Deletions cancel affected requests and retain ten-minute tombstones. A send already in progress cannot be recalled.
 - Conversations expire after 24 hours and disappear on restart. Pending questions retain at most 40 source origins; overflowing that limit drops the corresponding history. No timers send unsolicited follow-ups.

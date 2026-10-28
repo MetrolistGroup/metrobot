@@ -5,7 +5,7 @@ Metrolist's Discord and Telegram bot for moderation, logging, dehoisting and com
 ## Main features
 
 - [Markdown notes](docs/notes.md), including randomized content, interactive FAQs and Components V2 layouts.
-- [AI chat and support](docs/support-routing.md), using staff notes, scoped guides and public project sources. Unhandled support requests fall back to approved playback/nightly guidance.
+- [AI chat and support](docs/support-routing.md), using staff notes, scoped guides and public project sources. Unhandled standalone playback requests fall back to approved playback/nightly guidance.
 - Device specifications and comparisons from GSMArena, NanoReview and Technical City.
 - Avatar GIF effects and private OCR/English translation. GIF rendering is local; OCR sends the selected text/images to the configured OpenRouter vision provider, without chat history or shared memory. OCR results do not enter conversation memory and can contain recognition errors.
 

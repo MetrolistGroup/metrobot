@@ -191,7 +191,7 @@ func TestDecisionsTransportBudgetAndRedaction(t *testing.T) {
 	client := newDecisionsClient([]string{"key", "next"}, "model", "https://private.example", &http.Client{Transport: decisionTestTransport(func(r *http.Request) (*http.Response, error) {
 		calls++
 		deadline, ok := r.Context().Deadline()
-		if !ok || time.Until(deadline) > 2*time.Second {
+		if !ok || time.Until(deadline) > decisionsAttemptTimeout {
 			t.Error("attempt has no bounded deadline")
 		}
 		if calls == 1 {

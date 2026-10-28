@@ -34,6 +34,8 @@ const (
 	garminAIHistoryResultSize   = 128 * 1024
 )
 
+const garminReplyStyle = `Write like a helpful member of this Discord, in plain conversational English. Answer the latest message directly and stop once it is answered. Usually one or two sentences are enough. Use a list only for real steps. Skip praise, question restatements, customer-service introductions, unnecessary apologies and "let me know" endings. Avoid em dashes, decorative formatting and bold labels. Use straight quotes. Match the user's energy; routine chat needs no joke or fictional bot life. In banter, give one brief comeback rather than acting out a scene or promising to do something. Keep necessary conditions and safety warnings. Do not describe internal routing or evidence checks.`
+
 //go:embed garmin_skills/*.md
 var garminSkillFiles embed.FS
 
@@ -174,6 +176,7 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 		systemPrompt += "\n\nDedicated support core:\n" + skillContent
 		result.Skills["support"] = struct{}{}
 	}
+	systemPrompt += "\n\nReply style:\n" + garminReplyStyle
 	conversation := append([]cmd.GarminAIMessage(nil), copyGarminAIMessages(messages)...)
 	if s == nil || s.Rest == nil {
 		prepareGarminGIFs(ctx, nil, conversation, b.Logger)

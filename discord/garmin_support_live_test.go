@@ -44,10 +44,10 @@ func TestSupportPlaybackAndCastingLive(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			sources, answer := testSupportMessageLive(t, test.messages, nil, []string{"try reinstalling", "uninstall and reinstall", "clear app data to fix", "definitely fixed"}, "")
-			if test.name == "wifi-casting" && !strings.Contains(answer, "General guidance from") && !strings.Contains(strings.ToLower(answer), "cast") {
+			if test.name == "wifi-casting" && !strings.Contains(answer, "general playback steps") && !strings.Contains(strings.ToLower(answer), "cast") {
 				t.Error("Wi-Fi answer omitted scoped casting guidance")
 			}
-			if test.name != "wifi-casting" && !strings.Contains(answer, "General guidance from") {
+			if test.name != "wifi-casting" && !strings.Contains(answer, "general playback steps") {
 				lower := strings.ToLower(answer)
 				if strings.Contains(lower, "nightly") {
 					if err := verifyNightlyReplayEvidence(sources, answer, ""); err != nil {
@@ -287,6 +287,15 @@ func TestSupportAgentLive(t *testing.T) {
 		casual       bool
 		forbidden    []string
 	}{
+		{id: "source-error", messages: []cmd.GarminAIMessage{{Role: "user", Content: "What if it said playback failed because of Source error"}}, wantAnswer: true},
+		{id: "streamed-only", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Source error"}, {Role: "assistant", Content: "Does it happen with downloaded songs too?"}, {Role: "user", Content: "Downloaded songs work. It only fails on songs I stream."}}, wantAnswer: true},
+		{id: "wifi-casting", messages: []cmd.GarminAIMessage{{Role: "user", Content: "The option to stream to another device via WiFi is still not working?"}}, wantAnswer: true, forbidden: []string{"downloaded songs", "source error"}},
+		{id: "kmp-availability", messages: []cmd.GarminAIMessage{{Role: "user", Content: "is kmp released?"}}, wantAnswer: true, wantNote: "kmp", forbidden: []string{"pinned", "check the `kmp` note", "is released for", "source exists"}},
+		{id: "kmp-windows-arm", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Will kmp work on Windows ARM or is it only Windows x64?"}}, wantAnswer: true, selectedNote: "kmp", forbidden: []string{"prismo", "prism", "emulation", "playback checks", "at this time"}},
+		{id: "impersonation-report", messages: []cmd.GarminAIMessage{{Role: "user", Content: "how do i tell someone about a fake google play impersonation app"}}, wantAnswer: true, forbidden: []string{"in-app reporting", "cannot verify", "dsc.gg", "t.me", "playback"}},
+		{id: "impersonation-contact", messages: []cmd.GarminAIMessage{{Role: "user", Content: "how do i tell someone about a fake google play impersonation app"}, {Role: "assistant", Content: "Share the fake app's store link with the moderators here."}, {Role: "user", Content: "who would i contact for this though"}}, wantAnswer: true, forbidden: []string{"dsc.gg", "t.me", "playback", "cannot verify"}},
+		{id: "kmp-new-topic", messages: []cmd.GarminAIMessage{{Role: "user", Content: "how do i report a fake google play impersonation app"}, {Role: "assistant", Content: "Share its store link with the moderators here."}, {Role: "user", Content: "has kmp been released?"}}, wantAnswer: true, wantNote: "kmp", forbidden: []string{"impersonation", "moderators", "dsc.gg", "pinned", "playback"}},
+		{id: "casual-banter", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "garmin you look like a microwave"}}, wantAnswer: true, forbidden: []string{"as an ai", "physical appearance", "please be respectful", "assist you"}},
 		{id: "update-question", messages: []cmd.GarminAIMessage{{Role: "user", Content: "how do i even update the app? how do i know theres an update"}}, wantAnswer: true},
 		{id: "update-question-selected", messages: []cmd.GarminAIMessage{{Role: "user", Content: "how do i even update the app? how do i know theres an update"}}, selectedNote: "up", wantAnswer: true},
 		{id: "update-izzy", messages: []cmd.GarminAIMessage{{Role: "user", Content: "I installed standalone Metrolist from IzzyOnDroid. Where is the updater?"}}, selectedNote: "up", wantAnswer: true},
@@ -294,7 +303,7 @@ func TestSupportAgentLive(t *testing.T) {
 		{id: "discover-note", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Where is Your daily discover in standalone Android?"}}, selectedNote: "discover", wantNote: "discover"},
 		{id: "discover-followup", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Is there a discover playlist in Metrolist?"}, {Role: "assistant", Content: "I'm ready to assist. What is your question?"}, {Role: "user", Content: "answer"}}, wantAnswer: true},
 		{id: "likes-auto-sync", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Standalone Android Metrolist 13.7.0: can I turn off automatic account sync so new YouTube likes stop appearing?"}}, wantAnswer: true, forbidden: []string{"reinstall", "clear app data", "delete your"}},
-		{id: "casual-unrelated", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "hello, how are you?"}}, wantAnswer: true},
+		{id: "casual-unrelated", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "hello, how are you?"}}, wantAnswer: true, forbidden: []string{"as an ai", "hanging out in the wires", "chaos"}},
 		{id: "casual-login-playlists", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "explain login to him and how to get yt music playlists onto metrolist"}}, wantAnswer: true},
 		{id: "casual-correct-login", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "explain login and how to get youtube music playlists onto metrolist"}, {Role: "assistant", Content: "metrolist doesn't do login."}, {Role: "user", Content: "yes it does, explain how"}}, wantAnswer: true},
 		{id: "casual-short-correction", casual: true, messages: []cmd.GarminAIMessage{{Role: "user", Content: "does Metrolist support login?"}, {Role: "assistant", Content: "metrolist doesn't do login."}, {Role: "user", Content: "yes it does"}}, wantAnswer: true},
@@ -449,15 +458,19 @@ func TestSupportAgentLive(t *testing.T) {
 						t.Error("related FAQ replaced the requested setup instructions")
 					}
 				}
+				if !test.casual && containsAnyGarminPhrase(strings.ToLower(r.Answer), "if you want, i can", "let me know if", "then stop there") {
+					t.Errorf("%s: reply contains a canned offer or writing instruction", test.id)
+				}
 				for _, forbidden := range test.forbidden {
 					if strings.Contains(strings.ReplaceAll(strings.ToLower(r.Answer), "not "+forbidden, ""), forbidden) {
 						t.Errorf("%s: review forbidden phrase %q", test.id, forbidden)
 					}
 				}
-				if test.casual && test.id != "casual-unrelated" && (r.AppGuidance == nil || *r.AppGuidance < 0.2 || r.Grounded < supportGroundedMin) {
+				casualChat := test.id == "casual-unrelated" || test.id == "casual-banter"
+				if test.casual && !casualChat && (r.AppGuidance == nil || *r.AppGuidance < 0.2 || r.Grounded < supportGroundedMin) {
 					t.Errorf("%s: casual app guidance bypassed the grounded support path", test.id)
 				}
-				if test.id == "casual-unrelated" && (r.AppGuidance == nil || *r.AppGuidance >= 0.2 || len(r.Checks) != 0) {
+				if casualChat && (r.AppGuidance == nil || *r.AppGuidance >= 0.2 || len(r.Checks) != 0) {
 					t.Error("unrelated casual chat loaded support evidence")
 				}
 				if strings.HasPrefix(test.id, "update-question") {
