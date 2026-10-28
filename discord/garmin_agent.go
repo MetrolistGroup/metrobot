@@ -141,10 +141,7 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *bot.Client, m *discord
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	appSupport, err := b.garminSupportMode(ctx, m, messages)
-	if err != nil {
-		return nil, err
-	}
+	appSupport := m.ChannelID.String() == garminAppSupportID
 	systemPrompt := garminAppSupportSystemPrompt
 	if !appSupport {
 		var memory string
@@ -1013,8 +1010,9 @@ func sanitizeGarminInternalToolDisclosure(prompt, answer string) string {
 
 func garminAISilentAnswer(answer string) bool {
 	answer = strings.ToLower(strings.TrimSpace(answer))
-	answer = strings.Trim(answer, "`*_.,! ")
-	return answer == "do_not_respond" || answer == "do not respond"
+	answer = strings.Trim(answer, "`*_.,!\"'(){}[] ")
+	answer = strings.NewReplacer("_", " ", "-", " ").Replace(answer)
+	return strings.Join(strings.Fields(answer), " ") == "do not respond"
 }
 
 func (b *Bot) handleGarminAIMessageAction(s *bot.Client, m *discord.Message, call cmd.GarminAIToolCall, ambientToken uint64) (bool, error) {

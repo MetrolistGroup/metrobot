@@ -2,7 +2,6 @@ package discord
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -10,160 +9,82 @@ import (
 	"github.com/MetrolistGroup/metrobot/cmd"
 )
 
-func TestCasualAppGuidanceUsesIsolatedCheckedSupport(t *testing.T) {
-	for _, appGuidance := range []bool{false, true} {
-		t.Run(map[bool]string{false: "ordinary chat", true: "app followup"}[appGuidance], func(t *testing.T) {
-			b := &Bot{}
-			classified, checks, calls := 0, 0, 0
-			b.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
-				if _, ok := request.Questions["app_guidance"]; ok {
-					classified++
-					state := request.State.(supportDecisionState)
-					if state.Message != "garmin, yes it does" || len(state.Conversation) != 2 {
-						t.Fatalf("classifier lost the keyword-free follow-up: %+v", state)
+func TestNonSupportChannelsUseOnlyAnsweringModel(t *testing.T) {
+	for _, channel := range []string{garminGeneralID, garminBotsID, garminChatThreadID, "5"} {
+		for _, prompt := range []string{"hello", "How do I sign into Metrolist?", "yes it does"} {
+			t.Run(channel+"/"+prompt, func(t *testing.T) {
+				calls := 0
+				b := lifecycleBot(garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+					calls++
+					if strings.HasPrefix(request.SystemPrompt, garminAppSupportSystemPrompt) || !strings.Contains(request.SystemPrompt, "# Metrolist project reference") {
+						t.Fatal("ordinary chat lost its normal prompt or project facts")
 					}
-					p := 0.1
-					if appGuidance {
-						p = .99
-					}
-					return casualGuidanceTestDecision(t, p), nil
+					return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "Qwen answer."}}, nil
+				}))
+				b.garminDecisions = supportDecisionTestFunc(func(context.Context, cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+					t.Error("non-support chat called Decider")
+					return nil, errors.New("Decider unavailable")
+				})
+				m := lifecycleMessage("100")
+				m.ChannelID = snowflakeID(channel)
+				m.Content = "garmin, " + prompt
+				messages := []cmd.GarminAIMessage{{Role: "user", Content: "Does Metrolist support login?"}, {Role: "assistant", Content: "Login is unsupported."}, {Role: "user", Content: prompt}}
+				result, err := b.runGarminAI(context.Background(), nil, m, messages)
+				if err != nil || result == nil || result.Silent || result.Answer != "Qwen answer." || calls != 1 {
+					t.Fatalf("result=%+v err=%v model calls=%d", result, err, calls)
 				}
-				checks++
-				skill := request.State.(map[string]any)["support_skill"].(string)
-				core, err := loadGarminSupportAnswerSkill()
-				if err != nil || skill != core {
-					t.Fatal("checker lost the trusted core/project reference")
-				}
-				if checks == 1 {
-					return supportTestDecision(request, "agent", .1, .1), nil
-				}
-				return supportTestDecision(request, "agent", .99, .99), nil
 			})
-			b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-				calls++
-				if appGuidance {
-					if !strings.HasPrefix(request.SystemPrompt, garminAppSupportSystemPrompt) || strings.Contains(request.Context, "PRIVATE_PROFILE") || garminToolAvailable(request.Tools, "get_discord_profile") || garminToolAvailable(request.Tools, "search_web") {
-						t.Fatal("casual app guidance inherited persona/profile or unrelated tools")
-					}
-					if calls == 1 {
-						return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "REJECTED_APP_CLAIM"}}, nil
-					}
-					if calls == 2 {
-						return garminHistoryTestCall("load_skill", `{"name":"support"}`), nil
-					}
-					for _, turn := range request.Messages {
-						if strings.Contains(turn.Content, "REJECTED_APP_CLAIM") {
-							t.Fatal("rejected draft anchored the retry")
-						}
-					}
-				} else if !strings.HasPrefix(request.SystemPrompt, cmd.GarminSystemPrompt()) {
-					t.Fatal("ordinary chat lost its normal prompt")
-				}
-				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "Which app variant and platform are you using?"}}, nil
-			})
-			m := supportTestMessage(44)
-			m.ChannelID = snowflakeID(garminBotsID)
-			m.Author.Username = "PRIVATE_PROFILE"
-			m.Content = "garmin, yes it does"
-			messages := []cmd.GarminAIMessage{{Role: "user", Content: "Can I sign into Metrolist?"}, {Role: "assistant", Content: "Login is unsupported."}, {Role: "user", Content: "yes it does"}}
-			result, err := b.runGarminAI(context.Background(), nil, m, messages)
-			if err != nil || result == nil || result.Silent || classified != 1 || (appGuidance && (checks != 2 || calls != 3)) || (!appGuidance && (checks != 0 || calls != 1)) {
-				t.Fatalf("result=%+v err=%v classified=%d checks=%d calls=%d", result, err, classified, checks, calls)
-			}
-		})
+		}
 	}
 }
 
-func TestCasualGuidanceClassifiesRetainedTopicBeforeCompaction(t *testing.T) {
-	for _, summarized := range []bool{false, true} {
-		t.Run(map[bool]string{false: "earlier topic", true: "retained summary"}[summarized], func(t *testing.T) {
-			b, client, sent := newSupportDecisionTestBot(t)
-			classified, compacted := 0, false
-			b.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
-				if _, ok := request.Questions["app_guidance"]; ok {
-					classified++
-					state, _ := json.Marshal(request.State)
-					if !strings.Contains(string(state), "Metrolist login") || strings.Contains(string(state), "PRIVATE_PROFILE") || strings.Contains(string(state), "discord_") || strings.Contains(string(state), "1242567443742986373") || strings.Contains(string(state), "Retained conversation participants") {
-						t.Fatal("classifier lost the retained subject or received profile metadata")
-					}
-					return casualGuidanceTestDecision(t, .99), nil
-				}
-				return supportTestDecision(request, "agent", .99, .99), nil
-			})
-			b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-				if classified != 1 || strings.Contains(request.Context, "PRIVATE_PROFILE") {
-					t.Fatal("compaction/generation ran before classification or inherited profile metadata")
-				}
-				if request.SystemPrompt == garminAIConversationSummaryPrompt {
-					compacted = true
-					return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: `{"summary":"The user is correcting a Metrolist login denial."}`}}, nil
-				}
-				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "You're right. Login is supported in standalone Android and KMP."}}, nil
-			})
-			first := cmd.GarminAIMessage{Role: "user", Content: "Metrolist login is supported."}
-			count := 19
-			if summarized {
-				producer := &Bot{garminAI: garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-					return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: `{"summary":"Metrolist login was discussed by discord_1242567443742986373 (<@1242567443742986373>, ID 1242567443742986373)."}`}}, nil
-				})}
-				named := make([]cmd.GarminAIMessage, garminAICompactionMessages+1)
-				for i := range named {
-					named[i] = cmd.GarminAIMessage{Role: "user", Name: "discord_1242567443742986373", Content: "Metrolist login"}
-				}
-				compacted, err := producer.compactGarminAIConversation(context.Background(), named, "")
-				if err != nil {
-					t.Fatal(err)
-				}
-				first = compacted[0]
-				count++
-			}
-			messages := []cmd.GarminAIMessage{first}
-			for range count {
-				messages = append(messages, cmd.GarminAIMessage{Role: "user", Content: "one more detail"})
-			}
-			messages = append(messages, cmd.GarminAIMessage{Role: "user", Content: "yes it does"})
-			m := supportTestMessage(46)
-			m.ChannelID = snowflakeID(garminBotsID)
-			m.Author.Username = "PRIVATE_PROFILE"
-			m.Content = "garmin, yes it does"
-			b.handleGarminAI(client, m, messages)
-			if classified != 1 || !compacted || sent.count() != 1 {
-				t.Fatalf("classified=%d compacted=%v sends=%d", classified, compacted, sent.count())
-			}
-		})
+func TestNonSupportCompactionSkipsDecider(t *testing.T) {
+	sends, summaries, answers := 0, 0, 0
+	client := lifecycleClient(t, func() (string, error) {
+		sends++
+		return `{"id":"300","channel_id":"5"}`, nil
+	})
+	b := lifecycleBot(garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		if request.SystemPrompt == garminAIConversationSummaryPrompt {
+			summaries++
+			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: `{"summary":"The user asked about Metrolist login."}`}}, nil
+		}
+		answers++
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "Login is supported."}}, nil
+	}))
+	b.garminDecisions = supportDecisionTestFunc(func(context.Context, cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+		t.Fatal("non-support compaction or generation called Decider")
+		return nil, nil
+	})
+	messages := make([]cmd.GarminAIMessage, garminAICompactionMessages+1)
+	for i := range messages {
+		messages[i] = cmd.GarminAIMessage{Role: "user", Content: "Metrolist login"}
+	}
+	m := lifecycleMessage("100")
+	m.Content = "garmin, explain login"
+	b.handleGarminAI(client, m, messages)
+	if summaries != 1 || answers != 1 || sends != 1 {
+		t.Fatalf("summaries=%d answers=%d sends=%d", summaries, answers, sends)
 	}
 }
 
-func TestCasualGuidanceClassificationFailureStopsGeneration(t *testing.T) {
-	for _, failure := range []string{"api", "invalid"} {
-		t.Run(failure, func(t *testing.T) {
-			b := &Bot{
-				garminAI: garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-					t.Fatal("generated an unchecked casual answer after classification failure")
-					return nil, nil
-				}),
-				garminDecisions: supportDecisionTestFunc(func(context.Context, cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
-					if failure == "api" {
-						return nil, errors.New("unavailable")
-					}
-					return nil, nil
-				}),
-			}
-			m := supportTestMessage(45)
-			m.ChannelID = snowflakeID(garminBotsID)
-			if _, err := b.runGarminAI(context.Background(), nil, m, []cmd.GarminAIMessage{{Role: "user", Content: "hello"}}); err == nil {
-				t.Fatal("classification failure was ignored")
-			}
-		})
+func TestDeciderEntrypointsIgnoreOtherChannels(t *testing.T) {
+	b, client, _ := newSupportDecisionTestBot(t)
+	b.garminDecisions = supportDecisionTestFunc(func(context.Context, cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+		t.Fatal("Decider called outside app-support")
+		return nil, nil
+	})
+	for _, channel := range []string{garminGeneralID, garminBotsID, garminChatThreadID, "5"} {
+		m := supportTestMessage(20)
+		m.ChannelID = snowflakeID(channel)
+		m.Content = "That fixed it, thanks!"
+		messages := []cmd.GarminAIMessage{{Role: "user", Name: garminAIMessageName(m.Author.ID.String()), Content: "Playback fails"}, {Role: "assistant", Content: "Try the approved playback checks."}, {Role: "user", Content: m.Content}}
+		b.handleGarminSupportDecision(client, m, messages)
+		b.recordConfirmedSupportFix(context.Background(), m, messages)
+		note := "playback"
+		accepted, hint, err := b.supportAnswerGrounded(context.Background(), m, messages, messages, "Qwen answer.", &note)
+		if !accepted || hint != "" || err != nil || note != "" {
+			t.Fatalf("non-support check: accepted=%v hint=%q err=%v note=%q", accepted, hint, err, note)
+		}
 	}
-}
-
-func casualGuidanceTestDecision(t *testing.T, probability float64) *cmd.DecisionResponse {
-	t.Helper()
-	var response cmd.DecisionResponse
-	if err := json.Unmarshal([]byte(`{"model":"test/model","usage":{"input_tokens":1,"output_tokens":1},"answers":{"app_guidance":{"type":"noul","noul":0}}}`), &response); err != nil {
-		t.Fatal(err)
-	}
-	response.Answers["app_guidance"] = cmd.DecisionAnswer{Type: "noul", Noul: &probability}
-	return &response
 }

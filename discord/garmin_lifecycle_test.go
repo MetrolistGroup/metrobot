@@ -413,3 +413,28 @@ func TestGarminLifecycleSilentInteractionStoresOnlyOriginalMessages(t *testing.T
 		}
 	}
 }
+
+func TestGarminLifecycleMalformedSilenceSendsNothing(t *testing.T) {
+	for _, answer := range []string{"do not_respond", "do_not respond", "DO-NOT-RESPOND", "`do not_respond`", "do not_respond()", "-# thought briefly\ndo not_respond"} {
+		t.Run(answer, func(t *testing.T) {
+			client := lifecycleClient(t, func() (string, error) {
+				t.Error("silence marker or usage header was sent to Discord")
+				return `{"id":"300","channel_id":"5"}`, nil
+			})
+			calls := 0
+			b := lifecycleBot(garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+				calls++
+				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: answer}}, nil
+			}))
+			m := lifecycleMessage("100")
+			m.Content = "Garmin ebsnkbfjpbap jrnos"
+			b.handleGarminAI(client, m, []cmd.GarminAIMessage{{Role: "user", Content: "ebsnkbfjpbap jrnos"}})
+			if calls != 1 {
+				t.Fatalf("silence made %d model calls, want 1", calls)
+			}
+			if _, retained := b.garminAIHistory(m, "", false); retained {
+				t.Fatal("silence marker entered conversation history")
+			}
+		})
+	}
+}

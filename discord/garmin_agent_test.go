@@ -1276,13 +1276,15 @@ func TestGarminAIToolImageURLs(t *testing.T) {
 }
 
 func TestGarminAISilentAnswer(t *testing.T) {
-	for _, answer := range []string{"do_not_respond", "`do_not_respond`", "do not respond"} {
+	for _, answer := range []string{"do_not_respond", "`do_not_respond`", "do not respond", "do not_respond", "do_not respond", "DO-NOT-RESPOND", " **do\tnot_\nrespond.** ", "do not_respond()", `"do not_respond"`, "do not_respond {}"} {
 		if !garminAISilentAnswer(answer) {
 			t.Errorf("garminAISilentAnswer(%q) = false", answer)
 		}
 	}
-	if garminAISilentAnswer("i do not respond to spam") {
-		t.Fatal("ordinary sentence was treated as silence sentinel")
+	for _, answer := range []string{"i do not respond to spam", "do not respond to spam", "please do not respond", "do_not_respond means stay silent"} {
+		if garminAISilentAnswer(answer) {
+			t.Errorf("ordinary sentence was treated as silence sentinel: %q", answer)
+		}
 	}
 }
 

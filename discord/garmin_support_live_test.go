@@ -272,7 +272,6 @@ func TestSupportAgentLive(t *testing.T) {
 		Error        bool             `json:"error,omitempty"`
 		PromptChars  int              `json:"prompt_chars"`
 		ModelCalls   int              `json:"model_calls"`
-		AppGuidance  *float64         `json:"app_guidance,omitempty"`
 	}
 	var reports []report
 	for i, test := range []struct {
@@ -376,12 +375,8 @@ func TestSupportAgentLive(t *testing.T) {
 				b.garminMemory = memory
 			}
 			b.garminDecisions = supportDecisionTestFunc(func(ctx context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
-				if _, classifying := request.Questions["app_guidance"]; classifying {
-					response, err := decisions.Decide(ctx, request)
-					if response != nil {
-						r.AppGuidance = response.Answers["app_guidance"].Noul
-					}
-					return response, err
+				if test.casual {
+					t.Fatal("Decider was called outside app-support")
 				}
 				r.Draft, _ = request.State.(map[string]any)["proposed_answer"].(string)
 				response, err := decisions.Decide(ctx, request)
@@ -466,12 +461,8 @@ func TestSupportAgentLive(t *testing.T) {
 						t.Errorf("%s: review forbidden phrase %q", test.id, forbidden)
 					}
 				}
-				casualChat := test.id == "casual-unrelated" || test.id == "casual-banter"
-				if test.casual && !casualChat && (r.AppGuidance == nil || *r.AppGuidance < 0.2 || r.Grounded < supportGroundedMin) {
-					t.Errorf("%s: casual app guidance bypassed the grounded support path", test.id)
-				}
-				if casualChat && (r.AppGuidance == nil || *r.AppGuidance >= 0.2 || len(r.Checks) != 0) {
-					t.Error("unrelated casual chat loaded support evidence")
+				if test.casual && len(r.Checks) != 0 {
+					t.Error("non-support chat called Decider")
 				}
 				if strings.HasPrefix(test.id, "update-question") {
 					for _, fact := range []string{"settings", "updater", "check for updates"} {

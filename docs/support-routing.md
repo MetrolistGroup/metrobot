@@ -25,7 +25,7 @@ Decisions asks two independent questions: whether the message needs an answer, a
 
 A selected note is reference material, not permission to post its full body. The agent reads it through `get_note` and writes a concise answer. Uncertain note matches go to the agent. Only delivered answers enter assistant history; rejected drafts do not.
 
-With Decisions enabled, casual requests needing Metrolist facts use the same isolated support path. Their classifier runs before compaction and favors support at probability 0.20. Ordinary chat keeps its own prompt. Classification errors do not fall back to unchecked app guidance.
+Decider runs only in app-support. Every other channel uses Qwen directly, including Metrolist questions and follow-ups, with no Decider classification, evidence check or confirmed-fix learning call. Ordinary chat keeps its own prompt, project reference and read-only tools.
 
 ## Evidence and practical answers
 
@@ -71,7 +71,7 @@ A matching inspected change can support a backed-up, in-place nightly trial with
 ## Privacy and limits
 
 - Automatic routing receives up to 4,000 bytes of current text, a visible bot parent up to 1,500 bytes, and four retained turns up to 1,000 bytes each. It excludes profiles, IDs, summaries, reasoning and shared memory.
-- Casual app-guidance classification can also use 20 prior turns and a 2,000-byte summary. Support generation/compaction gets timestamps rather than Discord profiles.
+- Support generation/compaction gets timestamps rather than Discord profiles.
 - Automatic attachment-only requests are ignored. Images are removed from automatic handoff; filenames do not establish their contents. Ask for exact error text when an attachment was not read.
 - Decisions bodies are capped at 64 KiB. The catalog allows 128 eligible notes, 256-byte names and 640-byte descriptions. Invalid IDs, probabilities, distributions, types or envelopes fail closed.
 - Decisions has two slots, separate from the three answering-model slots. Its eight-second deadline includes four-second attempts, at most one retry, a 100 ms pause and bounded key failover. Redirects are refused.

@@ -42,7 +42,7 @@ func supportConfirmedExchange(m *discord.Message, messages []cmd.GarminAIMessage
 
 func (b *Bot) recordConfirmedSupportFix(ctx context.Context, m *discord.Message, messages []cmd.GarminAIMessage) {
 	question, answer, ok := supportConfirmedExchange(m, messages)
-	if !ok || b.garminDecisions == nil || b.Notes == nil || b.Notes.DB == nil {
+	if !ok || m.ChannelID.String() != garminAppSupportID || b.garminDecisions == nil || b.Notes == nil || b.Notes.DB == nil {
 		return
 	}
 	request := cmd.DecisionRequest{
