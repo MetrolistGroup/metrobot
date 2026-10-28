@@ -60,7 +60,7 @@ type Bot struct {
 	garminAISlots        chan struct{}
 	messageLogMu         sync.Mutex
 	messageLogCache      map[string][]cachedLogMessage
-	youtubeWebhookMu     sync.Mutex
+	webhookMu            sync.Mutex
 	nukeBusy             atomic.Bool
 	TimedBanRestorer     func()
 	ready                chan struct{}

@@ -80,7 +80,11 @@ func TestSupportRetryCarriesCheckerHint(t *testing.T) {
 		if checks > 1 {
 			response = supportNoulDecision("grounded", .99)
 		}
-		response.Answers["problem"] = cmd.DecisionAnswer{Type: "choice", Choice: "needs_research"}
+		problem := "needs_research"
+		if checks > 1 {
+			problem = "none"
+		}
+		response.Answers["problem"] = cmd.DecisionAnswer{Type: "choice", Choice: problem}
 		return response, nil
 	})
 	var hinted bool

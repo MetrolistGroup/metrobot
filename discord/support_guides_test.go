@@ -10,10 +10,6 @@ import (
 )
 
 func TestSupportSetupGuidesReachAgentAndEvidenceCheck(t *testing.T) {
-	full, err := loadGarminSupportEvidenceSkill()
-	if err != nil {
-		t.Fatal(err)
-	}
 	messages := []cmd.GarminAIMessage{{Role: "user", Content: "How do I connect Discord?"}}
 	selected, err := loadGarminSupportAnswerSkill()
 	if err != nil {
@@ -23,9 +19,9 @@ func TestSupportSetupGuidesReachAgentAndEvidenceCheck(t *testing.T) {
 	if err != nil || loaded != selected {
 		t.Fatalf("on-demand support skill must return only the core: %v", err)
 	}
-	for _, name := range []string{"rpc", "login", "scrobbling", "playlists", "discovery"} {
+	for _, name := range []string{"rpc", "login", "scrobbling", "playlists", "discovery", "playback", "casting"} {
 		guide, err := loadGarminSupportGuide(name)
-		if err != nil || !strings.Contains(full, guide) || strings.Contains(loaded, guide) {
+		if err != nil || strings.Contains(loaded, guide) {
 			t.Fatalf("wrong guide selection/evidence for %s: %v", name, err)
 		}
 	}
@@ -34,10 +30,10 @@ func TestSupportSetupGuidesReachAgentAndEvidenceCheck(t *testing.T) {
 	b := &Bot{
 		garminAI: garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 			calls++
-			if !strings.Contains(request.SystemPrompt, selected) || strings.Contains(request.SystemPrompt, full) {
+			if !strings.Contains(request.SystemPrompt, selected) {
 				t.Fatal("agent must start with the dedicated support core only")
 			}
-			if strings.Contains(request.Context, "public search") || strings.Contains(request.Context, "PRIVATE_PROFILE") {
+			if strings.Contains(request.Context, "Public lookup subjects and account values") || strings.Contains(request.Context, "PRIVATE_PROFILE") {
 				t.Fatal("support inherited unrelated web-search or personal profile context")
 			}
 			if !garminToolAvailable(request.Tools, "load_skill") || !garminToolAvailable(request.Tools, "load_support_guide") {
@@ -54,8 +50,8 @@ func TestSupportSetupGuidesReachAgentAndEvidenceCheck(t *testing.T) {
 		}),
 		garminDecisions: supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
 			checked = true
-			if request.State.(map[string]any)["support_skill"] != full {
-				t.Fatal("checker lost the full trusted reference set")
+			if request.State.(map[string]any)["support_skill"] != selected {
+				t.Fatal("checker lost the trusted core/project reference")
 			}
 			return supportTestDecision(request, "agent", .99, .99), nil
 		}),

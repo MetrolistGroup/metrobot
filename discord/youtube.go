@@ -59,7 +59,7 @@ func (b *Bot) repostCleanYouTubeLinks(s *bot.Client, m *discord.Message) bool {
 		return false
 	}
 
-	webhook, threadID, err := b.youtubeCleanerWebhook(s, m.ChannelID.String())
+	webhook, threadID, err := b.messageWebhook(s, m.ChannelID.String(), youtubeCleanerWebhookName)
 	if err != nil {
 		b.Logger.Error("failed to get YouTube cleaner webhook", zap.String("channel", m.ChannelID.String()), zap.Error(err))
 		return false
@@ -94,7 +94,7 @@ func (b *Bot) repostCleanYouTubeLinks(s *bot.Client, m *discord.Message) bool {
 	return true
 }
 
-func (b *Bot) youtubeCleanerWebhook(s *bot.Client, channelID string) (*discord.IncomingWebhook, string, error) {
+func (b *Bot) messageWebhook(s *bot.Client, channelID, name string) (*discord.IncomingWebhook, string, error) {
 	channel, err := getDiscordChannel(s, channelID)
 	if err != nil {
 		return nil, "", err
@@ -106,18 +106,18 @@ func (b *Bot) youtubeCleanerWebhook(s *bot.Client, channelID string) (*discord.I
 			return nil, "", fmt.Errorf("thread %s has no parent channel", threadID)
 		}
 	}
-	b.youtubeWebhookMu.Lock()
-	defer b.youtubeWebhookMu.Unlock()
+	b.webhookMu.Lock()
+	defer b.webhookMu.Unlock()
 	webhooks, err := s.Rest.GetWebhooks(snowflakeID(channelID))
 	if err != nil {
 		return nil, "", err
 	}
 	for _, webhook := range webhooks {
 		incoming, ok := webhook.(discord.IncomingWebhook)
-		if ok && incoming.Name() == youtubeCleanerWebhookName && incoming.Token != "" && (s.ID() == 0 || incoming.User.ID == s.ID()) {
+		if ok && incoming.Name() == name && incoming.Token != "" && (s.ID() == 0 || incoming.User.ID == s.ID()) {
 			return &incoming, threadID, nil
 		}
 	}
-	webhook, err := s.Rest.CreateWebhook(snowflakeID(channelID), discord.WebhookCreate{Name: youtubeCleanerWebhookName})
+	webhook, err := s.Rest.CreateWebhook(snowflakeID(channelID), discord.WebhookCreate{Name: name})
 	return webhook, threadID, err
 }

@@ -79,7 +79,7 @@ func TestFailureNoticeRespectsDeletedPendingSource(t *testing.T) {
 	}
 	b.cancelDeletedGarminMessage(original.ChannelID.String(), original.ID.String())
 	b.forgetDeletedGarminContexts(original.ChannelID.String(), original.ID.String())
-	if b.sendGarminUnansweredReplyIfVisible(client, current, supportUnverifiedReply, messages) != nil || sent.count() != 0 {
+	if b.sendGarminUnansweredReplyIfVisible(client, current, supportUnavailableReply, messages) != nil || sent.count() != 0 {
 		t.Fatal("failure notice was sent after its pending source was deleted")
 	}
 }

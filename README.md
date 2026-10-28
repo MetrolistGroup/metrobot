@@ -1,22 +1,27 @@
 # metrobot
 
-this is the discord and telegram bot we use for logging, punishments, dehoisting, and group management
+Metrolist's Discord and Telegram bot for moderation, logging, dehoisting and community support. Some server IDs and policies are hardcoded; review them before running it elsewhere.
 
+## Main features
 
-## Selfhosting?
+- [Markdown notes](docs/notes.md), including randomized content, interactive FAQs and Components V2 layouts.
+- [AI chat and support](docs/support-routing.md), using staff notes, scoped guides and public project sources. Unhandled support requests fall back to approved playback/nightly guidance.
+- Device specifications and comparisons from GSMArena, NanoReview and Technical City.
+- Avatar GIF effects and private OCR/English translation. GIF rendering is local; OCR sends the selected text/images to the configured OpenRouter vision provider, without chat history or shared memory. OCR results do not enter conversation memory and can contain recognition errors.
 
-do you want to selfhost this bot? don't. it's pretty custom-made for us, it won't fit your needs in most cases, and some stuff is hardcoded
+Use `/help` for commands.
 
-## Bot data
+## Run
 
-The bot has no web interface or inbound HTTP listener.
+Use the Go version in `go.mod`. Copy `config.example.json` to `config.json`, fill in the required settings, then run:
 
-- [Media commands](docs/media.md): cartoon nuke GIFs, private OCR/English translation and offline SynthID research limitations.
-- [Note markup](docs/notes.md): random groups, interactive FAQs and authored Components V2 layouts. The bot migrates existing donate/KMP behavior once. Behavior depends on note content, not names.
-- [Support note maintenance](docs/support-notes.md): source-checked platform/build guidance and selective note/skill retrieval.
-- [Automatic app-support routing](docs/support-routing.md): opt-in OpenRouter Decisions routing, note eligibility, privacy and rollout checks.
-- [Garmin base prompt](docs/prompt.md): stored overrides survive restarts and apply to new AI requests.
+```sh
+go build -o metrobot .
+./metrobot
+```
 
-Admins can view shared AI memory with `/memory view`. Writing with `/memory append|replace|clear` also requires Nyx or Lamp. Shared memory is limited to 16 KiB including its trailing newline. Conversation summaries stay in RAM and cannot write shared memory.
+The working directory holds `config.json` and `bot.db`. The bot has no web interface or inbound HTTP listener. Keep credentials and runtime data out of Git.
 
-Keep the existing `bot.db` and shared memory file when replacing the binary. Back up the database before upgrading. The first markup-enabled run migrates legacy note behavior into explicit markup. Already-migrated databases must retain that markup and migration metadata.
+## Upgrade safely
+
+Back up the runtime directory before replacing the binary. Preserve `bot.db`, `config.json` and the live shared-memory file; do not replace them with repository examples or development data. Note migrations run once, so retain both authored markup and migration metadata. The repository's `garmin-memory.md` seeds new installations, not upgrades.

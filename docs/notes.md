@@ -1,186 +1,107 @@
 # Note markup
 
-Notes are Markdown. Note behavior comes from the body, never the name. Renaming a
-note preserves its behavior. Removing its directive disables it. New `donate` and
-`kmp` notes are ordinary notes unless their bodies contain directives.
+Notes are Markdown. Directives in the body control behavior; names do not. Renaming a note preserves its behavior, and removing a directive disables it. New `donate` and `kmp` notes are ordinary notes unless their bodies contain directives.
 
-Raw database reads return the exact stored body, without rendering or shuffling.
-Unconverted notes saved before this feature retain literal Markdown interpretation,
-including top-level directive examples. Renaming them does not activate markup;
-a successful validated edit does. New notes interpret directives immediately.
-Create/edit commands validate markup before saving. Invalid markup cannot replace
-an existing note. Commands still accept legacy literal
-`\n` / `\r\n` newline separators outside JSON strings; JSON string escapes are
-left intact, including `\n`, `\\n`, escaped quotes and Unicode escapes.
+Create/edit commands validate markup before saving. Invalid markup cannot replace a note. Raw database reads return the stored body without rendering or shuffling. Legacy literal `\n` / `\r\n` separators are normalized outside JSON strings; JSON escapes stay intact.
 
 ## Grammar
 
-Only **top-level backtick code fences** with the exact info string `random`,
-`faq`, or `components-v2` are directives. Use three or more backticks; closing
-fences have at least as many backticks and no non-whitespace suffix. Standard
-Markdown indentation (up to three spaces) works. Directives must be closed.
-Tilde fences, indented code, blockquotes, list contents and examples inside an
-ordinary code fence remain literal Markdown. Unknown fence languages are literal.
-Choose a longer outer fence when its body contains backtick fences.
+Only top-level backtick fences with the exact info string `random`, `faq` or `components-v2` are directives.
 
-Multiple random groups are allowed. At most **one** rich block (`faq` **or**
-`components-v2`) is allowed per note. Markdown before and after it is retained,
-including random groups. JSON must be one valid value with valid UTF-8 and paired
-Unicode surrogate escapes. Unknown fields, unsupported types and empty blocks
-are rejected. Random entries are Markdown, not recursively evaluated directives.
+- Use at least three backticks. The closing fence needs at least as many, with no non-whitespace suffix.
+- Up to three leading spaces work. Directives must close.
+- Tilde fences, indented code, blockquotes, list contents, unknown fence languages and examples inside ordinary code fences remain literal Markdown.
+- Use a longer outer fence when an example contains backtick fences.
+- Multiple random groups are allowed. Each note may have only one rich block: FAQ or Components V2.
+- JSON must contain one valid value, valid UTF-8 and paired Unicode surrogate escapes. Unknown fields, unsupported types and empty blocks are rejected.
 
 ## Random groups
 
-Each retrieval shuffles whole entries independently and joins them with a newline.
-The surrounding Markdown stays fixed. Each entry must be a nonempty Markdown
-string; entries can contain paragraphs and links.
+Each retrieval shuffles whole entries, joins them with newlines and leaves surrounding Markdown fixed. Entries must be nonempty Markdown strings. They are not recursively evaluated as directives.
 
 ````markdown
-Support the people behind the app:
+Project links:
 ```random
 [
-  "Mo: https://buymeacoffee.com/mostafaalagamy",
-  "Nyx: https://github.com/sponsors/nyxiereal\nIndependent app development."
+  "Source: https://github.com/MetrolistGroup/Metrolist",
+  "Website: https://metrolist.cc"
 ]
 ```
-Thank you for supporting open source.
 ````
 
 ## FAQ
 
-Use an optional `#` title, optional introductory Markdown, then top-level `##`
-questions followed by nonempty Markdown answers. Headings inside code, quotes or
-lists do not create questions. Other heading levels and setext headings are
-ordinary answer Markdown. Without introductory Markdown, the default header is
-`# FAQ`. Discord adds "Choose a question below." and a question selector. It shows
-one answer at a time. Telegram and AI receive the complete readable Markdown.
+Use an optional `#` title and introduction, then top-level `##` questions with nonempty answers. Headings inside code, quotes or lists do not create questions. Other heading levels and setext headings remain answer text. Without an introduction, the default header is `# FAQ`.
 
 ````markdown
-These answers apply to the current app.
 ```faq
-# Playback FAQ
+# Release FAQ
 
-## Playback stops. What should I try?
-Disable battery restrictions for Metrolist, then restart the app.
+## Where are official releases?
+https://github.com/MetrolistGroup/Metrolist/releases
 
-## Where can I download releases?
-Use https://github.com/MetrolistGroup/Metrolist/releases.
+## What should a bug report include?
+Your app/build version, platform, exact error and steps to reproduce.
 ```
-Still stuck? Include your app version when asking for help.
 ````
 
-New FAQs need 1 to 25 questions. The bot shortens selector labels and answer
-previews to Discord's 100 UTF-16-unit option limit. It does not shorten the
-displayed answer. Every page, including the header and surrounding Markdown,
-must fit Discord's combined 4,000 UTF-16-unit text limit. Existing migrated FAQs
-that do not fit still deliver their full readable content through the fallback below.
+Discord shows a question selector and one answer at a time. Telegram and AI receive the full readable FAQ.
 
-## Authored Components V2
+New FAQs need 1–25 questions. Selector labels/previews are shortened to Discord's 100 UTF-16-unit option limit; displayed answers are not. Each page, including surrounding Markdown, must fit the combined 4,000 UTF-16-unit text limit. Oversized migrated FAQs use readable fallback delivery.
 
-The JSON object has exactly one field, `components`, containing 1 to 10 components.
-The server constructs typed Discord components in a default plain container.
-It never accepts an arbitrary Discord payload, custom IDs, actions, JavaScript,
-colors or raw configuration.
+## Components V2
 
-Supported schemas (all fields shown are required):
+The JSON object contains exactly `components`, an array of 1–10 supported components. The bot places them in a plain container; arbitrary Discord payloads, custom IDs, actions, JavaScript and colors are not accepted.
 
-- `{"type":"text","content":"Markdown"}`: nonempty Markdown text.
-- `{"type":"separator"}`: a divider.
-- `{"type":"section","content":"Markdown","thumbnail":"https://…"}`:
-  nonempty Markdown text with an HTTPS thumbnail.
-- `{"type":"gallery","urls":["https://…"]}`: 1 to 10 HTTPS media URLs.
-- `{"type":"buttons","buttons":[{"label":"Download","url":"https://…"}]}`:
-  1 to 5 URL-only buttons; labels need 1 to 80 UTF-16 units.
+| Type | Required fields |
+| --- | --- |
+| `text` | Nonempty Markdown `content` |
+| `separator` | No other fields |
+| `section` | Nonempty `content` and HTTPS `thumbnail` |
+| `gallery` | `urls`: 1–10 HTTPS media URLs |
+| `buttons` | `buttons`: 1–5 objects with `label` and HTTPS `url` |
 
-URLs must be absolute HTTPS URLs without credentials or whitespace and at most
-512 UTF-16 units. Only the listed fields are accepted for each component type.
+Button labels need 1–80 UTF-16 units. URLs must be absolute HTTPS, without credentials or whitespace, and at most 512 UTF-16 units. Only the listed fields are accepted.
 
 ````markdown
-Official links:
 ```components-v2
 {
   "components": [
-    {"type": "text", "content": "# Metrolist\nA YouTube Music client for Android."},
+    {"type": "text", "content": "# Metrolist"},
     {"type": "separator"},
-    {
-      "type": "section",
-      "content": "Find the project and its latest releases.",
-      "thumbnail": "https://github.com/MetrolistGroup.png"
-    },
-    {
-      "type": "buttons",
-      "buttons": [
-        {"label": "Releases", "url": "https://github.com/MetrolistGroup/Metrolist/releases"},
-        {"label": "Source", "url": "https://github.com/MetrolistGroup/Metrolist"}
-      ]
-    }
+    {"type": "section", "content": "Official project links", "thumbnail": "https://github.com/MetrolistGroup.png"},
+    {"type": "buttons", "buttons": [
+      {"label": "Releases", "url": "https://github.com/MetrolistGroup/Metrolist/releases"},
+      {"label": "Source", "url": "https://github.com/MetrolistGroup/Metrolist"}
+    ]}
   ]
 }
 ```
-Use official releases when reporting a problem.
 ````
 
-The complete message may have at most 10 direct container children (including
-surrounding text) and 40 total components. Section text/thumbnail and button row
-children count toward the total. Combined displayed text, including surrounding
-Markdown, must fit 4,000 UTF-16 units. A donor-welcome prefix is counted at delivery;
-if it pushes a valid layout over a limit, the readable fallback is used.
+A complete message may contain at most 10 direct container children and 40 total components, including surrounding text and nested children. Combined displayed text must fit 4,000 UTF-16 units. A donor-welcome prefix counts toward delivery limits.
 
-## Delivery and fallback
+## Delivery
 
-Discord note triggers, slash commands, donor welcomes and the app-support agent
-use the authored layout independent of the note name. Slash commands retain their
-public/private behavior. Rich notes and triggers suppress mentions; donor welcomes
-allow only their intended recipient's ping. Plain slash notes retain their existing
-user-mention behavior, without enabling role/everyone pings.
+Discord note commands, triggers, donor welcomes and support use the authored layout regardless of name. Rich notes suppress mentions; donor welcomes allow their intended recipient's ping. Plain slash notes retain their existing user-mention behavior, without role/everyone pings.
 
-Telegram and AI see readable Markdown with no custom directive fences: random
-entries in their retrieved order, all FAQ questions/answers, and layout text plus
-thumbnail/gallery URLs and labeled button URLs. Separators become `---`.
+Telegram and AI receive readable Markdown: shuffled entries, all FAQ answers, layout text and labeled media/button URLs. Separators become `---`.
 
-Ordinary notes exceeding Discord's 2,000 UTF-16-unit message limit or Telegram's
-4,096-unit limit (also checked against serialized HTML) are delivered as a full
-`note.md` Markdown attachment. Saves are not blocked by these delivery limits;
-short notes retain their rendering, reply, visibility and cleanup behavior.
+Long ordinary notes are sent in full as `note.md`: Discord's limit is 2,000 UTF-16 units; Telegram's is 4,096, also checked against serialized HTML. These delivery limits do not block saving a plain note.
 
-If a rich layout cannot fit at delivery, the full readable note is sent as plain
-text, or as `note.md` when the text plus any prefix exceeds 2,000 UTF-16 units.
-Message replies and slash responses also retry this readable form if Discord
-rejects their rich payload, preserving visibility and mention restrictions.
-Nothing is truncated. Oversized legacy FAQ pages or more than 25 legacy questions
-fall back the same way. Already-posted `note:kmp:question` selectors remain usable
-while the migrated `kmp` note still contains a FAQ; new FAQ IDs are bounded hashes,
-so long Unicode names cannot exceed Discord's custom-ID limit. Removing the FAQ
-or deleting/renaming a note makes an old selector unavailable rather than invoking
-name-based behavior.
+If a rich layout exceeds a limit or Discord rejects it, delivery retries as readable text or a full Markdown attachment. Visibility, reply and mention restrictions are preserved. Nothing is truncated.
 
-## One-time migration
+Old `note:kmp:question` selectors remain usable while that note contains a FAQ. New selector IDs are bounded hashes. Deleting, renaming or removing a FAQ makes old selectors unavailable rather than restoring name-based behavior.
 
-On the first database open after this change, a transaction migrates saved legacy
-notes and records `note_markup_v1` in the `migrations` table:
+## Legacy migration
 
-- Existing `donate`: keep the first line fixed and put the remaining lines in one
-  JSON random group, using the former retrieval's newline normalization. Blank
-  lines attach to a neighboring entry. The migration preserves rendered text and
-  JSON escaping. A note without nonempty remaining entries stays literal.
-- Existing `kmp`: wrap the complete original Markdown in a safely sized FAQ fence.
-- A legacy `kmp` FAQ with top-level questions and directive examples is wrapped
-  in a longer FAQ fence so its examples stay literal and the question menu survives.
-  Other existing `donate`/`kmp` bodies containing top-level directive fences are
-  left unchanged and marked as literal Markdown.
-  Valid JSON alone cannot establish whether a legacy fence was authored markup
-  or an example; a validated edit explicitly activates its markup.
-- All other legacy bodies are unchanged and marked as literal Markdown using
-  internal storage metadata. Both invalid and valid directive examples stay
-  literal, across renames and restarts. A successful validated edit activates
-  markup; to keep examples literal when editing, put them inside a longer ordinary
-  Markdown code fence, as in the examples above.
-- Invalid UTF-8 legacy bodies are left byte-for-byte intact rather than silently
-  replaced by JSON encoding; an admin must repair them before note validation.
+The first database open records `note_markup_v1` in `migrations`, in the same transaction as these changes:
 
-The marker is written even on a new/empty database. Restarts never reapply the
-migration, including after an admin removes directives or creates a new note with
-a legacy name. A migration failure rolls back bodies, interpretation metadata,
-and marker. Migration runs only when the application opens its database;
-development and tests do not
-require access to the live database or configuration.
+- Existing `donate`: keep its first line fixed and wrap remaining nonempty entries in one random group, preserving rendered text and escaping.
+- Existing `kmp`: wrap its Markdown in a safely sized FAQ fence. Longer fences preserve directive examples inside a legacy FAQ.
+- Other legacy bodies, and ambiguous `donate`/`kmp` bodies containing top-level directives, stay literal through storage metadata. Valid JSON alone does not establish that a legacy example was authored markup.
+- Invalid UTF-8 bodies stay byte-for-byte intact until an admin repairs them.
+
+A successful validated edit activates markup on a literal legacy note. Put examples inside a longer ordinary fence if they must remain literal. Renaming alone does not activate markup.
+
+The marker is written even on an empty database. Restarts never repeat the migration, including after directives are removed or an old name is reused. Failure rolls back bodies, interpretation metadata and marker together. Preserve all of them when upgrading.

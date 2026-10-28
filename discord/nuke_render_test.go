@@ -35,14 +35,16 @@ func TestRenderNukeGIF(t *testing.T) {
 			t.Errorf("frame %d has no delay", index)
 		}
 	}
-	if bytes.Equal(animation.Image[0].Pix, animation.Image[12].Pix) || bytes.Equal(animation.Image[0].Pix, animation.Image[30].Pix) {
+	if bytes.Equal(animation.Image[0].Pix, animation.Image[17].Pix) || bytes.Equal(animation.Image[0].Pix, animation.Image[30].Pix) {
 		t.Fatal("bomb and blast did not animate")
 	}
-	if animation.Image[0].At(240, 160) == animation.Image[0].At(100, 160) {
+	if animation.Image[0].At(320, 192) == animation.Image[0].At(100, 192) {
 		t.Fatal("target avatar was not drawn")
 	}
-	if !bytes.Contains(animation.Image[nukeFrames-1].Pix, []byte{nukeBlood}) {
-		t.Fatal("aftermath lost blood splatter")
+	aftermath := animation.Image[nukeFrames-1].Pix
+	bloodPixels := bytes.Count(aftermath, []byte{nukeBlood}) + bytes.Count(aftermath, []byte{nukeDarkBlood}) + bytes.Count(aftermath, []byte{nukeWetBlood})
+	if bloodPixels < 1500 {
+		t.Fatalf("aftermath lost persistent pools/splatter: %d blood pixels", bloodPixels)
 	}
 	fallback, err := renderNukeGIF("Target", nil)
 	if err != nil || bytes.Equal(data, fallback) {

@@ -15,6 +15,19 @@ type supportLiveSource struct {
 
 // The paid regression must prove build inclusion, not just count tool calls.
 func verifyNightlyReplayEvidence(sources []supportLiveSource, body, fix string) error {
+	if fix == "" {
+		for _, source := range sources {
+			var args struct {
+				Ref string `json:"ref"`
+			}
+			if source.Tool == "get_metrolist_commit" && json.Unmarshal([]byte(source.Arguments), &args) == nil && len(args.Ref) == 40 {
+				if err := verifyNightlyReplayEvidence(sources, body, args.Ref); err == nil {
+					return nil
+				}
+			}
+		}
+		return fmt.Errorf("nightly recommendation has no inspected included patch")
+	}
 	for _, source := range sources {
 		if source.Tool != "get_metrolist_changes" {
 			continue

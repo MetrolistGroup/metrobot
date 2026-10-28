@@ -30,11 +30,9 @@ func TestCasualAppGuidanceUsesIsolatedCheckedSupport(t *testing.T) {
 				}
 				checks++
 				skill := request.State.(map[string]any)["support_skill"].(string)
-				for _, name := range []string{"rpc", "login", "scrobbling", "playlists", "discovery"} {
-					guide, _ := loadGarminSupportGuide(name)
-					if !strings.Contains(skill, guide) {
-						t.Fatalf("checker lost %s", name)
-					}
+				core, err := loadGarminSupportAnswerSkill()
+				if err != nil || skill != core {
+					t.Fatal("checker lost the trusted core/project reference")
 				}
 				if checks == 1 {
 					return supportTestDecision(request, "agent", .1, .1), nil

@@ -159,6 +159,10 @@ func (b *Bot) onMessageCreate(s *bot.Client, m *discord.Message) {
 	if m.Author.ID == 0 || m.Author.Bot || m.WebhookID != nil || snowflakeString(m.GuildID) != b.Config.DiscordGuildID {
 		return
 	}
+	if isHiMessage(m) {
+		go b.sendHiWebhook(s, m)
+		return
+	}
 	if b.repostCleanYouTubeLinks(s, m) {
 		return
 	}

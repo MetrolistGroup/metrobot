@@ -18,18 +18,53 @@ import (
 
 // Opt-in paid replay through the real message handler, with Discord delivery mocked.
 func TestSupportUpdateMessageLive(t *testing.T) {
-	testSupportMessageLive(t, "how do i even update the app? how do i know theres an update",
+	testSupportMessageLive(t, []cmd.GarminAIMessage{{Role: "user", Content: "how do i even update the app? how do i know theres an update"}},
 		[]string{"settings", "updater", "check for updates"},
 		[]string{"metrolist doesn't have an in-app update checker", "metrolist has no in-app updater", "metrolist doesn't have update notifications"}, "")
 }
 
 func TestSupportSlowDownloadMessageLive(t *testing.T) {
-	testSupportMessageLive(t, "why is metrolist download speeds so slow",
+	testSupportMessageLive(t, []cmd.GarminAIMessage{{Role: "user", Content: "why is metrolist download speeds so slow"}},
 		[]string{"nightly", "back", "unstable"}, nil,
 		"9dbe585f65a6950e9a8c088f1603e01742401838")
 }
 
-func testSupportMessageLive(t *testing.T, prompt string, want, forbidden []string, expectedFix string) {
+func TestSupportPlaybackAndCastingLive(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		messages []cmd.GarminAIMessage
+	}{
+		{"source-error", []cmd.GarminAIMessage{{Role: "user", Content: "What if it said playback failed because of Source error"}}},
+		{"streamed-only", []cmd.GarminAIMessage{
+			{Role: "user", Content: "What if it said playback failed because of Source error"},
+			{Role: "assistant", Content: "I can't verify a fix for 'Source error' playback failure. Does it affect streamed songs, downloaded songs, or both?"},
+			{Role: "user", Content: "Undownloaded song only, I can still listen to downloaded song."},
+		}},
+		{"wifi-casting", []cmd.GarminAIMessage{{Role: "user", Content: "The option to stream to another device via WiFi is still not working?"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			sources, answer := testSupportMessageLive(t, test.messages, nil, []string{"try reinstalling", "uninstall and reinstall", "clear app data to fix", "definitely fixed"}, "")
+			if test.name == "wifi-casting" && !strings.Contains(answer, "General guidance from") && !strings.Contains(strings.ToLower(answer), "cast") {
+				t.Error("Wi-Fi answer omitted scoped casting guidance")
+			}
+			if test.name != "wifi-casting" && !strings.Contains(answer, "General guidance from") {
+				lower := strings.ToLower(answer)
+				if strings.Contains(lower, "nightly") {
+					if err := verifyNightlyReplayEvidence(sources, answer, ""); err != nil {
+						t.Error(err)
+					}
+					if !strings.Contains(lower, "back") || !containsAnyGarminPhrase(lower, "over your existing", "over the existing", "in-place") {
+						t.Error("nightly trial omitted backup or in-place installation")
+					}
+				} else if !containsAnyGarminPhrase(lower, "try another", "force-close", "force close", "reopen") {
+					t.Error("playback reply gave neither a sourced trial nor concrete low-risk checks")
+				}
+			}
+		})
+	}
+}
+
+func testSupportMessageLive(t *testing.T, messages []cmd.GarminAIMessage, want, forbidden []string, expectedFix string) ([]supportLiveSource, string) {
 	t.Helper()
 	configPath := os.Getenv("METROBOT_SUPPORT_LIVE_CONFIG")
 	if configPath == "" {
@@ -100,13 +135,12 @@ func testSupportMessageLive(t *testing.T, prompt string, want, forbidden []strin
 			}
 			sources = nil
 			for _, source := range supplied {
-				if source.Tool == "get_metrolist_changes" || source.Tool == "get_metrolist_commit" {
-					sources = append(sources, source)
-				}
+				sources = append(sources, source)
 			}
 			check := map[string]any{"draft": draft, "api_error": err != nil}
 			if response != nil {
 				check["grounded"] = response.Answers["grounded"].Noul
+				check["problem"] = response.Answers["problem"].Choice
 			}
 			checks = append(checks, check)
 		}
@@ -119,9 +153,14 @@ func testSupportMessageLive(t *testing.T, prompt string, want, forbidden []strin
 	b.garminGitHub = gh.NewAssistantClient(githubConfig.Token, "MetrolistGroup", "Metrolist")
 	m := supportTestMessage(20)
 	m.CreatedAt = time.Now().UTC()
-	m.Content = prompt
+	m.Content = messages[len(messages)-1].Content
+	if len(messages) > 1 {
+		previous := *m
+		previous.ID--
+		b.rememberGarminAIUserContext(&previous, messages[:len(messages)-1])
+	}
 	b.onMessageCreate(client, m)
-	deadline := time.Now().Add(garminAITimeout + 10*time.Second)
+	deadline := time.Now().Add(garminSupportTimeout + 10*time.Second)
 	for {
 		b.supportMu.Lock()
 		state, completed := b.supportSeen[m.ID.String()]
@@ -145,11 +184,15 @@ func testSupportMessageLive(t *testing.T, prompt string, want, forbidden []strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(os.Getenv("METROBOT_SUPPORT_LIVE_REPORT"), report, 0o600); err != nil {
+	reportPath := os.Getenv("METROBOT_SUPPORT_LIVE_REPORT")
+	if strings.Contains(t.Name(), "/") {
+		reportPath += "." + strings.ReplaceAll(t.Name(), "/", "-") + ".json"
+	}
+	if err := os.WriteFile(reportPath, report, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	lower := strings.ReplaceAll(strings.ToLower(body), "*", "")
-	if sent.count() != 1 || strings.Contains(body, supportUnverifiedReply) || strings.Contains(body, supportUnavailableReply) {
+	if sent.count() != 1 || strings.Contains(body, "I couldn't verify a reliable answer from the available references.") || strings.Contains(body, supportUnavailableReply) {
 		t.Fatal("real message did not deliver a useful answer; inspect the private report")
 	}
 	for _, fact := range want {
@@ -167,6 +210,7 @@ func testSupportMessageLive(t *testing.T, prompt string, want, forbidden []strin
 			t.Error(err)
 		}
 	}
+	return sources, body
 }
 
 // Opt-in paid replay: temporary DB, read-only public GitHub, no Discord connection.

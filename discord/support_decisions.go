@@ -269,25 +269,28 @@ func (b *Bot) runSupportDecisionAgent(s *bot.Client, m *discord.Message, message
 		if requestCtx.Err() != nil || !b.garminMessageVisible(m.ChannelID.String(), m.ID.String()) {
 			return false
 		}
-		return b.sendGarminUnansweredReplyIfVisible(s, m, supportUnavailableReply, messages) != nil
+		return b.sendGarminUnansweredReplyIfVisible(s, m, b.supportFallbackReply(), messages) != nil
 	}
 	if ctx.Err() != nil {
-		return false
+		if requestCtx.Err() != nil {
+			return false
+		}
+		return b.sendGarminUnansweredReplyIfVisible(s, m, b.supportFallbackReply(), messages) != nil
 	}
 	if result.Silent {
 		if result.Unverified {
-			return b.sendGarminUnansweredReplyIfVisible(s, m, supportUnverifiedReply, messages) != nil
+			return b.sendGarminUnansweredReplyIfVisible(s, m, b.supportFallbackReply(), messages) != nil
 		}
 		b.clearGarminAIUnansweredContext(m)
 		return true
 	}
 	if strings.TrimSpace(result.Answer) == "" {
-		return false
+		return b.sendGarminUnansweredReplyIfVisible(s, m, b.supportFallbackReply(), messages) != nil
 	}
 	if result.NoteName != "" {
 		notes, err := b.Notes.DB.ListNotes()
 		if err != nil {
-			return false
+			return b.sendGarminUnansweredReplyIfVisible(s, m, b.supportFallbackReply(), messages) != nil
 		}
 		eligible := false
 		for _, note := range notes {
@@ -297,7 +300,7 @@ func (b *Bot) runSupportDecisionAgent(s *bot.Client, m *discord.Message, message
 			}
 		}
 		if !eligible {
-			return false
+			return b.sendGarminUnansweredReplyIfVisible(s, m, b.supportFallbackReply(), messages) != nil
 		}
 	}
 	conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: result.Answer, Timestamp: time.Now().UTC()})

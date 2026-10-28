@@ -151,6 +151,9 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 		}
 		answer := supportUnavailableReply
 		if supportMode {
+			if m.ChannelID.String() != garminAppSupportID || garminAppSupportIntent(garminUserText(messages)) || len(messages) > 1 {
+				answer = b.supportFallbackReply()
+			}
 			supportCompleted = b.sendGarminUnansweredReplyIfVisible(s, m, answer, messages) != nil
 			return
 		}
@@ -160,7 +163,7 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 	}
 	if result.Silent {
 		if result.Unverified && supportMode && !ambient {
-			supportCompleted = b.sendGarminUnansweredReplyIfVisible(s, m, supportUnverifiedReply, messages) != nil
+			supportCompleted = b.sendGarminUnansweredReplyIfVisible(s, m, b.supportFallbackReply(), messages) != nil
 			return
 		}
 		supportCompleted = !result.Unverified
@@ -180,6 +183,10 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 		return
 	}
 	if strings.TrimSpace(result.Answer) == "" {
+		if supportMode && !ambient {
+			supportCompleted = b.sendGarminUnansweredReplyIfVisible(s, m, b.supportFallbackReply(), messages) != nil
+			return
+		}
 		if ambient || m.ChannelID.String() == garminAppSupportID {
 			return
 		}
@@ -945,7 +952,7 @@ func (b *Bot) sendGarminUnansweredReplyIfVisible(s *bot.Client, m *discord.Messa
 	if !b.garminMessageVisibleLocked(m.ChannelID.String(), m.ID.String()) {
 		return nil
 	}
-	reply := b.sendGarminReply(s, m, content)
+	reply, _ := b.sendGarminAppSupportReply(s, m, content, "")
 	if reply != nil {
 		b.storeGarminAIContextLocked(reply.ID.String(), m, messages, time.Now())
 		if retained, ok := b.garminAIContexts[reply.ID.String()]; ok {
