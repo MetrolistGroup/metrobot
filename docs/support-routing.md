@@ -2,13 +2,15 @@
 
 ## Configuration
 
-Set `openrouter_api_keys` and opt into Decisions routing with:
+Set `openrouter_api_keys` and use Qwen3.7 Flash for answers, routing and evidence checks:
 
 ```json
-{"openrouter_decision_model": "perplexity/pplx-decider-v1.2"}
+{"openrouter_model": "qwen/qwen3.7-flash", "openrouter_decision_model": "qwen/qwen3.7-flash"}
 ```
 
-An empty decision model keeps the legacy chat-model triage. Clear the setting and restart to restore that path. The setting adds no database migration or persistent routing statistics.
+Qwen judgments use chat completions with a validated tool schema, not the Decider-only API. Routing has reasoning disabled; evidence checks request a 512-token reasoning budget and return a concrete finding for rejected drafts. Routing choice weights are normalized before applying the existing thresholds; model scores are not calibrated accuracy estimates. Qwen evidence checking makes one defect decision: `none` maps to acceptance, any named defect to rejection. Its logged grounding value is therefore 1 or 0, not a confidence estimate. This avoids a contradictory second score rejecting an answer while naming no defect; Decider retains its probability gate. Invalid, missing or truncated verdicts fail closed after at most one retry. Qwen endpoints reject `tool_choice=required`, so both Qwen decision paths validate returned calls rather than requiring that unsupported parameter.
+
+Existing Perplexity Decider configurations remain supported. An empty decision model uses legacy chat triage **without an independent answer check**. Existing configurations are not changed automatically. No database migration or persistent routing statistics are added.
 
 ## Request handling
 
@@ -23,9 +25,9 @@ Decisions asks two independent questions: whether the message needs an answer, a
 | Send a generated answer | Grounding probability ≥ 0.80 and no named defect |
 | Offer More from this note | Independent note-use probability ≥ 0.95 |
 
-A selected note is reference material, not permission to post its full body. The agent reads it through `get_note` and writes a concise answer. Uncertain note matches go to the agent. Only delivered answers enter assistant history; rejected drafts do not.
+A selected note is not permission to dump its full body. In Qwen mode, even a tentative top-ranked note is loaded as reference material instead of discarding it when its normalized routing weight misses the threshold. This does not authorize a reply: after `get_note` the separate applicability selector must choose one complete authored section at the same 0.85/0.20 thresholds. The runtime sends that section verbatim, including its heading, preamble and warnings, rather than asking Qwen to paraphrase it. Markdown code examples do not create sections. Unmatched, uncertain, multi-section or live-data questions continue through the agent and evidence checker. A Qwen draft judged to use a note must match an authored section (or the whole retrieved note) exactly: the checker cannot approve added claims by calling them a faithful paraphrase. Complex note synthesis can therefore abstain instead of inventing an answer. Only delivered answers enter assistant history; rejected drafts do not.
 
-Decider runs only in app-support. Every other channel uses Qwen directly, including Metrolist questions and follow-ups, with no Decider classification, evidence check or confirmed-fix learning call. Ordinary chat keeps its own prompt, project reference and read-only tools.
+Routing and evidence checks run only in app-support. Every other channel uses Qwen directly, including Metrolist questions and follow-ups, with no Decider classification, evidence check or confirmed-fix learning call. Ordinary chat keeps its own prompt, project reference and read-only tools.
 
 ## Evidence and practical answers
 
@@ -35,13 +37,13 @@ Seven guides cover RPC, login, scrobbling, playlists, discovery, playback and ca
 
 The agent should give a supported next step before asking another question. Playback guidance distinguishes low-risk checks from a diagnosis. Casting guidance scopes Google Cast to the standalone GMS build and asks which stage fails after giving the known setup path. Source review is not device testing; keep each guide's platform/build conditions.
 
-Every generated support answer is checked against the conversation and this run's named tool results. Retained assistant claims and old tool provenance are not evidence. Defects such as `needs_research`, `unsupported`, `wrong_scope`, `unsafe` and `off_request` trigger a rewrite even when the grounding score is high. The agent gets up to two model rewrites; API failures are not permission to send an unchecked draft.
+Exact note sections need a positive applicability selection, but no free-form generation or second paraphrase check. With a decision model configured, every generated support answer is checked against the conversation and this run's named tool results. URLs and Discord channel references must also match supplied source text; a high model score cannot approve an invented destination. Retained assistant claims and old tool provenance are not evidence. Defects such as `needs_research`, `unsupported`, `wrong_scope`, `unsafe` and `off_request` trigger a rewrite even when the grounding score is high. The agent gets up to two model rewrites with the specific finding. A rejection does not automatically force more research: an ambiguous question may need clarification, and a loaded note may already answer it. API failures are not permission to send an unchecked draft.
 
 ### Unhandled questions
 
 When an accepted playback request fails generation or checking, or produces no answer, the bot can send general standalone-Android guidance from the current `.playback` note. If that note is missing, invalid or opted out, it tries `.nightly`. Both must have nonblank routing descriptions. The fallback requires playback wording in the latest message and excludes KMP; other topics and missing notes get the neutral unavailable notice, not unrelated playback advice. Explicit "hi", "hello" and "hey" greetings bypass the model.
 
-Fallback notes are read at delivery time, require no extra model call and are labeled as general guidance, not a confirmed fix. Long content is attached rather than truncated. The question stays pending for a follow-up; the fallback does not start ambient replies or become an accepted diagnosis.
+Fallback notes are read at delivery time, require no extra model call and are labeled as general guidance, not a confirmed fix. Long content is attached rather than truncated. The question stays pending for a follow-up; the fallback does not start ambient replies or become an accepted diagnosis. After a delivered failure notice, further failures for that user in that channel are quiet for ten minutes rather than repeating the same notice for every follow-up. Successful answers are still delivered and reset this suppression.
 
 Intentional silence, staff-only requests, cancellations, deletion guards, permissions and rate limits still apply. A router outage cannot classify a new message as a support request. Explicit non-help outages retain the neutral error notice.
 
@@ -51,7 +53,7 @@ Only notes with a nonblank `short_desc` enter automatic routing. Descriptions ex
 
 The agent and checker use the retrieved full note snapshot, including text beyond the usual tool limit. Later edits cannot change that evidence. Full `get_note` results are not shortened for checking; oversized requests fail closed.
 
-More from this note opens the current full note privately. It appears only when that note supplied relevant facts, not merely because it was fetched. Deleted, renamed or opted-out notes become unavailable. Discord component rejection falls back to the same concise answer, not a full-note dump. Explicit note commands retain their normal layouts and visibility.
+More from this note opens the current full note privately. For generated answers it appears only when that note supplied relevant facts, not merely because it was fetched. A selected verbatim section uses its retrieved note directly. Deleted, renamed or opted-out notes become unavailable. Discord component rejection falls back to the same concise answer, not a full-note dump. Explicit note commands retain their normal layouts and visibility.
 
 ## GitHub research
 
@@ -74,7 +76,7 @@ A matching inspected change can support a backed-up, in-place nightly trial with
 - Support generation/compaction gets timestamps rather than Discord profiles.
 - Automatic attachment-only requests are ignored. Images are removed from automatic handoff; filenames do not establish their contents. Ask for exact error text when an attachment was not read.
 - Decisions bodies are capped at 64 KiB. The catalog allows 128 eligible notes, 256-byte names and 640-byte descriptions. Invalid IDs, probabilities, distributions, types or envelopes fail closed.
-- Decisions has two slots, separate from the three answering-model slots. Its eight-second deadline includes four-second attempts, at most one retry, a 100 ms pause and bounded key failover. Redirects are refused.
+- Decisions has two routing slots, separate from the three answering-model slots. Routing has a 15-second deadline, with seven-second Qwen attempts (four seconds for Decider), at most one retry, a 100 ms pause and bounded key failover. Qwen evidence checks allow up to 45 seconds with twenty-second attempts, still within the support request's 90-second deadline. Redirects are refused.
 - Provider preferences deny data collection, require supported parameters and sort by latency. Providers still receive the selected text: this is not local inference. No fixed cross-user session ID is sent.
 - Seen/in-flight maps hold at most 1,024 entries. Completed events are deduplicated for ten minutes; failed delivery can retry after normal limits. Deletions cancel affected requests and retain ten-minute tombstones. A send already in progress cannot be recalled.
 - Conversations expire after 24 hours and disappear on restart. Pending questions retain at most 40 source origins; overflowing that limit drops the corresponding history. No timers send unsolicited follow-ups.
@@ -94,7 +96,7 @@ Conversations and summaries stay in bounded RAM context, expiring after 24 hours
 
 `docs/support-notes.json` is an authored update set, not an automatic seed or live export. Compare it with a fresh snapshot, back up the database, run `go test ./cmd -run TestAuthoredSupportNotesAreValid`, then apply reviewed row changes in one transaction. Never replace the live database with a development copy.
 
-Keep each guide's pinned source revision, build/platform scope and conditions. Source review does not prove device compatibility, public release availability or tester access. Distinguish standalone FOSS/GMS/Izzy from KMP. Do not change staff access rules, credentials or production models while editing guidance. Keep private snapshots and receipts outside Git.
+Keep each guide's pinned source revision, build/platform scope and conditions. Source review does not prove device compatibility, public release availability or tester access. Distinguish standalone FOSS/GMS/Izzy from KMP. Do not change staff access rules or credentials while editing guidance. A model change is a separate configuration rollout and must be replayed first. Keep private snapshots and receipts outside Git. The `download` cache location and `uploads` upload destination were checked in standalone tag `v13.7.0`, in `di/AppModule.kt` and `ui/screens/library/LibrarySongsScreen.kt`. The uploads note offers a comparison with YouTube Music, not an invented metadata editor or diagnosis. The report note asks for one reproducible example instead of a separate report for every failed song.
 
 ## Confirmed fixes
 
@@ -112,11 +114,13 @@ Offline tests use synthetic inputs, mocked HTTP and temporary databases. They ch
 
 Paid, non-posting replays:
 
-- `TestSupportAgentLive`: answering and evidence checks, with named subtests for setup, corrections and safety cases.
+- `TestSupportAgentLive`: answering and evidence checks, including uploaded-album metadata, downloaded files, donation URLs, fork-access scope, setup and safety cases.
+- `TestSupportNoteMessagesLive`: real routing-to-delivery checks for uploaded metadata, fork/source access and bug reports, with Discord delivery mocked.
+- `TestSupportEvidenceLive`: Qwen-only fixed good/bad answers to check that useful clarifications pass and invented fixes, payment claims and unsafe steps are rejected.
 - `TestSupportPlaybackAndCastingLive`: reported Source error, streamed-only follow-up and Wi-Fi casting cases.
 - `TestSupportUpdateMessageLive` and `TestSupportSlowDownloadMessageLive`: full handler replays. The latter also checks inspected patch/build/link provenance.
 
-Set `METROBOT_SUPPORT_LIVE_CONFIG`, `METROBOT_SUPPORT_LIVE_NOTES` and `METROBOT_SUPPORT_LIVE_REPORT`. Config needs the chat and Decisions settings; notes are JSON rows containing `name`, `short_desc` and `content`. Keep snapshots, drafts and reports private. These tests use a temporary database, read-only GitHub requests and mocked Discord delivery.
+Set `METROBOT_SUPPORT_LIVE_CONFIG`, `METROBOT_SUPPORT_LIVE_NOTES` and `METROBOT_SUPPORT_LIVE_REPORT`. Config needs the chat and decision settings; set both to Qwen3.7 Flash for Qwen-only checks. `TestSupportAgentLive` also accepts an empty decision model to inspect the legacy unchecked path. Notes are JSON rows containing `name`, `short_desc` and `content`. Keep snapshots, drafts and reports private. These tests use a temporary database, read-only GitHub requests and mocked Discord delivery.
 
 `TestSupportDecisionsLive` separately evaluates routing. Set `METROBOT_DECISIONS_LIVE_CONFIG`, `_NOTES`, `_CASES` and `_REPORT`; `_MODEL` optionally overrides the decision model. Cases contain `id`, `message`, optional `parent`/`conversation` and an `expected` array. Synthetic fixtures live in `discord/testdata/support-decisions-eval.json`.
 

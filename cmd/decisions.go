@@ -17,7 +17,7 @@ import (
 const (
 	decisionsEndpoint       = "https://openrouter.ai/api/alpha/decisions"
 	DecisionsBodyMax        = 64 << 10
-	DecisionsTimeout        = 8 * time.Second
+	DecisionsTimeout        = 15 * time.Second
 	decisionsAttemptTimeout = 4 * time.Second
 )
 
@@ -33,6 +33,7 @@ type DecisionRequest struct {
 }
 
 type DecisionAnswer struct {
+	Reason        string              `json:"reason,omitempty"`
 	Type          string              `json:"type"`
 	Noul          *float64            `json:"noul,omitempty"`
 	Choice        string              `json:"choice,omitempty"`
@@ -43,11 +44,13 @@ type DecisionAnswer struct {
 type DecisionResponse struct {
 	Model   string                    `json:"model"`
 	Answers map[string]DecisionAnswer `json:"answers"`
-	Usage   *struct {
-		InputTokens  *int     `json:"input_tokens"`
-		OutputTokens *int     `json:"output_tokens"`
-		Cost         *float64 `json:"cost"`
-	} `json:"usage"`
+	Usage   *DecisionUsage            `json:"usage"`
+}
+
+type DecisionUsage struct {
+	InputTokens  *int     `json:"input_tokens"`
+	OutputTokens *int     `json:"output_tokens"`
+	Cost         *float64 `json:"cost"`
 }
 
 type Decisions interface {
@@ -63,7 +66,11 @@ type DecisionsClient struct {
 }
 
 func NewDecisionsClient(keys []string, model string) *DecisionsClient {
-	return newDecisionsClient(keys, model, decisionsEndpoint, &http.Client{
+	endpoint := decisionsEndpoint
+	if strings.TrimSpace(model) == openRouterDefaultModel {
+		endpoint = openRouterEndpoint
+	}
+	return newDecisionsClient(keys, model, endpoint, &http.Client{
 		// Never forward the authorization header or message to a redirect target.
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	})
@@ -80,7 +87,15 @@ func newDecisionsClient(keys []string, model, endpoint string, client *http.Clie
 }
 
 func (c *DecisionsClient) Decide(ctx context.Context, request DecisionRequest) (*DecisionResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, DecisionsTimeout)
+	timeout, attemptTimeout := DecisionsTimeout, decisionsAttemptTimeout
+	if c.model == openRouterDefaultModel {
+		attemptTimeout = 7 * time.Second
+		if request.Questions["grounded"].Type != "" {
+			// Evidence checking needs bounded thinking; routing remains latency-limited.
+			timeout, attemptTimeout = 45*time.Second, 20*time.Second
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -93,6 +108,9 @@ func (c *DecisionsClient) Decide(ctx context.Context, request DecisionRequest) (
 		Model    string         `json:"model"`
 		Provider map[string]any `json:"provider"`
 	}{request, c.model, map[string]any{"data_collection": "deny", "require_parameters": true, "sort": "latency"}})
+	if c.model == openRouterDefaultModel {
+		body, err = chatDecisionBody(c.model, request)
+	}
 	if err != nil || len(body) > DecisionsBodyMax {
 		return nil, errors.New("invalid or oversized Decisions request")
 	}
@@ -101,7 +119,7 @@ func (c *DecisionsClient) Decide(ctx context.Context, request DecisionRequest) (
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		attemptCtx, cancelAttempt := context.WithTimeout(ctx, decisionsAttemptTimeout)
+		attemptCtx, cancelAttempt := context.WithTimeout(ctx, attemptTimeout)
 		response, retry, err := c.attempt(attemptCtx, c.keys[(start+attempt)%len(c.keys)], body, request)
 		cancelAttempt()
 		if ctx.Err() != nil {
@@ -153,6 +171,10 @@ func (c *DecisionsClient) attempt(ctx context.Context, key string, body []byte, 
 	}
 	if len(data) > DecisionsBodyMax {
 		return nil, false, errors.New("oversized Decisions response")
+	}
+	if c.model == openRouterDefaultModel {
+		response, err := parseChatDecision(data, request)
+		return response, err != nil, err
 	}
 	var response DecisionResponse
 	if json.Unmarshal(data, &response) != nil || !response.ValidFor(request) {

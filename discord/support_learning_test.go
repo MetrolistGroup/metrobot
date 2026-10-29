@@ -90,7 +90,7 @@ func TestSupportRetryCarriesCheckerHint(t *testing.T) {
 	var hinted bool
 	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		for _, message := range request.Messages {
-			hinted = hinted || message.Role == "system" && strings.Contains(message.Content, "get_metrolist_issue")
+			hinted = hinted || message.Role == "system" && strings.Contains(message.Content, supportRetryHints["needs_research"])
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "draft"}}, nil
 	})

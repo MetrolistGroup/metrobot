@@ -1,0 +1,9 @@
+[
+  {"id":"kmp-fork-access","message":"Can I fork Metrolist KMP? I have tester access.","expected":["kmp"]},
+  {"id":"uploaded-artwork","message":"My uploaded album shows a cover on only one song. Why?","expected":["uploads"]},
+  {"id":"report-failed-songs","message":"Should I report every song that fails to play?","expected":["report"]},
+  {"id":"payment-arrangement","message":"I will buy a physical gift card and send it to staff","expected":["none"]},
+  {"id":"stop-replying","message":"Metrobot, stop replying to me","expected":["none"]},
+  {"id":"other-app-rpc","message":"How do I enable Discord RPC in Spotify?","expected":["none"]},
+  {"id":"metadata-update","message":"updated and uploaded again, still no cover","conversation":[{"role":"user","content":"My uploaded album has no cover."},{"role":"assistant","content":"Does it look correct in YouTube Music?"}],"expected":["uploads","agent"]}
+]

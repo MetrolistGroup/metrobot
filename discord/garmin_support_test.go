@@ -56,8 +56,8 @@ func TestGarminAppSupportTriageUsesModelActions(t *testing.T) {
 				if !strings.Contains(request.SystemPrompt, "keyword by itself is never enough") || !strings.Contains(request.SystemPrompt, "donation-proof") || !strings.Contains(request.SystemPrompt, "staff coordination") {
 					t.Fatalf("triage prompt does not cover observed false replies: %q", request.SystemPrompt)
 				}
-				if got, want := garminToolNames(request.Tools), []string{"handoff_to_app_support_agent", "do_not_respond"}; !reflect.DeepEqual(got, want) || request.ToolChoice != "required" {
-					t.Fatalf("triage tools = %v with choice %q, want %v with required choice", got, request.ToolChoice, want)
+				if got, want := garminToolNames(request.Tools), []string{"handoff_to_app_support_agent", "do_not_respond"}; !reflect.DeepEqual(got, want) || request.ToolChoice != "" {
+					t.Fatalf("triage tools = %v with choice %q, want %v with automatic tool choice", got, request.ToolChoice, want)
 				}
 				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "should never be sent", ToolCalls: test.calls}}, nil
 			})

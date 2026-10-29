@@ -12,6 +12,42 @@ import (
 	"github.com/disgoorg/disgo/discord"
 )
 
+func TestSupportDestinationsRequireExactEvidence(t *testing.T) {
+	sources := []string{"Use https://example.org/releases and #test-builds or <#123>."}
+	for _, test := range []struct {
+		answer string
+		want   bool
+	}{
+		{"Open [releases](https://example.org/releases).", true},
+		{"Ask in **#test-builds** or <#123>.", true},
+		{"Open https://example.org/releases/secret", false},
+		{"Ask in #made-up-channel.", false},
+		{"Ask in <#999>.", false},
+		{"Does it look correct in YouTube Music?", true},
+	} {
+		if got := supportDestinationsGrounded(test.answer, sources); got != test.want {
+			t.Errorf("%q: grounded=%v", test.answer, got)
+		}
+	}
+}
+
+func TestUnreadAttachmentCannotRequestAnotherScreenshot(t *testing.T) {
+	b := &Bot{garminDecisions: supportDecisionTestFunc(func(context.Context, cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+		t.Fatal("an unread-image request reached the model checker")
+		return nil, nil
+	})}
+	m := supportTestMessage(20)
+	m.Attachments = []discord.Attachment{{URL: "https://example.org/error.png"}}
+	messages := []cmd.GarminAIMessage{{Role: "user", Content: "I keep getting this error"}}
+	accepted, hint, err := b.supportAnswerGrounded(context.Background(), m, messages, messages, "Please paste the exact error text or a screenshot here.", nil)
+	if err != nil || accepted || !strings.Contains(hint, "exact error text") {
+		t.Fatalf("accepted=%v hint=%q err=%v", accepted, hint, err)
+	}
+	if supportScreenshotRequestPattern.MatchString("I cannot read the screenshot. Paste the exact error text.") {
+		t.Fatal("safe text clarification was blocked")
+	}
+}
+
 func TestSupportAnswerGroundingFailsClosed(t *testing.T) {
 	for _, test := range []struct {
 		name                    string

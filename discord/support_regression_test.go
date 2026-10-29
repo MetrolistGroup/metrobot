@@ -128,17 +128,29 @@ func TestSupportToolFailureDoesNotExposeUncheckedNoteReference(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`)), Request: request}, nil
 	})
 	t.Cleanup(func() { http.DefaultTransport = original })
+	calls, checks := 0, 0
 	b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		calls++
+		if calls > 1 {
+			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "What exact crash error do you see?"}}, nil
+		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{ToolCalls: []cmd.GarminAIToolCall{{
 			ID: "lookup", Type: "function", Function: cmd.GarminAIFunctionCall{Name: "get_metrolist_status", Arguments: `{}`},
 		}}}}, nil
+	})
+	b.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+		checks++
+		response := supportTestDecision(request, "agent", .99, .99)
+		zero := 0.0
+		response.Answers["note_used"] = cmd.DecisionAnswer{Type: "noul", Noul: &zero}
+		return response, nil
 	})
 	ctx := context.WithValue(context.Background(), supportSelectedNoteContextKey{}, "nightly")
 	result, err := b.runGarminAI(ctx, nil, supportTestMessage(20), []cmd.GarminAIMessage{{Role: "user", Content: "Does nightly fix this crash?"}})
 	if err != nil || result == nil {
 		t.Fatalf("run: %v", err)
 	}
-	if result.Answer != "github lookup failed just now." || result.NoteName != "" {
+	if result.Answer != "What exact crash error do you see?" || result.NoteName != "" || calls != 2 || checks != 1 {
 		t.Fatalf("tool failure exposed an unchecked reference: answer=%q note=%q", result.Answer, result.NoteName)
 	}
 }
@@ -156,7 +168,7 @@ func TestSupportRewriteOnlySendsAndRetainsAcceptedAnswer(t *testing.T) {
 				}
 			}
 			correction := request.Messages[len(request.Messages)-1]
-			if correction.Role != "system" || !strings.Contains(correction.Content, "source-verified common steps") || !strings.Contains(correction.Content, "only when the needed steps differ materially") {
+			if correction.Role != "system" || !strings.Contains(correction.Content, "using the evidence already loaded") || !strings.Contains(correction.Content, "If one missing detail changes the answer") {
 				t.Fatal("rewrite lost evidence correction or unnecessarily requires a variant")
 			}
 			return garminHistoryTestCall("load_skill", `{"name":"support"}`), nil

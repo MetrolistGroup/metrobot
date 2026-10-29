@@ -34,16 +34,17 @@ const (
 )
 
 type garminAIContext struct {
-	userID         string
-	requestID      string
-	replyID        string
-	guildID        string
-	channelID      string
-	messages       []cmd.GarminAIMessage
-	expiresAt      time.Time
-	ambientUntil   time.Time
-	unanswered     bool
-	pendingSources []string
+	userID          string
+	requestID       string
+	replyID         string
+	guildID         string
+	channelID       string
+	messages        []cmd.GarminAIMessage
+	expiresAt       time.Time
+	ambientUntil    time.Time
+	unanswered      bool
+	failureNoticeAt time.Time
+	pendingSources  []string
 }
 
 const (
@@ -944,15 +945,24 @@ func (b *Bot) sendGarminUnansweredReplyIfVisible(s *bot.Client, m *discord.Messa
 	if !b.garminMessageVisibleLocked(m.ChannelID.String(), m.ID.String()) {
 		return nil
 	}
+	key := garminAIUserContextKey(m)
+	now := time.Now()
+	if previous := b.garminAIUserContexts[key]; now.Sub(previous.failureNoticeAt) < supportCooldown {
+		// Keep the pending question, but do not spam the same failure on each follow-up.
+		return nil
+	}
 	reply, _ := b.sendGarminAppSupportReply(s, m, content, "")
 	if reply != nil {
-		b.storeGarminAIContextLocked(reply.ID.String(), m, messages, time.Now())
+		b.storeGarminAIContextLocked(reply.ID.String(), m, messages, now)
 		if retained, ok := b.garminAIContexts[reply.ID.String()]; ok {
 			retained.unanswered, retained.ambientUntil = true, time.Time{}
+			retained.failureNoticeAt = now
 			b.garminAIContexts[reply.ID.String()] = retained
-			key := garminAIUserContextKey(m)
 			if b.garminAIUserContexts[key].requestID == m.ID.String() {
 				b.garminAIUserContexts[key] = retained
+			} else if current, ok := b.garminAIUserContexts[key]; ok {
+				current.failureNoticeAt = now
+				b.garminAIUserContexts[key] = current
 			}
 		}
 	}
@@ -1145,7 +1155,8 @@ func (b *Bot) rememberGarminAIUnansweredContext(m *discord.Message, messages []c
 	if previous, ok := b.garminAIUserContexts[key]; ok && snowflakeID(previous.requestID) >= m.ID {
 		return messages
 	}
-	sources := b.garminAIUserContexts[key].pendingSources
+	previous := b.garminAIUserContexts[key]
+	sources := previous.pendingSources
 	if parent, ok := b.garminAIParents[m.ChannelID.String()][m.ID.String()]; ok {
 		sources = parent.pendingSources
 	}
@@ -1159,6 +1170,7 @@ func (b *Bot) rememberGarminAIUnansweredContext(m *discord.Message, messages []c
 	if retained, ok := b.garminAIUserContexts[key]; ok && retained.requestID == m.ID.String() {
 		retained.ambientUntil = time.Time{}
 		retained.unanswered = true
+		retained.failureNoticeAt = previous.failureNoticeAt
 		retained.pendingSources = sources
 		b.garminAIUserContexts[key] = retained
 	}

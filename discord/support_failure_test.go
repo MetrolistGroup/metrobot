@@ -65,6 +65,30 @@ func TestRejectedSupportNoticeDeliveryCanRetry(t *testing.T) {
 	}
 }
 
+func TestFailureNoticeDoesNotSpamFollowups(t *testing.T) {
+	b, client, sent := newSupportDecisionTestBot(t)
+	first := supportTestMessage(20)
+	messages := b.rememberGarminAIUnansweredContext(first, []cmd.GarminAIMessage{{Role: "user", Content: "My uploaded album has no cover"}})
+	if b.sendGarminUnansweredReplyIfVisible(client, first, supportUnavailableReply, messages) == nil {
+		t.Fatal("first failure notice was not delivered")
+	}
+	followup := supportTestMessage(21)
+	messages = b.rememberGarminAIUnansweredContext(followup, append(messages, cmd.GarminAIMessage{Role: "user", Content: "Updated and uploaded again, still broken"}))
+	if b.sendGarminUnansweredReplyIfVisible(client, followup, supportUnavailableReply, messages) != nil || sent.count() != 1 {
+		t.Fatal("repeated failure spammed the same user")
+	}
+	key := garminAIUserContextKey(followup)
+	retained := b.garminAIUserContexts[key]
+	if !retained.unanswered || len(retained.messages) != 2 || !retained.ambientUntil.IsZero() {
+		t.Fatal("suppressing a notice lost the pending question or enabled ambient replies")
+	}
+	retained.failureNoticeAt = time.Now().Add(-supportCooldown)
+	b.garminAIUserContexts[key] = retained
+	if b.sendGarminUnansweredReplyIfVisible(client, followup, supportUnavailableReply, messages) == nil || sent.count() != 2 {
+		t.Fatal("failure notice did not recover after cooldown")
+	}
+}
+
 func TestFailureNoticeRespectsDeletedPendingSource(t *testing.T) {
 	b, client, sent := newSupportDecisionTestBot(t)
 	original := supportTestMessage(20)

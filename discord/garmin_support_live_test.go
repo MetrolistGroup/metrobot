@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
+	botconfig "github.com/MetrolistGroup/metrobot/config"
 	"github.com/MetrolistGroup/metrobot/db"
 	gh "github.com/MetrolistGroup/metrobot/github"
 	"github.com/disgoorg/disgo/discord"
@@ -96,6 +97,7 @@ func testSupportMessageLive(t *testing.T, messages []cmd.GarminAIMessage, want, 
 	}
 	read(os.Getenv("METROBOT_SUPPORT_LIVE_NOTES"), &notes)
 	b, client, sent := newSupportDecisionTestBot(t)
+	b.Config.OpenRouterDecisionModel = config.DecisionModel
 	existing, err := b.Notes.DB.ListNotes()
 	if err != nil {
 		t.Fatal(err)
@@ -215,6 +217,21 @@ func testSupportMessageLive(t *testing.T, messages []cmd.GarminAIMessage, want, 
 
 // Opt-in paid replay: temporary DB, read-only public GitHub, no Discord connection.
 // Phrase checks catch the reported regressions; the saved answers still need human review.
+func TestSupportNoteMessagesLive(t *testing.T) {
+	for _, test := range []struct {
+		name, question  string
+		want, forbidden []string
+	}{
+		{"fork-access", "Can I fork Metrolist KMP? I have tester access.", []string{"source", "license"}, []string{"permission from staff", "you can clone", "#metrolist-kmp"}},
+		{"metadata", "My uploaded album shows a cover on only one song. Why?", []string{"youtube music", "correct", "?"}, []string{"known limitation", "tag editor", "music.youtube.com/upload"}},
+		{"report-songs", "Should I report every song that fails to play?", []string{"reproducible", "version"}, []string{"temporary extractor", "audio source"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			testSupportMessageLive(t, []cmd.GarminAIMessage{{Role: "user", Content: test.question}}, test.want, test.forbidden, "")
+		})
+	}
+}
+
 func TestSupportAgentLive(t *testing.T) {
 	configPath := os.Getenv("METROBOT_SUPPORT_LIVE_CONFIG")
 	if configPath == "" {
@@ -237,7 +254,7 @@ func TestSupportAgentLive(t *testing.T) {
 		GitHubToken   string   `json:"github_token"`
 	}
 	read(configPath, &config)
-	if len(config.Keys) == 0 || config.Model == "" || config.DecisionModel == "" {
+	if len(config.Keys) == 0 || config.Model == "" {
 		t.Fatal("replay requires configured chat keys and model")
 	}
 	var notes []struct {
@@ -286,6 +303,12 @@ func TestSupportAgentLive(t *testing.T) {
 		casual       bool
 		forbidden    []string
 	}{
+		{id: "downloaded-files", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Can I find downloaded music in a folder on my phone? I use regular Android Metrolist."}}, wantAnswer: true, selectedNote: "download", forbidden: []string{"android/data", "export button", "reinstall"}},
+		{id: "metadata-ambiguous", messages: []cmd.GarminAIMessage{{Role: "user", Content: "I added cover art to an album I uploaded but it only shows on one song. Why?"}}, wantAnswer: true, forbidden: []string{"clear app data", "reinstall", "known bug", "known limitation", "likely", "fixed in nightly", "edit the album", "no in-app"}},
+		{id: "metadata-failed-attempt", messages: []cmd.GarminAIMessage{{Role: "user", Content: "My uploaded album has no cover and the tracks are in the wrong order."}, {Role: "assistant", Content: "Are these local files or an album uploaded to YouTube Music?"}, {Role: "user", Content: "YouTube Music uploads. I updated and uploaded it again; still the same."}}, wantAnswer: true, forbidden: []string{"try uploading again", "try updating", "clear app data", "fixed in nightly", "music.youtube.com/upload", "edit the album", "youtube studio", "cannot fix", "can't fix"}},
+		{id: "report-every-song", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Should I report every song that fails to play?"}}, wantAnswer: true, selectedNote: "report", wantNote: "report", forbidden: []string{"extractor issues", "source issues", "audio source"}},
+		{id: "restricted-source-fork", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Can I fork Metrolist KMP? I have tester access."}}, wantAnswer: true, selectedNote: "kmp", forbidden: []string{"cannot make a fork", "only use the official", "not allowed to fork", "#metrolist-kmp", "personal use", "explicit permission"}},
+		{id: "donation-links", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Where can I donate? Give me the links."}}, wantAnswer: true, selectedNote: "donate", forbidden: []string{"check the `donate`", "see the `donate`"}},
 		{id: "source-error", messages: []cmd.GarminAIMessage{{Role: "user", Content: "What if it said playback failed because of Source error"}}, wantAnswer: true},
 		{id: "streamed-only", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Source error"}, {Role: "assistant", Content: "Does it happen with downloaded songs too?"}, {Role: "user", Content: "Downloaded songs work. It only fails on songs I stream."}}, wantAnswer: true},
 		{id: "wifi-casting", messages: []cmd.GarminAIMessage{{Role: "user", Content: "The option to stream to another device via WiFi is still not working?"}}, wantAnswer: true, forbidden: []string{"downloaded songs", "source error"}},
@@ -363,7 +386,7 @@ func TestSupportAgentLive(t *testing.T) {
 	} {
 		t.Run(test.id, func(t *testing.T) {
 			r := report{ID: test.id}
-			b := &Bot{DB: database, Notes: &cmd.NotesHandler{DB: database}, Logger: zap.NewNop(), garminGitHub: gh.NewAssistantClient(config.GitHubToken, "MetrolistGroup", "Metrolist")}
+			b := &Bot{Config: &botconfig.Config{OpenRouterDecisionModel: config.DecisionModel}, DB: database, Notes: &cmd.NotesHandler{DB: database}, Logger: zap.NewNop(), garminGitHub: gh.NewAssistantClient(config.GitHubToken, "MetrolistGroup", "Metrolist")}
 			if test.casual {
 				memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
 				if err != nil {
@@ -390,6 +413,8 @@ func TestSupportAgentLive(t *testing.T) {
 				check := map[string]any{"draft": r.Draft, "grounded": r.Grounded, "api_error": err != nil}
 				if response != nil {
 					check["problem"] = response.Answers["problem"].Choice
+					check["reason"] = response.Answers["grounded"].Reason
+					check["section"] = response.Answers["section"].Choice
 				}
 				if response != nil && response.Answers["note_used"].Noul != nil {
 					check["note_used"] = *response.Answers["note_used"].Noul
@@ -397,6 +422,9 @@ func TestSupportAgentLive(t *testing.T) {
 				r.Checks = append(r.Checks, check)
 				return response, err
 			})
+			if config.DecisionModel == "" {
+				b.garminDecisions = nil
+			}
 			b.garminAI = garminAITestFunc(func(ctx context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 				r.ModelCalls++
 				if r.ModelCalls == 1 {
@@ -456,7 +484,19 @@ func TestSupportAgentLive(t *testing.T) {
 				if !test.casual && containsAnyGarminPhrase(strings.ToLower(r.Answer), "if you want, i can", "let me know if", "then stop there") {
 					t.Errorf("%s: reply contains a canned offer or writing instruction", test.id)
 				}
+				literalExcerpt := false
+				if r.Note != "" {
+					if source, err := b.Notes.GetNote(r.Note); err == nil {
+						for _, section := range supportNoteSections(source) {
+							literalExcerpt = literalExcerpt || r.Answer == section
+						}
+					}
+				}
 				for _, forbidden := range test.forbidden {
+					// Authored warnings can say 'do not X, Y or Z'; substring checks cannot parse that negation.
+					if literalExcerpt && (forbidden == "clear app data" || forbidden == "reinstall") {
+						continue
+					}
 					if strings.Contains(strings.ReplaceAll(strings.ToLower(r.Answer), "not "+forbidden, ""), forbidden) {
 						t.Errorf("%s: review forbidden phrase %q", test.id, forbidden)
 					}
@@ -474,14 +514,26 @@ func TestSupportAgentLive(t *testing.T) {
 				if strings.HasPrefix(test.id, "discover-") && (!strings.Contains(strings.ToLower(r.Answer), "daily discover") || !strings.Contains(strings.ToLower(r.Answer), "home")) {
 					t.Error("Discover answer did not explain the actual Home section")
 				}
-				if test.id == "likes-auto-sync" && !strings.Contains(strings.ToLower(r.Answer), "auto-sync") {
+				if test.id == "likes-auto-sync" && !strings.Contains(strings.NewReplacer("‑", "-", "‐", "-").Replace(strings.ToLower(r.Answer)), "auto-sync") {
 					t.Error("sync answer omitted the actual control")
 				}
-				if test.wantNote != "" && r.Note != test.wantNote {
+				if config.DecisionModel != "" && test.wantNote != "" && r.Note != test.wantNote {
 					t.Errorf("%s: note = %q, want %q", test.id, r.Note, test.wantNote)
+				}
+				if strings.HasPrefix(test.id, "metadata-") && (!strings.Contains(strings.ToLower(r.Answer), "youtube music") || !strings.Contains(r.Answer, "?")) {
+					t.Error("metadata answer skipped the diagnostic question")
+				}
+				if test.id == "restricted-source-fork" && (strings.HasPrefix(r.Answer, "Yes") || strings.HasPrefix(r.Answer, "No.")) {
+					t.Error("tester access was turned into a blanket permission decision")
+				}
+				if test.id == "donation-links" && !strings.Contains(r.Answer, "https://") {
+					t.Error("donation answer omitted the requested URLs")
 				}
 				if test.wantRelease && !containsAnyGarminPhrase(strings.Join(r.Tools, ","), "get_metrolist_status", "get_metrolist_changes") {
 					t.Errorf("%s: expected release lookup and synthesis, got tools=%v note=%q", test.id, r.Tools, r.Note)
+				}
+				if test.id == "unread-image" && (!strings.Contains(strings.ToLower(r.Answer), "error") || supportScreenshotRequestPattern.MatchString(r.Answer) || strings.Contains(r.Answer, "lookup failed")) {
+					t.Error("unread attachment did not get a useful text clarification")
 				}
 				if test.id == "chrome-download" && !strings.Contains(strings.ToLower(r.Answer), "firefox") {
 					t.Error("Chrome download case lost applicable Firefox advice")
