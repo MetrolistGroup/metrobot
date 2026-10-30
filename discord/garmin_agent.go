@@ -291,7 +291,7 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 		}
 		conversation = append(conversation, cmd.GarminAIMessage{Role: "tool", ToolCallID: call.ID, Content: truncateGarminAIToolResult(output)})
 		if garminToolResultError(output) != "" {
-			result.Answer = "web search failed just now."
+			result.Silent = true
 			result.Conversation = conversation
 			return result, nil
 		}
@@ -352,14 +352,10 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 			}
 			pendingPublicTools = append(pendingPublicTools, name)
 		}
-		unverifiedAnswer := "i couldn't retrieve all requested public sources, so i can't verify the combined answer."
-		if len(requiredDeviceTools) > 0 && !(repositoryToolRequired && !repositoryToolUsed) {
-			unverifiedAnswer = "i couldn't verify those device specifications from a source."
-		}
 		// Never trade required public evidence for private history or the final synthesis round.
 		if round == maxToolRounds-1 {
 			if len(pendingPublicTools) > 0 {
-				result.Answer, result.Conversation = unverifiedAnswer, conversation
+				result.Silent, result.Conversation = true, conversation
 				return result, nil
 			}
 			historyReady = true
@@ -377,7 +373,7 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 				return nil, err
 			}
 			if channelErr != nil {
-				discordContext += "\n\nCommunity channel lookup failed; do not make claims about its recent content:\n" + channelErr.Error()
+				return nil, channelErr
 			} else {
 				result.ToolCalls++
 				answerLinkSources = append(answerLinkSources, channelOutput)
@@ -413,6 +409,10 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 					answerLinkSources = append(answerLinkSources, output)
 				}
 				conversation = append(conversation, cmd.GarminAIMessage{Role: "tool", ToolCallID: call.ID, Content: garminAIToolResult(call.Function.Name, output)})
+				if garminToolResultError(output) != "" {
+					result.Silent, result.Conversation = true, conversation
+					return result, nil
+				}
 				images = append(images, garminAIToolImageURLs(call.Function.Name, output)...)
 			}
 			pendingHistory = nil
@@ -482,6 +482,9 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 		if err != nil {
 			return nil, err
 		}
+		if completion == nil {
+			return nil, fmt.Errorf("AI provider returned no completion")
+		}
 		if !b.garminMessageVisible(m.ChannelID.String(), m.ID.String()) || (ambient && !b.garminAIAmbientRequestActive(m, ambientToken)) {
 			result.Silent = true
 			result.Conversation = conversation
@@ -509,7 +512,7 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 				conversation = append(conversation, cmd.GarminAIMessage{Role: "system", Content: "Your draft was not sent because required public evidence is missing. Call " + strings.Join(pendingPublicTools, ", ") + " before answering or reading private history. Do not repeat the unsupported draft."})
 				continue
 			}
-			result.Answer, result.Conversation = unverifiedAnswer, conversation
+			result.Silent, result.Conversation = true, conversation
 			return result, nil
 		}
 		// A model may still request tools on the final round; give it one explicit tool-free chance instead of failing.
@@ -567,8 +570,9 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 					conversation = append(conversation, cmd.GarminAIMessage{Role: "system", Content: "Your device-page draft was not sent because a URL was absent from the device source results. Use only exact device-page URLs returned by successful device lookups. Do not repeat the unsupported draft."})
 					continue
 				}
-				answer = "i couldn't verify those device specifications from a source."
-				conversation[len(conversation)-1].Content = answer
+				result.Silent = true
+				result.Conversation = conversation
+				return result, nil
 			}
 			if (communityChannel != "" || len(pendingHistory) > 0) && !historyReady {
 				historyReady = true
@@ -580,7 +584,9 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 					if ctx.Err() != nil {
 						return nil, ctx.Err()
 					}
-					answer = "i couldn't confirm your current channel-history access, so i can't share that summary."
+					result.Silent = true
+					result.Conversation = conversation
+					return result, nil
 				}
 			}
 			result.Conversation = conversation
@@ -657,12 +663,7 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 				return result, nil
 			}
 			if actionErr != nil {
-				conversation = append(conversation, cmd.GarminAIMessage{
-					Role:       "tool",
-					ToolCallID: toolCall.ID,
-					Content:    toolError(actionErr),
-				})
-				continue
+				return nil, actionErr
 			}
 			if handled {
 				result.Unverified = appSupport && supportRetries > 0
@@ -699,7 +700,11 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 				ToolCallID: toolCall.ID,
 				Content:    garminAIToolResult(toolCall.Function.Name, output),
 			})
-			if (garminPublicQueryToolName(toolCall.Function.Name) || toolCall.Function.Name == "get_metrolist_status" || toolCall.Function.Name == "get_metrolist_changes") && garminToolResultError(output) == "" {
+			if garminToolResultError(output) != "" {
+				result.Silent, result.Conversation = true, conversation
+				return result, nil
+			}
+			if garminPublicQueryToolName(toolCall.Function.Name) || toolCall.Function.Name == "get_metrolist_status" || toolCall.Function.Name == "get_metrolist_changes" {
 				publicLookupSources = append(publicLookupSources, output)
 			}
 			if garminToolResultError(output) == "" {
@@ -718,28 +723,12 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 				conversation = append(conversation, cmd.GarminAIMessage{Role: "system", Content: "This patch is code-history evidence, not a diagnosis of this person. If the same commit appears in a verified published-nightly comparison and matches the reported symptom, offer a conditional trial: If you are on standalone Android stable, back up your library/settings and try the current linked nightly; it includes the verified change, and it is in development and may be unstable. Describe the change, not a definite or likely cause of their problem. Use the actual returned release/asset URL. Do not claim all nightlies after a date contain it. Otherwise ask the most useful missing detail."})
 			}
 			if toolCall.Function.Name == "search_web" {
-				if garminToolResultError(output) != "" {
-					result.Answer = "web search failed just now."
-					result.Conversation = conversation
-					return result, nil
-				}
 				discordContext += garminWebSearchResultInstruction(garminUserText(messages))
 			}
-			// Support must still answer from another source or ask a useful question after any GitHub failure.
 			if garminGitHubToolName(toolCall.Function.Name) && !appSupport {
-				if garminToolResultError(output) != "" {
-					result.Answer = "github lookup failed just now."
-					result.Conversation = conversation
-					return result, nil
-				}
 				discordContext += "\n\nA live GitHub lookup succeeded. Use only the supplied repository data for commit, file, and change claims."
 			}
 			if toolCall.Function.Name == "get_gsmarena_phone" || toolCall.Function.Name == "get_nanoreview_device" || toolCall.Function.Name == "get_technicalcity_device" {
-				if garminToolResultError(output) != "" {
-					result.Answer = hardwareSourceFailure(toolCall.Function.Name)
-					result.Conversation = conversation
-					return result, nil
-				}
 				requiredDeviceTools = slices.DeleteFunc(requiredDeviceTools, func(name string) bool { return name == toolCall.Function.Name })
 				var source struct{ Device, Phone struct{ URL string } }
 				if json.Unmarshal([]byte(output), &source) == nil {
@@ -2106,17 +2095,6 @@ func garminHardwareQuery(messages []cmd.GarminAIMessage, name string) string {
 		}
 	}
 	return truncateRunes(strings.Trim(strings.Join(model, " "), " ,.?!"), 200)
-}
-
-func hardwareSourceFailure(name string) string {
-	switch name {
-	case "get_nanoreview_device":
-		return "NanoReview lookup failed just now."
-	case "get_technicalcity_device":
-		return "Technical City lookup failed just now."
-	default:
-		return "GSMArena lookup failed just now."
-	}
 }
 
 func garminGSMArenaRequested(messages []cmd.GarminAIMessage) bool {

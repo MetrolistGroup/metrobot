@@ -31,7 +31,7 @@ func TestGarminPunctuationSeparatedCredentialsBlockExplicitSearch(t *testing.T) 
 				message := garminHistoryTestMessage()
 				message.Content = "garmin, " + prompt
 				result, err := b.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: prompt}})
-				if err != nil || result.Answer != "web search failed just now." || result.ToolCalls != 1 {
+				if err != nil || !result.Silent || result.Answer != "" || result.ToolCalls != 1 {
 					t.Fatalf("sensitive search was not rejected: result=%+v, error=%v", result, err)
 				}
 			})
@@ -743,7 +743,7 @@ func TestGarminUnavailableDeviceSourceCannotUnlockPrivateHistory(t *testing.T) {
 	message := garminHistoryTestMessage()
 	message.Content = "garmin, " + prompt
 	result, err := b.runGarminAI(context.Background(), session, message, []cmd.GarminAIMessage{{Role: "user", Content: prompt}})
-	if err != nil || result.ToolCalls != 0 || result.Answer != "i couldn't verify those device specifications from a source." {
+	if err != nil || result.ToolCalls != 0 || !result.Silent || result.Answer != "" {
 		t.Fatalf("unavailable source did not fail closed: result=%+v, error=%v", result, err)
 	}
 }
@@ -788,7 +788,7 @@ func TestGarminMissingPublicEvidenceFailsClosedWithinBudget(t *testing.T) {
 			if mode == "tool budget" || mode == "late draft" {
 				wantCalls = garminAIMaxToolRounds - 1
 			}
-			if err != nil || calls != wantCalls || result.Answer != "i couldn't retrieve all requested public sources, so i can't verify the combined answer." {
+			if err != nil || calls != wantCalls || !result.Silent || result.Answer != "" {
 				t.Fatalf("missing-source request did not fail closed: result=%+v, calls=%d, error=%v", result, calls, err)
 			}
 			for _, turn := range result.Conversation {
@@ -908,7 +908,7 @@ func TestGarminNamedGitHubCommitDiscoveryRequiresLookup(t *testing.T) {
 				t.Fatal(err)
 			}
 			if mode == "repeated draft" {
-				if calls != 2 || requests != 0 || result.ToolCalls != 0 || !strings.Contains(result.Answer, "couldn't retrieve") {
+				if calls != 2 || requests != 0 || result.ToolCalls != 0 || result.Answer != "" || !result.Silent {
 					t.Fatalf("unsourced commits were accepted: result=%+v, calls=%d, requests=%d", result, calls, requests)
 				}
 			} else if calls != 4 || requests == 0 || result.ToolCalls != 2 || result.Answer != "Public commit evidence." {

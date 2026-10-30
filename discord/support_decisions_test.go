@@ -348,15 +348,8 @@ func TestSupportDecisionLiveCatalogAndStaleSelection(t *testing.T) {
 			})
 			m := supportTestMessage(20)
 			b.handleGarminAutomaticAppSupport(client, m, []cmd.GarminAIMessage{{Role: "user", Content: m.Content}})
-			notice := supportUnavailableReply
-			if sent.count() != 1 {
-				t.Fatal("stale selection did not get a single safe failure notice")
-			}
-			sent.mu.Lock()
-			body := sent.bodies[0]
-			sent.mu.Unlock()
-			if !strings.Contains(body, notice) {
-				t.Fatal("stale selection was exposed instead of the safe notice")
+			if sent.count() != 0 {
+				t.Fatal("stale selection sent a reply")
 			}
 			_, catalog, err := b.supportDecisionRequest(m, nil)
 			if err != nil {

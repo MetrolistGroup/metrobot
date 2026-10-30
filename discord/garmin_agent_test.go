@@ -305,7 +305,7 @@ func TestGarminPublicLookupsRejectSensitiveInputs(t *testing.T) {
 			return garminHistoryTestCall("search_web", `{"query":"private-canary"}`), nil
 		})
 		result, err := b.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: prompt}})
-		if err != nil || result.Answer != "web search failed just now." {
+		if err != nil || !result.Silent || result.Answer != "" {
 			t.Fatalf("sensitive search result=%+v, error=%v", result, err)
 		}
 	}
@@ -328,7 +328,7 @@ func TestGarminOrdinaryCredentialReportCannotReachGitHub(t *testing.T) {
 	message := garminHistoryTestMessage()
 	message.Content = "garmin, My password hunter2 stopped working"
 	result, err := b.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "My password hunter2 stopped working"}})
-	if err != nil || result.ToolCalls != 1 || result.Answer != "github lookup failed just now." {
+	if err != nil || result.ToolCalls != 1 || !result.Silent || result.Answer != "" {
 		t.Fatalf("credential report was not safely rejected: result=%+v, error=%v", result, err)
 	}
 	if output := result.Conversation[len(result.Conversation)-1].Content; !strings.Contains(garminToolResultError(output), "non-sensitive public subject") || strings.Contains(output, "hunter2") {
@@ -487,7 +487,7 @@ func TestRunGarminAIDeviceSpecificationsRequireSourceEvidence(t *testing.T) {
 				message := garminHistoryTestMessage()
 				message.Content = "garmin, " + test.prompt
 				result, err := b.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: test.prompt}})
-				if err != nil || result.Answer != "i couldn't verify those device specifications from a source." || result.ToolCalls != 0 {
+				if err != nil || !result.Silent || result.Answer != "" || result.ToolCalls != 0 {
 					t.Fatalf("unsourced device answer accepted: result=%+v, error=%v", result, err)
 				}
 				for _, turn := range result.Conversation {
@@ -593,7 +593,7 @@ func TestRunGarminAIStopsRepositoryToolLoop(t *testing.T) {
 		ID: snowflakeID("1"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Content: "garmin, what changes were last made in the MetrolistGroup/Metrolist repo", Author: discord.User{ID: snowflakeID("100000000000000056")},
 	}
 	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "what changes were last made in the MetrolistGroup/Metrolist repo"}})
-	if err != nil || calls != 1 || result.Answer != "github lookup failed just now." || result.ToolCalls != 1 {
+	if err != nil || calls != 1 || !result.Silent || result.Answer != "" || result.ToolCalls != 1 {
 		t.Fatalf("repository run = %#v, calls %d, error %v", result, calls, err)
 	}
 }
@@ -699,7 +699,7 @@ func TestGarminPublicLookupInvocationMention(t *testing.T) {
 		return nil, nil
 	})
 	result, err := b.runGarminAI(context.Background(), session, message, []cmd.GarminAIMessage{{Role: "user", Content: "search the web for Warsaw weather"}})
-	if err != nil || result.Answer != "web search failed just now." || attempts == before {
+	if err != nil || !result.Silent || result.Answer != "" || attempts == before {
 		t.Fatalf("mention invocation did not reach the public search: result=%+v, error=%v", result, err)
 	}
 }
@@ -803,7 +803,7 @@ func TestRunGarminAIStopsAfterWebSearchFailure(t *testing.T) {
 		ID: snowflakeID("1"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Content: "garmin, look up today's news", Author: discord.User{ID: snowflakeID("100000000000000056")},
 	}
 	result, err := bot.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "look up today's news"}})
-	if err != nil || calls != 0 || result.Answer != "web search failed just now." || result.ToolCalls != 1 {
+	if err != nil || calls != 0 || !result.Silent || result.Answer != "" || result.ToolCalls != 1 {
 		t.Fatalf("web failure = %#v, calls %d, error %v", result, calls, err)
 	}
 }
@@ -832,7 +832,7 @@ func TestRunGarminAITextualGitHubSearchRespectsAvailability(t *testing.T) {
 				t.Fatalf("textual search=%+v, calls=%d, error=%v", result, calls, err)
 			}
 			if available {
-				if result.ToolCalls != 1 || result.Answer != "github lookup failed just now." {
+				if result.ToolCalls != 1 || !result.Silent || result.Answer != "" {
 					t.Fatalf("available textual search was not executed: %+v", result)
 				}
 			} else if result.ToolCalls != 0 || !result.Silent || result.Answer != "" {

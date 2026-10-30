@@ -194,7 +194,7 @@ func testSupportMessageLive(t *testing.T, messages []cmd.GarminAIMessage, want, 
 		t.Fatal(err)
 	}
 	lower := strings.ReplaceAll(strings.ToLower(body), "*", "")
-	if sent.count() != 1 || strings.Contains(body, "I couldn't verify a reliable answer from the available references.") || strings.Contains(body, supportUnavailableReply) {
+	if sent.count() != 1 || strings.Contains(body, "I couldn't verify a reliable answer from the available references.") || strings.Contains(body, "I couldn't answer that right now.") {
 		t.Fatal("real message did not deliver a useful answer; inspect the private report")
 	}
 	for _, fact := range want {

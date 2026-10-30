@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -153,8 +155,12 @@ func TestSupportResearchToolBudget(t *testing.T) {
 	b := &Bot{garminDecisions: supportDecisionTestFunc(func(context.Context, cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
 		return supportNoulDecision("grounded", .99), nil
 	})}
-	// Without a token, code search fails before any network call; the budget is counted either way.
-	b.garminGitHub = gh.NewAssistantClient("", "MetrolistGroup", "Metrolist")
+	original := http.DefaultTransport
+	http.DefaultTransport = garminRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"total_count":0,"items":[]}`)), Request: r}, nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = original })
+	b.garminGitHub = gh.NewAssistantClient("synthetic", "MetrolistGroup", "Metrolist")
 	var refused int
 	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		refused = 0

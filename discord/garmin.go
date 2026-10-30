@@ -34,17 +34,16 @@ const (
 )
 
 type garminAIContext struct {
-	userID          string
-	requestID       string
-	replyID         string
-	guildID         string
-	channelID       string
-	messages        []cmd.GarminAIMessage
-	expiresAt       time.Time
-	ambientUntil    time.Time
-	unanswered      bool
-	failureNoticeAt time.Time
-	pendingSources  []string
+	userID         string
+	requestID      string
+	replyID        string
+	guildID        string
+	channelID      string
+	messages       []cmd.GarminAIMessage
+	expiresAt      time.Time
+	ambientUntil   time.Time
+	unanswered     bool
+	pendingSources []string
 }
 
 const (
@@ -72,18 +71,7 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 	if ambient && !b.garminAIAmbientRequestActive(m, ambientToken) {
 		return
 	}
-	if len(messages) == 0 || !garminAIMessageHasInput(messages[len(messages)-1]) {
-		if ambient {
-			return
-		}
-		b.sendGarminReplyIfVisible(s, m, "Ask me something after `garmin,`.")
-		return
-	}
-	if b.garminAI == nil {
-		if ambient {
-			return
-		}
-		b.sendGarminReplyIfVisible(s, m, "Metrobot AI isn't configured right now.")
+	if len(messages) == 0 || !garminAIMessageHasInput(messages[len(messages)-1]) || b.garminAI == nil {
 		return
 	}
 	if m.ChannelID.String() == garminAppSupportID && b.garminDecisions != nil {
@@ -100,7 +88,6 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 	}
 	defer b.unregisterGarminAIRequest(m)
 	if !ambient && !b.waitForGarminAICooldown(m.Author.ID.String()) {
-		b.sendGarminReplyIfVisible(s, m, "i'm still rate limited, try again in a sec.")
 		return
 	}
 	if requestCtx.Err() != nil {
@@ -110,10 +97,6 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 	case b.garminAISlots <- struct{}{}:
 		defer func() { <-b.garminAISlots }()
 	default:
-		if ambient {
-			return
-		}
-		b.sendGarminReplyIfVisible(s, m, "I'm busy right now. Try again in a moment.")
 		return
 	}
 	typingDone := make(chan struct{})
@@ -137,29 +120,16 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 	if requestCtx.Err() != nil || !b.garminMessageVisible(m.ChannelID.String(), m.ID.String()) {
 		return
 	}
+	// A failed attempt is handled silently; retain pending questions, never a failure reply.
+	supportCompleted = true
 	if err != nil {
 		b.Logger.Error("Metrobot AI request failed", zap.String("user", m.Author.ID.String()), zap.Error(err))
-		if ambient {
-			return
-		}
-		answer := supportUnavailableReply
-		if supportMode {
-			if m.ChannelID.String() != garminAppSupportID || garminAppSupportIntent(garminUserText(messages)) || len(messages) > 1 {
-				answer = b.supportFallbackReply(messages)
-			}
-			supportCompleted = b.sendGarminUnansweredReplyIfVisible(s, m, answer, messages) != nil
-			return
-		}
-		conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: answer, Timestamp: time.Now().UTC()})
-		supportCompleted = b.sendGarminReplyAndRememberIfVisible(s, m, answer, conversation) != nil
+		return
+	}
+	if ctx.Err() != nil || result == nil {
 		return
 	}
 	if result.Silent {
-		if result.Unverified && supportMode && !ambient {
-			supportCompleted = b.sendGarminUnansweredReplyIfVisible(s, m, b.supportFallbackReply(messages), messages) != nil
-			return
-		}
-		supportCompleted = !result.Unverified
 		if !result.Unverified && !result.Interacted {
 			b.clearGarminAIUnansweredContext(m)
 		}
@@ -176,14 +146,6 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 		return
 	}
 	if strings.TrimSpace(result.Answer) == "" {
-		if supportMode && !ambient {
-			supportCompleted = b.sendGarminUnansweredReplyIfVisible(s, m, b.supportFallbackReply(messages), messages) != nil
-			return
-		}
-		if ambient || m.ChannelID.String() == garminAppSupportID {
-			return
-		}
-		b.sendGarminReplyIfVisible(s, m, "I couldn't produce a useful answer for that.")
 		return
 	}
 	if m.ChannelID.String() == garminAppSupportID {
@@ -195,7 +157,7 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 
 	renderedAnswer := renderGarminGuildEmojis(s, snowflakeString(m.GuildID), result.Answer)
 	if strings.TrimSpace(renderedAnswer) == "" && strings.TrimSpace(result.Answer) != "" {
-		renderedAnswer = "i couldn't find that emoji."
+		return
 	}
 	result.Answer = renderedAnswer
 	formatted := formatAndTruncateGarminAIResult(result)
@@ -517,13 +479,6 @@ func (b *Bot) sendGarminReply(s *bot.Client, m *discord.Message, content string)
 		},
 		AllowedMentions: &discord.AllowedMentions{},
 	})
-	if noteRequestRejected(err) {
-		b.Logger.Warn("failed to send Garmin AI reply reference, retrying without it", zap.Error(err))
-		reply, err = s.Rest.CreateMessage(m.ChannelID, discord.MessageCreate{
-			Content:         content,
-			AllowedMentions: &discord.AllowedMentions{},
-		})
-	}
 	if err != nil {
 		b.Logger.Error("failed to send Garmin AI reply", zap.Error(err))
 		return nil
@@ -939,36 +894,6 @@ func (b *Bot) sendGarminReplyAndRememberIfVisible(s *bot.Client, m *discord.Mess
 	return reply
 }
 
-func (b *Bot) sendGarminUnansweredReplyIfVisible(s *bot.Client, m *discord.Message, content string, messages []cmd.GarminAIMessage) *discord.Message {
-	b.garminAIMu.Lock()
-	defer b.garminAIMu.Unlock()
-	if !b.garminMessageVisibleLocked(m.ChannelID.String(), m.ID.String()) {
-		return nil
-	}
-	key := garminAIUserContextKey(m)
-	now := time.Now()
-	if previous := b.garminAIUserContexts[key]; now.Sub(previous.failureNoticeAt) < supportCooldown {
-		// Keep the pending question, but do not spam the same failure on each follow-up.
-		return nil
-	}
-	reply, _ := b.sendGarminAppSupportReply(s, m, content, "")
-	if reply != nil {
-		b.storeGarminAIContextLocked(reply.ID.String(), m, messages, now)
-		if retained, ok := b.garminAIContexts[reply.ID.String()]; ok {
-			retained.unanswered, retained.ambientUntil = true, time.Time{}
-			retained.failureNoticeAt = now
-			b.garminAIContexts[reply.ID.String()] = retained
-			if b.garminAIUserContexts[key].requestID == m.ID.String() {
-				b.garminAIUserContexts[key] = retained
-			} else if current, ok := b.garminAIUserContexts[key]; ok {
-				current.failureNoticeAt = now
-				b.garminAIUserContexts[key] = current
-			}
-		}
-	}
-	return reply
-}
-
 func (b *Bot) sendGarminReplyIfVisible(s *bot.Client, m *discord.Message, content string) *discord.Message {
 	b.garminAIMu.Lock()
 	defer b.garminAIMu.Unlock()
@@ -1155,8 +1080,7 @@ func (b *Bot) rememberGarminAIUnansweredContext(m *discord.Message, messages []c
 	if previous, ok := b.garminAIUserContexts[key]; ok && snowflakeID(previous.requestID) >= m.ID {
 		return messages
 	}
-	previous := b.garminAIUserContexts[key]
-	sources := previous.pendingSources
+	sources := b.garminAIUserContexts[key].pendingSources
 	if parent, ok := b.garminAIParents[m.ChannelID.String()][m.ID.String()]; ok {
 		sources = parent.pendingSources
 	}
@@ -1170,7 +1094,6 @@ func (b *Bot) rememberGarminAIUnansweredContext(m *discord.Message, messages []c
 	if retained, ok := b.garminAIUserContexts[key]; ok && retained.requestID == m.ID.String() {
 		retained.ambientUntil = time.Time{}
 		retained.unanswered = true
-		retained.failureNoticeAt = previous.failureNoticeAt
 		retained.pendingSources = sources
 		b.garminAIUserContexts[key] = retained
 	}

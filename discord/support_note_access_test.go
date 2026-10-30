@@ -12,7 +12,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestSupportFallbackDoesNotRepeatAmbiguousSend(t *testing.T) {
+func TestSupportDoesNotRepeatFailedSend(t *testing.T) {
 	for _, note := range []string{"", "nightly"} {
 		t.Run("note="+note, func(t *testing.T) {
 			requests := 0
@@ -33,12 +33,8 @@ func TestSupportFallbackDoesNotRepeatAmbiguousSend(t *testing.T) {
 			client.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: client.Rest.HTTPClient().Transport, target: server.URL}
 			b := &Bot{Logger: zap.NewNop()}
 			reply, _ := b.sendGarminAppSupportReply(client, supportTestMessage(20), "Relevant excerpt.", note)
-			want := 1
-			if note != "" {
-				want++
-			}
-			if reply != nil || requests != want {
-				t.Fatalf("ambiguous send retried: requests=%d want=%d reply=%v", requests, want, reply)
+			if reply != nil || requests != 1 {
+				t.Fatalf("failed send retried: requests=%d reply=%v", requests, reply)
 			}
 		})
 	}

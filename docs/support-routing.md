@@ -2,15 +2,17 @@
 
 ## Configuration
 
-Set `openrouter_api_keys` and use Qwen3.7 Flash for answers, routing and evidence checks:
+Set `openrouter_api_keys`, use a dedicated Decider for initial support triage and evidence checking, and Qwen3.7 Flash for the actual responses:
 
 ```json
-{"openrouter_model": "qwen/qwen3.7-flash", "openrouter_decision_model": "qwen/qwen3.7-flash"}
+{"openrouter_model": "qwen/qwen3.7-flash", "openrouter_decision_model": "perplexity/pplx-decider-v1.2"}
 ```
 
-Qwen judgments use chat completions with a validated tool schema, not the Decider-only API. Routing has reasoning disabled; evidence checks request a 512-token reasoning budget and return a concrete finding for rejected drafts. Routing choice weights are normalized before applying the existing thresholds; model scores are not calibrated accuracy estimates. Qwen evidence checking makes one defect decision: `none` maps to acceptance, any named defect to rejection. Its logged grounding value is therefore 1 or 0, not a confidence estimate. This avoids a contradictory second score rejecting an answer while naming no defect; Decider retains its probability gate. Invalid, missing or truncated verdicts fail closed after at most one retry. Qwen endpoints reject `tool_choice=required`, so both Qwen decision paths validate returned calls rather than requiring that unsupported parameter.
+Decider first determines whether a message needs support and supplies the matching note, if any. Only accepted requests reach Qwen. Qwen drafts are checked before delivery; a failed request stays silent. Ordinary chat uses Qwen directly.
 
-Existing Perplexity Decider configurations remain supported. An empty decision model uses legacy chat triage **without an independent answer check**. Existing configurations are not changed automatically. No database migration or persistent routing statistics are added.
+Optional Qwen-only mode sets both fields to `qwen/qwen3.7-flash`. In that mode, Qwen judgments use chat completions with a validated tool schema, not the Decider-only API. Routing has reasoning disabled; evidence checks request a 512-token reasoning budget and return a concrete finding for rejected drafts. Routing choice weights are normalized before applying the existing thresholds; model scores are not calibrated accuracy estimates. Qwen evidence checking makes one defect decision: `none` maps to acceptance, any named defect to rejection. Its logged grounding value is therefore 1 or 0, not a confidence estimate. This avoids a contradictory second score rejecting an answer while naming no defect; Decider retains its probability gate. Invalid, missing or truncated verdicts fail closed after at most one retry. Qwen endpoints reject `tool_choice=required`, so both Qwen decision paths validate returned calls rather than requiring that unsupported parameter.
+
+An empty decision model uses legacy chat triage **without an independent answer check**. Existing configurations are not changed automatically. No database migration or persistent routing statistics are added.
 
 ## Request handling
 
@@ -25,7 +27,7 @@ Decisions asks two independent questions: whether the message needs an answer, a
 | Send a generated answer | Grounding probability ≥ 0.80 and no named defect |
 | Offer More from this note | Independent note-use probability ≥ 0.95 |
 
-A selected note is not permission to dump its full body. In Qwen mode, even a tentative top-ranked note is loaded as reference material instead of discarding it when its normalized routing weight misses the threshold. This does not authorize a reply: after `get_note` the separate applicability selector must choose one complete authored section at the same 0.85/0.20 thresholds. The runtime sends that section verbatim, including its heading, preamble and warnings, rather than asking Qwen to paraphrase it. Markdown code examples do not create sections. Unmatched, uncertain, multi-section or live-data questions continue through the agent and evidence checker. A Qwen draft judged to use a note must match an authored section (or the whole retrieved note) exactly: the checker cannot approve added claims by calling them a faithful paraphrase. Complex note synthesis can therefore abstain instead of inventing an answer. Only delivered answers enter assistant history; rejected drafts do not.
+A selected note is not permission to dump its full body. With Decider configured, Qwen generates the response from the retrieved reference. In Qwen-only decision mode, even a tentative top-ranked note is loaded as reference material instead of discarding it when its normalized routing weight misses the threshold. This does not authorize a reply: after `get_note` the separate applicability selector must choose one complete authored section at the same 0.85/0.20 thresholds. The runtime sends that section verbatim, including its heading, preamble and warnings, rather than asking Qwen to paraphrase it. Markdown code examples do not create sections. Unmatched, uncertain, multi-section or live-data questions continue through the agent and evidence checker. A Qwen draft judged to use a note must match an authored section (or the whole retrieved note) exactly: the checker cannot approve added claims by calling them a faithful paraphrase. Complex note synthesis can therefore abstain instead of inventing an answer. Only delivered answers enter assistant history; rejected drafts do not.
 
 Routing and evidence checks run only in app-support. Every other channel uses Qwen directly, including Metrolist questions and follow-ups, with no Decider classification, evidence check or confirmed-fix learning call. Ordinary chat keeps its own prompt, project reference and read-only tools.
 
@@ -41,11 +43,9 @@ Exact note sections need a positive applicability selection, but no free-form ge
 
 ### Unhandled questions
 
-When an accepted playback request fails generation or checking, or produces no answer, the bot can send general standalone-Android guidance from the current `.playback` note. If that note is missing, invalid or opted out, it tries `.nightly`. Both must have nonblank routing descriptions. The fallback requires playback wording in the latest message and excludes KMP; other topics and missing notes get the neutral unavailable notice, not unrelated playback advice. Explicit "hi", "hello" and "hey" greetings bypass the model.
+Failed AI replies are silent in every channel, for both automatic and explicit requests. Provider/checker/tool errors, timeouts, exhausted verification retries, empty responses, missing required sources, unavailable configuration and capacity/rate limits never produce error notices or fallback notes. Failed Discord delivery is logged, not retried as an unreferenced message or another format. Bounded provider retries and evidence-driven rewrites can still recover before a successful checked answer is delivered; failed tool execution stops the attempt.
 
-Fallback notes are read at delivery time, require no extra model call and are labeled as general guidance, not a confirmed fix. Long content is attached rather than truncated. The question stays pending for a follow-up; the fallback does not start ambient replies or become an accepted diagnosis. After a delivered failure notice, further failures for that user in that channel are quiet for ten minutes rather than repeating the same notice for every follow-up. Successful answers are still delivered and reset this suppression.
-
-Intentional silence, staff-only requests, cancellations, deletion guards, permissions and rate limits still apply. A router outage cannot classify a new message as a support request. Explicit non-help outages retain the neutral error notice.
+Accepted support requests retain their pending user question without storing rejected drafts or failure messages, so a later follow-up can continue. Completed failed attempts are deduplicated, and no failure activates ambient replies. Intentional silence, staff-only requests, cancellation/deletion guards and permissions still apply. A router outage cannot classify a new message as a support request. Explicit "hi", "hello" and "hey" greetings still bypass the model.
 
 ### Note access
 
@@ -53,14 +53,14 @@ Only notes with a nonblank `short_desc` enter automatic routing. Descriptions ex
 
 The agent and checker use the retrieved full note snapshot, including text beyond the usual tool limit. Later edits cannot change that evidence. Full `get_note` results are not shortened for checking; oversized requests fail closed.
 
-More from this note opens the current full note privately. For generated answers it appears only when that note supplied relevant facts, not merely because it was fetched. A selected verbatim section uses its retrieved note directly. Deleted, renamed or opted-out notes become unavailable. Discord component rejection falls back to the same concise answer, not a full-note dump. Explicit note commands retain their normal layouts and visibility.
+More from this note opens the current full note privately. For generated answers it appears only when that note supplied relevant facts, not merely because it was fetched. A selected verbatim section uses its retrieved note directly. Deleted, renamed or opted-out notes become unavailable. Discord component rejection sends no fallback message. Explicit note commands retain their normal layouts and visibility.
 
 ## GitHub research
 
 - Issue search returns titles, body snippets and comment counts. Read relevant issues before treating them as answers. The issue tool includes the newest eight comments and author associations; OWNER, MEMBER and COLLABORATOR comments are maintainer statements. Other comments remain user reports.
 - Code search and file excerpts establish labels, menus and conditions visible in that source, not released availability. Code search requires the configured GitHub token. File excerpts include numbered lines around up to four matches.
 - Support searches may use short symptom/feature synonyms against the fixed public repository. Sensitive-text filters still apply. Other chat retains the current-request/public-result provenance rule; private profiles or channel history cannot authorize a search.
-- Each issue/code research tool has a three-call budget. Support starts with eight tool rounds and a 90-second deadline, reserving a few additional rounds after a rejected draft. A research failure is returned as a tool error so another source can still help.
+- Each issue/code research tool has a three-call budget. Support starts with eight tool rounds and a 90-second deadline, reserving a few additional rounds after a rejected draft. A failed research lookup stops the attempt silently instead of generating a lookup-failure message.
 
 ### Release and nightly claims
 

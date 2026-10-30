@@ -832,7 +832,7 @@ func TestHandleGarminAIDetailedGeneralReplyRetainsDeliveredText(t *testing.T) {
 	}
 }
 
-func TestSendGarminReplyRetriesWithoutReference(t *testing.T) {
+func TestSendGarminReplyDoesNotRetryWithoutReference(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -840,19 +840,11 @@ func TestSendGarminReplyRetriesWithoutReference(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Errorf("decoding request: %v", err)
 		}
-		if requests == 1 {
-			if _, ok := payload["message_reference"]; !ok {
-				t.Error("first request omitted message reference")
-			}
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"message":"Unknown message","code":10008}`))
-			return
+		if _, ok := payload["message_reference"]; !ok {
+			t.Error("request omitted message reference")
 		}
-		if _, ok := payload["message_reference"]; ok {
-			t.Error("fallback request included message reference")
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"100000000000000004","channel_id":"100000000000000005","content":"answer"}`))
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"Unknown message","code":10008}`))
 	}))
 	defer server.Close()
 
@@ -867,7 +859,7 @@ func TestSendGarminReplyRetriesWithoutReference(t *testing.T) {
 	reply := bot.sendGarminReply(session, &discord.Message{
 		ID: snowflakeID("100000000000000029"), ChannelID: snowflakeID("100000000000000005"),
 	}, "answer")
-	if reply == nil || reply.ID != snowflakeID("100000000000000004") || requests != 2 {
+	if reply != nil || requests != 1 {
 		t.Fatalf("sendGarminReply() = %#v after %d requests", reply, requests)
 	}
 }

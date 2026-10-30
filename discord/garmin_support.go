@@ -13,35 +13,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const supportUnavailableReply = "I couldn't answer that right now. Try again in a moment."
-
-func (b *Bot) supportFallbackReply(messages []cmd.GarminAIMessage) string {
-	text := strings.ToLower(garminUserText(messages))
-	// shortcut: match explicit playback wording until the router supplies a fallback topic.
-	playback := containsAnyGarminPhrase(text, "playback", "source error", "buffering", "won't play", "wont play", "not playing", "doesn't play", "does not play") ||
-		strings.Contains(text, "stream") && containsAnyGarminPhrase(text, "fail", "error")
-	if strings.Contains(text, "kmp") || !playback {
-		return supportUnavailableReply
-	}
-	if b.Notes != nil && b.Notes.DB != nil {
-		catalog, err := b.Notes.DB.ListNotes()
-		if err == nil {
-			for _, name := range []string{"playback", "nightly"} {
-				for _, note := range catalog {
-					if note.Name != name || strings.TrimSpace(note.ShortDesc) == "" {
-						continue
-					}
-					text, err := b.Notes.GetNote(name)
-					if err == nil && strings.TrimSpace(text) != "" {
-						return "For standalone Android, these are general playback steps, not a confirmed fix:\n\n" + text
-					}
-				}
-			}
-		}
-	}
-	return supportUnavailableReply
-}
-
 // Support must not inherit the casual persona, prompt overrides, or shared memory.
 const garminAppSupportSystemPrompt = `You are Metrobot in the official Metrolist Discord. Help with the latest user message. Keep routine answers under 60 words unless the user asks for detail; use a short list for actual steps.
 
@@ -168,11 +139,8 @@ func (b *Bot) sendGarminAppSupportReply(s *bot.Client, m *discord.Message, conte
 		if err == nil {
 			return reply, content
 		}
-		if !noteRequestRejected(err) {
-			b.Logger.Error("failed to send support answer", zap.Error(err))
-			return nil, ""
-		}
-		// Fall back to the same concise answer, never to the full note.
+		b.Logger.Error("failed to send support answer", zap.Error(err))
+		return nil, ""
 	}
 	if len(content) <= garminAIMaxContent {
 		return b.sendGarminReply(s, m, content), content
@@ -185,14 +153,6 @@ func (b *Bot) sendGarminAppSupportReply(s *bot.Client, m *discord.Message, conte
 		}},
 	}
 	reply, err := s.Rest.CreateMessage(m.ChannelID, *message)
-	if err == nil {
-		return reply, content
-	}
-	if noteRequestRejected(err) {
-		message.MessageReference = nil
-		message.Files[0].Reader = strings.NewReader(content)
-		reply, err = s.Rest.CreateMessage(m.ChannelID, *message)
-	}
 	if err != nil {
 		b.Logger.Error("failed to send app support note", zap.Error(err))
 		return nil, ""

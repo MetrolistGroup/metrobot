@@ -9,7 +9,7 @@ import (
 	"github.com/MetrolistGroup/metrobot/cmd"
 )
 
-func TestRejectedSupportQuestionNotifiesAndSurvivesFollowup(t *testing.T) {
+func TestRejectedSupportQuestionStaysSilentAndSurvivesFollowup(t *testing.T) {
 	for _, automatic := range []bool{false, true} {
 		name := "explicit"
 		if automatic {
@@ -70,14 +70,8 @@ func TestRejectedSupportQuestionNotifiesAndSurvivesFollowup(t *testing.T) {
 			b.onMessageCreate(client, m)
 			wait(m.ID.String())
 			retained := b.garminAIUserContexts[garminAIUserContextKey(m)]
-			if sent.count() != 1 {
-				t.Fatal("rejected question did not receive exactly one failure notice")
-			}
-			sent.mu.Lock()
-			body := sent.bodies[0]
-			sent.mu.Unlock()
-			if !strings.Contains(body, supportUnavailableReply) || strings.Contains(body, "UNSUPPORTED_DRAFT") || !retained.unanswered || !retained.ambientUntil.IsZero() || len(retained.messages) != 1 {
-				t.Fatal("rejected answer was silent, leaked a draft, lost the question or enabled ambient replies")
+			if sent.count() != 0 || !retained.unanswered || !retained.ambientUntil.IsZero() || len(retained.messages) != 1 || retained.replyID != "" {
+				t.Fatal("rejected answer sent a reply, lost the question or enabled ambient replies")
 			}
 			beforeRetry := modelCalls
 			messages := b.garminAITriggeredConversation(m, question)
@@ -89,8 +83,8 @@ func TestRejectedSupportQuestionNotifiesAndSurvivesFollowup(t *testing.T) {
 			} else {
 				b.handleGarminAI(client, m, messages)
 			}
-			if modelCalls != beforeRetry || sent.count() != 1 {
-				t.Fatal("duplicate event repeated a delivered status notice")
+			if modelCalls != beforeRetry || sent.count() != 0 {
+				t.Fatal("duplicate event repeated a failed request")
 			}
 			accept = true
 			followup := supportTestMessage(21)
@@ -101,7 +95,7 @@ func TestRejectedSupportQuestionNotifiesAndSurvivesFollowup(t *testing.T) {
 			b.garminAILastUsed[m.Author.ID.String()] = time.Now().Add(-garminAICooldown)
 			b.onMessageCreate(client, followup)
 			wait(followup.ID.String())
-			if sent.count() != 2 || b.garminAIUserContexts[garminAIUserContextKey(m)].unanswered {
+			if sent.count() != 1 || b.garminAIUserContexts[garminAIUserContextKey(m)].unanswered {
 				t.Fatal("follow-up did not deliver and retain the accepted answer")
 			}
 			b.forgetDeletedGarminContexts(m.ChannelID.String(), m.ID.String())

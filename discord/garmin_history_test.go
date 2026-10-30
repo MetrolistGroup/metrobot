@@ -351,10 +351,8 @@ func TestGarminDeferredHistoryRechecksCancellationVisibilityAndAccess(t *testing
 					}
 					return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "UNDISPATCHED_DRAFT"}}, nil
 				}
-				if mode != "permission revoked" || garminToolResultError(request.Messages[len(request.Messages)-1].Content) == "" {
-					t.Fatal("cancelled/reset data or an unchecked history result reached synthesis")
-				}
-				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "History access is unavailable."}}, nil
+				t.Fatal("failed history lookup reached synthesis")
+				return nil, nil
 			})
 			result, err := b.runGarminAI(ctx, session, message, []cmd.GarminAIMessage{{Role: "user", Content: "summarize the last 20 messages"}})
 			if fetches != 0 {
@@ -370,7 +368,7 @@ func TestGarminDeferredHistoryRechecksCancellationVisibilityAndAccess(t *testing
 					t.Fatalf("reset history was not suppressed: result=%+v, calls=%d, error=%v", result, calls, err)
 				}
 			case "permission revoked":
-				if err != nil || result.Answer != "History access is unavailable." || calls != 3 {
+				if err != nil || !result.Silent || result.Answer != "" || calls != 2 || garminToolResultError(result.Conversation[len(result.Conversation)-1].Content) == "" {
 					t.Fatalf("permission revocation was not rechecked: result=%+v, calls=%d, error=%v", result, calls, err)
 				}
 			}
@@ -677,15 +675,16 @@ func TestGarminHistoryRechecksPermissionAtExecution(t *testing.T) {
 					}
 					return garminHistoryTestCall("read_channel_history", `{"limit":100}`), nil
 				}
-				output := request.Messages[len(request.Messages)-1].Content
-				if !strings.Contains(garminToolResultError(output), "permissions") || strings.Contains(output, "must-not-disclose-canary") || garminToolAvailable(request.Tools, "read_channel_history") {
-					t.Fatalf("permission revocation was not enforced: %s", output)
-				}
-				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "history unavailable"}}, nil
+				t.Fatal("revoked access reached synthesis")
+				return nil, nil
 			})
 			result, err := b.runGarminAI(context.Background(), session, message, []cmd.GarminAIMessage{{Role: "user", Content: "summarize the last 100 messages"}})
-			if err != nil || calls != 2 || result.Answer != "history unavailable" {
+			if err != nil || calls != 1 || !result.Silent || result.Answer != "" {
 				t.Fatalf("revoked access result=%#v, error=%v, calls=%d", result, err, calls)
+			}
+			output := result.Conversation[len(result.Conversation)-1].Content
+			if !strings.Contains(garminToolResultError(output), "permissions") || strings.Contains(output, "must-not-disclose-canary") {
+				t.Fatal("permission failure exposed history")
 			}
 		})
 	}
@@ -746,14 +745,22 @@ func TestGarminHistoryChecksLiveMembership(t *testing.T) {
 					allowed = false
 					return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: privateText}}, nil
 				}
-				if !strings.Contains(garminToolResultError(output), "permissions") || strings.Contains(output, privateText) {
-					t.Fatalf("live permission failure exposed history: %s", output)
-				}
-				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "history unavailable"}}, nil
+				t.Fatal("failed membership check reached synthesis")
+				return nil, nil
 			})
 			result, err := b.runGarminAI(context.Background(), session, message, []cmd.GarminAIMessage{{Role: "user", Content: "summarize the last 100 messages"}})
-			if err != nil || calls != 2 || strings.Contains(result.Answer, privateText) {
+			wantCalls := 1
+			if phase == "before answer" {
+				wantCalls = 2
+			}
+			if err != nil || calls != wantCalls || !result.Silent || result.Answer != "" {
 				t.Fatalf("revoked live membership disclosed history: result=%#v, error=%v, calls=%d", result, err, calls)
+			}
+			if phase != "before answer" {
+				output := result.Conversation[len(result.Conversation)-1].Content
+				if !strings.Contains(garminToolResultError(output), "permissions") || strings.Contains(output, privateText) {
+					t.Fatal("failed membership check exposed history")
+				}
 			}
 			wantChecks, wantFetches := 1, 0
 			if phase == "during fetch" {

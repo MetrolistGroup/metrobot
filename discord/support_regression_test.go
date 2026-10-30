@@ -150,7 +150,7 @@ func TestSupportToolFailureDoesNotExposeUncheckedNoteReference(t *testing.T) {
 	if err != nil || result == nil {
 		t.Fatalf("run: %v", err)
 	}
-	if result.Answer != "What exact crash error do you see?" || result.NoteName != "" || calls != 2 || checks != 1 {
+	if !result.Silent || result.Answer != "" || result.NoteName != "" || calls != 1 || checks != 0 {
 		t.Fatalf("tool failure exposed an unchecked reference: answer=%q note=%q", result.Answer, result.NoteName)
 	}
 }
@@ -235,7 +235,7 @@ func TestSupportChecksFullLongNoteSnapshot(t *testing.T) {
 	}
 }
 
-func TestExplicitSupportEvidenceErrorNotifiesWithoutRewrite(t *testing.T) {
+func TestExplicitSupportEvidenceErrorStaysSilentWithoutRewrite(t *testing.T) {
 	b, client, sent := newSupportDecisionTestBot(t)
 	calls := 0
 	b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
@@ -247,7 +247,7 @@ func TestExplicitSupportEvidenceErrorNotifiesWithoutRewrite(t *testing.T) {
 	})
 	m := supportTestMessage(20)
 	b.handleGarminAI(client, m, []cmd.GarminAIMessage{{Role: "user", Content: m.Content}})
-	if calls != 1 || sent.count() != 1 {
+	if calls != 1 || sent.count() != 0 {
 		t.Fatalf("API failure generated %d calls and %d sends", calls, sent.count())
 	}
 	retained := b.garminAIUserContexts[garminAIUserContextKey(m)]

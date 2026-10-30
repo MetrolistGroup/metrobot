@@ -193,7 +193,7 @@ func TestMixedDevicePagesNeedBothSourcesAndReturnedURLs(t *testing.T) {
 				t.Fatalf("device-page grounding failed: result=%+v, calls=%d, error=%v", result, calls, err)
 			}
 			if mode == "missing source" || mode == "invented URL" {
-				if !strings.Contains(result.Answer, "couldn't verify") {
+				if !result.Silent || result.Answer != "" {
 					t.Fatalf("unsupported device page was accepted: %s", result.Answer)
 				}
 			} else if !strings.Contains(result.Answer, nanoURL) || !strings.Contains(result.Answer, cityURL) || result.ToolCalls != 2 {
@@ -452,9 +452,9 @@ func TestGarminSequentialRequiredSourcesFitRoundBudget(t *testing.T) {
 			if mode == "sources only" {
 				wantCalls, wantTools = 5, 4
 			} else if mode == "budget exhausted" {
-				wantCalls, wantTools, wantAnswer = 6, 6, "i couldn't retrieve all requested public sources, so i can't verify the combined answer."
+				wantCalls, wantTools, wantAnswer = 6, 6, ""
 			}
-			if err != nil || calls != wantCalls || result.ToolCalls != wantTools || result.Answer != wantAnswer {
+			if err != nil || calls != wantCalls || result.ToolCalls != wantTools || result.Answer != wantAnswer || result.Silent != (mode == "budget exhausted") {
 				t.Fatalf("required sources exceeded budget: result=%+v, calls=%d, error=%v", result, calls, err)
 			}
 		})
@@ -485,7 +485,7 @@ func TestNamedDevicePageCannotBeInventedWithoutLookup(t *testing.T) {
 			m := garminHistoryTestMessage()
 			m.Content = "garmin, " + test.prompt
 			result, err := b.runGarminAI(context.Background(), nil, m, []cmd.GarminAIMessage{{Role: "user", Content: test.prompt}})
-			if err != nil || result == nil || calls != 2 || strings.Contains(result.Answer, "INVENTED_PAGE") || !strings.Contains(result.Answer, "couldn't verify") {
+			if err != nil || result == nil || calls != 2 || result.Answer != "" || !result.Silent {
 				t.Fatalf("unsourced page escaped: calls=%d result=%+v err=%v", calls, result, err)
 			}
 		})
