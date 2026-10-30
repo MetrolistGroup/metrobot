@@ -26,8 +26,8 @@ func TestSupportEvidenceLive(t *testing.T) {
 	if err := json.Unmarshal(data, &config); err != nil {
 		t.Fatal(err)
 	}
-	if config.Model != "qwen/qwen3.7-flash" || len(config.Keys) == 0 {
-		t.Fatal("this replay requires Qwen3.7 Flash")
+	if config.Model == "" || len(config.Keys) == 0 {
+		t.Fatal("this replay requires configured keys and a decision model")
 	}
 	client := cmd.NewDecisionsClient(config.Keys, config.Model)
 	var reports []map[string]any

@@ -5,7 +5,7 @@
 Set `openrouter_api_keys`, use a dedicated Decider for initial support triage and evidence checking, and Qwen3.7 Flash for the actual responses:
 
 ```json
-{"openrouter_model": "qwen/qwen3.7-flash", "openrouter_decision_model": "perplexity/pplx-decider-v1.2"}
+{"openrouter_model": "qwen/qwen3.7-flash", "openrouter_decision_model": "perplexity/pplx-decider-flash-v1.2"}
 ```
 
 Decider first determines whether a message needs support and supplies the matching note, if any. Only accepted requests reach Qwen. Qwen drafts are checked before delivery; a failed request stays silent. Ordinary chat uses Qwen directly.
@@ -116,7 +116,7 @@ Paid, non-posting replays:
 
 - `TestSupportAgentLive`: answering and evidence checks, including uploaded-album metadata, downloaded files, donation URLs, fork-access scope, setup and safety cases.
 - `TestSupportNoteMessagesLive`: real routing-to-delivery checks for uploaded metadata, fork/source access and bug reports, with Discord delivery mocked.
-- `TestSupportEvidenceLive`: Qwen-only fixed good/bad answers to check that useful clarifications pass and invented fixes, payment claims and unsafe steps are rejected.
+- `TestSupportEvidenceLive`: fixed good/bad answers using the configured decision model to check that useful clarifications pass and invented fixes, payment claims and unsafe steps are rejected.
 - `TestSupportPlaybackAndCastingLive`: reported Source error, streamed-only follow-up and Wi-Fi casting cases.
 - `TestSupportUpdateMessageLive` and `TestSupportSlowDownloadMessageLive`: full handler replays. The latter also checks inspected patch/build/link provenance.
 
