@@ -503,14 +503,15 @@ func TestGarminAmbientHasOptionalRetrievalAndSupportDoesNot(t *testing.T) {
 		})
 		var token uint64
 		if !support {
-			b.rememberGarminAIContext("previous", message, []cmd.GarminAIMessage{{Role: "user", Content: "hello"}, {Role: "assistant", Content: "hey"}})
+			message.Content = "what do you mean?"
+			seedGarminAmbientExchange(b, message, "hey")
 			token = b.tryBeginGarminAIAmbient(message)
 			defer b.endGarminAIAmbient(message, token)
 			if token == 0 {
 				t.Fatal("eligible ambient conversation was not active")
 			}
 		}
-		result, err := b.runGarminAIWithMode(context.Background(), session, message, []cmd.GarminAIMessage{{Role: "user", Content: "maybe never mind"}}, !support, token)
+		result, err := b.runGarminAIWithMode(context.Background(), session, message, []cmd.GarminAIMessage{{Role: "user", Content: message.Content}}, !support, token)
 		if err != nil || !result.Silent {
 			t.Fatalf("ambient/support discovery=%#v, error=%v", result, err)
 		}

@@ -126,10 +126,11 @@ func TestRunGarminAIAmbientModeCanReplyReactOrStaySilent(t *testing.T) {
 		}}}}, nil
 	})
 	message := &discord.Message{GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Author: discord.User{ID: snowflakeID("100000000000000056")}, Content: "maybe never mind"}
-	bot.rememberGarminAIContext("previous", message, []cmd.GarminAIMessage{{Role: "user", Content: "hello"}, {Role: "assistant", Content: "hey"}})
+	message.Content = "what do you mean?"
+	seedGarminAmbientExchange(bot, message, "hey")
 	ambientToken := bot.tryBeginGarminAIAmbient(message)
 	defer bot.endGarminAIAmbient(message, ambientToken)
-	result, err := bot.runGarminAIWithMode(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "maybe never mind"}}, true, ambientToken)
+	result, err := bot.runGarminAIWithMode(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: message.Content}}, true, ambientToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +174,7 @@ func TestRunGarminAIDiscoversAllAuthorizedToolsWithoutKeywords(t *testing.T) {
 	for _, prompt := range []string{"hey", "yes it does", "and?", "let's play 20 questions", "metrolist playback keeps stopping", "what is the latest Metrolist release?", "who owns NanoReview?", "the GSMArena website is interesting", "the GitHub user interface is interesting", "the GitHub projects interface is interesting", "we are planning offline music projects"} {
 		t.Run(prompt, func(t *testing.T) {
 			b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-				want := garminToolNames(withoutGarminTools(garminAITools, "remember", "do_not_respond"))
+				want := garminToolNames(withoutGarminTools(garminAITools, "remember"))
 				if got := garminToolNames(request.Tools); !reflect.DeepEqual(got, want) {
 					t.Fatalf("keyword-free discovery = %v, want %v", got, want)
 				}
@@ -582,7 +583,7 @@ func TestRunGarminAIStopsRepositoryToolLoop(t *testing.T) {
 	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		calls++
 		names := garminToolNames(request.Tools)
-		if slices.Contains(names, "do_not_respond") || !slices.Contains(names, "get_github_commits") || !strings.Contains(request.Context, "Call one of the supplied repository tools") {
+		if !slices.Contains(names, "do_not_respond") || !slices.Contains(names, "get_github_commits") || !strings.Contains(request.Context, "Call one of the supplied repository tools") {
 			t.Fatalf("repository turn tools = %v, context = %q", names, request.Context)
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{
@@ -605,7 +606,7 @@ func TestRunGarminAIMakesWebSearchAvailableForAnswers(t *testing.T) {
 	}
 	bot := &Bot{garminMemory: memory, garminFirecrawl: firecrawl.NewClient([]string{"key"})}
 	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-		if got, want := garminToolNames(request.Tools), []string{"calculate_math", "search_web", "load_skill", "load_support_guide"}; !reflect.DeepEqual(got, want) {
+		if got, want := garminToolNames(request.Tools), []string{"do_not_respond", "calculate_math", "search_web", "load_skill", "load_support_guide"}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("general answer tools = %v, want %v", got, want)
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "a useful short answer."}}, nil
@@ -852,7 +853,7 @@ func TestRunGarminAIUsesCalculatorBeforeAnswering(t *testing.T) {
 	bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		calls++
 		if calls == 1 {
-			if names := garminToolNames(request.Tools); !reflect.DeepEqual(names, []string{"calculate_math", "load_skill", "load_support_guide"}) || !strings.Contains(request.Context, "calculator tool") {
+			if names := garminToolNames(request.Tools); !reflect.DeepEqual(names, []string{"do_not_respond", "calculate_math", "load_skill", "load_support_guide"}) || !strings.Contains(request.Context, "calculator tool") {
 				t.Fatalf("calculator request = %#v", request)
 			}
 			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{
@@ -1099,7 +1100,7 @@ func TestGarminToolsForRequestFiltersUnavailableCapabilities(t *testing.T) {
 func TestRunGarminAIInvalidDiscordSessionKeepsOnlyUsableTools(t *testing.T) {
 	for _, session := range []*bot.Client{nil, {}} {
 		b := &Bot{garminAI: garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-			want := []string{"calculate_math", "load_skill", "load_support_guide"}
+			want := []string{"do_not_respond", "calculate_math", "load_skill", "load_support_guide"}
 			if got := garminToolNames(request.Tools); !reflect.DeepEqual(got, want) {
 				t.Fatalf("unusable capabilities advertised: %v, want %v", got, want)
 			}

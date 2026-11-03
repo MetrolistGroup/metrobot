@@ -1,9 +1,9 @@
 package discord
 
 import (
+	"regexp"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/disgoorg/disgo/bot"
@@ -58,7 +58,7 @@ func (b *Bot) cancelGarminAIAmbient(m *discord.Message) {
 }
 
 func (b *Bot) stopGarminAIAmbient(m *discord.Message, content string) bool {
-	if !containsAnyGarminPhrase(strings.ToLower(content), "shut up", "stop replying", "stop talking", "be quiet", "go away", "leave me alone") {
+	if !garminAmbientStop(content) {
 		return false
 	}
 	key := garminAIUserContextKey(m)
@@ -82,7 +82,7 @@ func (b *Bot) garminAIAmbientRequestActive(m *discord.Message, token uint64) boo
 func (b *Bot) garminAIAmbientRequestActiveLocked(m *discord.Message, token uint64) bool {
 	key := garminAIUserContextKey(m)
 	context, active := b.garminAIUserContexts[key]
-	return token != 0 && active && b.garminAIAmbientBusy[key] == token && time.Now().Before(context.ambientUntil)
+	return token != 0 && active && b.garminAIAmbientBusy[key] == token && time.Now().Before(context.ambientUntil) && b.garminMessageVisibleLocked(m.ChannelID.String(), m.ID.String()) && b.garminAmbientUninterrupted(m, context.replyID)
 }
 
 func (b *Bot) sendGarminAmbientReply(s *bot.Client, m *discord.Message, content string, conversation []cmd.GarminAIMessage, token uint64) *discord.Message {
@@ -116,11 +116,29 @@ func extractGarminPrompt(s *bot.Client, content string) (string, bool) {
 	}
 	for _, mention := range []string{"<@" + s.ID().String() + ">", "<@!" + s.ID().String() + ">"} {
 		if index := strings.Index(content, mention); index >= 0 {
+			before := strings.TrimSpace(content[:index])
+			after := strings.TrimSpace(content[index+len(mention):])
+			greeting := strings.ToLower(strings.TrimRight(before, ",!"))
+			if before != "" && greeting != "hey" && greeting != "hi" && greeting != "hello" && greeting != "yo" && !strings.HasSuffix(before, ",") {
+				continue
+			}
+			if after != "" && !strings.ContainsRune(",:!?", rune(after[0])) {
+				words := strings.Fields(strings.ToLower(after))
+				switch words[0] {
+				case "is", "was", "has", "had", "does", "seems", "looks", "sucks", "works", "said":
+					continue
+				}
+			}
 			prompt := strings.TrimSpace(content[:index] + content[index+len(mention):])
 			return strings.TrimSpace(strings.TrimLeft(prompt, ",:;-")), true
 		}
 	}
 	return "", false
+}
+
+func garminReplyToBot(s *bot.Client, m *discord.Message) bool {
+	return s != nil && s.Caches != nil && s.ID() != 0 && m != nil && m.ReferencedMessage != nil &&
+		m.ReferencedMessage.Author.ID == s.ID() && garminAIReferenceInScope(m)
 }
 
 func garminAIAmbientTargetsOtherUser(s *bot.Client, m *discord.Message) bool {
@@ -139,83 +157,70 @@ func garminAIAmbientTargetsOtherUser(s *bot.Client, m *discord.Message) bool {
 			return true
 		}
 	}
+	for _, mention := range garminAmbientMentionPattern.FindAllStringSubmatch(m.Content, -1) {
+		if mention[1] != botID {
+			return true
+		}
+	}
 	return false
 }
 
-func garminAIAmbientTextReplyEligible(s *bot.Client, m *discord.Message, content string) bool {
-	if m == nil {
-		return false
-	}
-	botID := ""
-	if s != nil && s.Caches != nil && s.ID() != 0 {
-		botID = s.ID().String()
-	}
-	for _, mention := range m.Mentions {
-		if mention.ID.String() == botID {
-			return true
-		}
-	}
+var garminAmbientMentionPattern = regexp.MustCompile(`<@!?(\d+)>`)
 
-	lower := strings.ToLower(strings.TrimSpace(content))
-	if containsAnyGarminPhrase(lower,
-		"metrobot,", "metrobot:", "hey metrobot", "yo metrobot", "metrobot can", "metrobot could",
-		"metrobot would", "metrobot will", "metrobot what", "metrobot why", "metrobot how") {
+// Only explicit references to the preceding answer qualify without an address.
+var garminAmbientFollowupPattern = regexp.MustCompile(`(?i)^(?:(?:what (?:do|did) you mean|(?:can|could) you (?:please )?(?:explain|clarify) (?:that|your (?:answer|reply))|(?:please )?(?:explain|clarify) (?:that|your (?:answer|reply))|tell me more about that)[.!?]*|why did you (?:say|suggest|recommend) .+)[.!?]*$`)
+
+func garminAmbientNeedsAnswer(content string) bool {
+	content = strings.ToLower(strings.TrimSpace(content))
+	if content == "yes" || content == "yes please" || content == "no" {
 		return true
 	}
-	words := strings.FieldsFunc(lower, func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '\''
-	})
-	hasSecondPerson := false
-	for _, word := range words {
-		if word == "you" || word == "your" || word == "yours" || word == "you're" || word == "youre" {
-			hasSecondPerson = true
-			break
-		}
-	}
-	if len(words) > 0 {
-		directQuestion := containsAnyGarminPhrase(words[0],
-			"what", "why", "how", "when", "where", "which", "who", "can", "could", "would", "should", "is", "are", "do", "does", "did")
-		if (strings.HasSuffix(lower, "?") && (directQuestion || hasSecondPerson)) || (hasSecondPerson && directQuestion) {
-			return true
-		}
-	}
-	return containsAnyGarminPhrase(lower, "explain ", "tell me ", "show me ", "go on", "continue", "elaborate")
+	return garminAmbientFollowupPattern.MatchString(strings.TrimSpace(content))
 }
 
-func (b *Bot) garminAIAmbientFallbackReaction(s *bot.Client, m *discord.Message, content string, token uint64) bool {
-	content = strings.TrimSpace(content)
-	if s == nil || m == nil || content == "" || strings.Contains(content, "?") || strings.HasSuffix(content, "*") || len([]rune(content)) > 100 {
+func garminAmbientStop(content string) bool {
+	switch strings.ToLower(strings.Trim(strings.TrimSpace(content), ".!?")) {
+	case "shut up", "stop replying", "stop talking", "be quiet", "go away", "leave me alone":
+		return true
+	}
+	return false
+}
+
+// Require the known bot reply in the cache so gaps and interleaved conversations fail closed.
+func (b *Bot) garminAmbientUninterrupted(m *discord.Message, replyID string) bool {
+	if m == nil || m.ID == 0 || snowflakeID(replyID) == 0 || m.ID <= snowflakeID(replyID) {
 		return false
 	}
-	words := strings.Fields(content)
-	if len(words) > 12 || garminAIAmbientTargetsOtherUser(s, m) {
-		return false
+	b.messageLogMu.Lock()
+	defer b.messageLogMu.Unlock()
+	found := false
+	for _, message := range b.messageLogCache[m.ChannelID.String()] {
+		if message.ID == replyID {
+			found = message.Bot
+		} else if snowflakeID(message.ID) > snowflakeID(replyID) && message.ID != m.ID.String() {
+			return false
+		}
 	}
-	lower := strings.ToLower(content)
-	emojiName := ""
-	switch {
-	case containsAnyGarminPhrase(lower, "thanks", "thank you", "nice", "cool", "great", "good", "lovely", "alive", "rejoice", "yay", "let's go", "lets go"):
-		emojiName = "happy"
-	case containsAnyGarminPhrase(lower, "wow", "waow", "interesting", "wild", "damn"):
-		emojiName = "interesting"
-	case containsAnyGarminPhrase(lower, "ok", "okay", "got it", "sure"):
-		emojiName = "thumb"
-	case containsAnyGarminPhrase(lower, "lol", "lmao", "lmfao", "haha", "hehe"):
-		emojiName = "kekw"
-	default:
-		return false
-	}
-	interacted, _ := b.addGarminAmbientReactions(s, m, []string{emojiName}, token)
-	return interacted
+	return found
 }
 
 func (b *Bot) garminAIAmbientContinuation(m *discord.Message, prompt string) ([]cmd.GarminAIMessage, bool) {
 	userMessage := b.garminAIUserMessage(m, prompt)
-	if b.garminAI == nil || !garminAIMessageHasInput(userMessage) || m.MessageReference != nil || m.ReferencedMessage != nil {
+	if b.garminAI == nil || !garminAIMessageHasInput(userMessage) || m == nil || m.MessageReference != nil || m.ReferencedMessage != nil || garminAIAmbientTargetsOtherUser(nil, m) {
 		return nil, false
 	}
 	messages, ok := b.garminAIHistory(m, "", true)
-	if !ok {
+	if !ok || len(messages) == 0 {
+		return nil, false
+	}
+	b.garminAIMu.Lock()
+	retained := b.garminAIUserContexts[garminAIUserContextKey(m)]
+	b.garminAIMu.Unlock()
+	previous := messages[len(messages)-1]
+	if previous.Role != "assistant" || previous.Name == garminAIConversationSummaryName || !b.garminAmbientUninterrupted(m, retained.replyID) {
+		return nil, false
+	}
+	if !garminAmbientFollowupPattern.MatchString(strings.TrimSpace(prompt)) && !garminAmbientStop(prompt) && !garminAmbientAnswerToQuestion(previous.Content, prompt) {
 		return nil, false
 	}
 	return append(messages, userMessage), true
@@ -228,4 +233,15 @@ func (b *Bot) rememberGarminAmbientUserContext(m *discord.Message, messages []cm
 		return
 	}
 	b.storeGarminAIContextLocked("", m, messages, time.Now())
+}
+
+func garminAmbientAnswerToQuestion(previous, content string) bool {
+	if !strings.HasSuffix(strings.TrimSpace(previous), "?") {
+		return false
+	}
+	switch strings.ToLower(strings.Trim(strings.TrimSpace(content), ".!?")) {
+	case "yes", "no", "yes please", "no thanks":
+		return true
+	}
+	return false
 }

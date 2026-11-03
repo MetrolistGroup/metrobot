@@ -37,6 +37,11 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 	if ambient && !b.garminAIAmbientRequestActive(m, ambientToken) {
 		return
 	}
+	if ambient {
+		if _, directed := b.garminAIAmbientContinuation(m, garminUserText(messages)); !directed {
+			return
+		}
+	}
 	if len(messages) == 0 || !garminAIMessageHasInput(messages[len(messages)-1]) || b.garminAI == nil {
 		return
 	}

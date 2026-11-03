@@ -67,6 +67,11 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *bot.Client, m *discord
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if ambient {
+		if _, directed := b.garminAIAmbientContinuation(m, garminUserText(messages)); !directed || !b.garminAIAmbientRequestActive(m, ambientToken) {
+			return &garminAIResult{Silent: true}, nil
+		}
+	}
 	appSupport := m.ChannelID.String() == garminAppSupportID
 	systemPrompt := garminAppSupportSystemPrompt
 	if !appSupport {
@@ -164,10 +169,6 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 	webToolRequired := !ambient && garminToolAvailable(tools, "search_web") && (publicSearchRequested ||
 		(garminExplicitWebSearchRequested(prompt) && !garminRepositoryRequested(prompt) && !garminGSMArenaRequested(messages) && garminHardwareToolRequested(messages) == ""))
 	_, explicitlyTriggered := extractGarminPrompt(s, m.Content)
-	// Support must still be able to stop on withdrawn or staff-only requests.
-	if explicitlyTriggered && !appSupport {
-		tools = withoutGarminTools(tools, "do_not_respond")
-	}
 	repositoryToolRequired := (garminRepositorySubject(prompt) || garminAICommitRequestPattern.MatchString(prompt)) && garminRepositoryRequested(prompt) && garminToolAvailable(tools, "get_github_repository")
 	repositoryCommitsRequired := repositoryToolRequired && garminAICommitRequestPattern.MatchString(prompt)
 	requiredPublicTools := len(requiredDeviceTools)
@@ -484,8 +485,7 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 				return result, nil
 			}
 			answer = sanitizeGarminInternalToolDisclosure(garminUserText(messages), answer)
-			if ambient && !garminAIAmbientTextReplyEligible(s, m, garminUserText(messages)) && !garminRefusalAnswer(strings.ToLower(answer)) {
-				result.Interacted = b.garminAIAmbientFallbackReaction(s, m, garminUserText(messages), ambientToken)
+			if ambient && !garminAmbientNeedsAnswer(garminUserText(messages)) {
 				result.Silent = true
 				result.Conversation = conversation
 				return result, nil

@@ -30,7 +30,7 @@ func TestExtractGarminPrompt(t *testing.T) {
 		{name: "metrobot", content: "Metrobot, hello", want: "hello", triggered: true},
 		{name: "metro", content: "metro, hello", want: "hello", triggered: true},
 		{name: "partial name", content: "garminade hello", want: "", triggered: false},
-		{name: "not at start", content: "hey garmin, hello", want: "", triggered: false},
+		{name: "greeting address", content: "hey garmin, hello", want: "hello", triggered: true},
 	}
 
 	for _, tt := range tests {

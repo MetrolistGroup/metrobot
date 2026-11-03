@@ -1,17 +1,22 @@
 package cmd
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
-var garminAITriggers = []string{"garmin,", "garmin ", "metrobot,", "metro,"}
+var garminAddressPattern = regexp.MustCompile(`(?i)^((?:(?:hey|hi|hello|yo)[,!]?\s+)?(?:garmin|metrobot|metro))(?:\s*[:,]\s*|\s+(?:(?:can|could|would|will|do|did|are|have)\s+you\b|(?:what|why|how|when|where|which|who)\b|(?:please|tell|show|explain|help|stop|hello|hi|hey)\b)|[.!?]*$)`)
+var garminTrailingAddressPattern = regexp.MustCompile(`(?i),\s*(?:garmin|metrobot|metro)[.!?]*$`)
 var garminModerationTriggers = []string{"ok garmin", "france modération"}
 
 // ExtractGarminPrompt returns the prompt from a supported case-insensitive text trigger.
 func ExtractGarminPrompt(content string) (string, bool) {
 	content = strings.TrimSpace(content)
-	for _, trigger := range garminAITriggers {
-		if len(content) >= len(trigger) && strings.EqualFold(content[:len(trigger)], trigger) {
-			return strings.TrimSpace(content[len(trigger):]), true
-		}
+	if match := garminAddressPattern.FindStringSubmatchIndex(content); match != nil {
+		return strings.TrimSpace(strings.TrimLeft(content[match[3]:], ",: ")), true
+	}
+	if match := garminTrailingAddressPattern.FindStringIndex(content); match != nil {
+		return strings.TrimSpace(content[:match[0]]), true
 	}
 	return "", false
 }

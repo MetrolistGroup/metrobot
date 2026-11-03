@@ -383,8 +383,9 @@ func TestGarminAIContextAllowsReplyParticipantsButScopesAmbientToUser(t *testing
 	ambient := &discord.Message{
 		GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Author: discord.User{ID: snowflakeID("100000000000000033")},
 	}
-	messages, ok := bot.garminAIAmbientContinuation(ambient, "one more thing")
-	if !ok || len(messages) != 3 || messages[2].Content != "one more thing" {
+	seedGarminAmbientExchange(bot, ambient, "reply")
+	messages, ok := bot.garminAIAmbientContinuation(ambient, "what do you mean?")
+	if !ok || len(messages) != 3 || messages[2].Content != "what do you mean?" {
 		t.Fatalf("ambient continuation = (%#v, %v)", messages, ok)
 	}
 	for _, attempt := range []*discord.Message{{GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Author: discord.User{ID: snowflakeID("100000000000000030")}}, {GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000031"), Author: discord.User{ID: snowflakeID("100000000000000033")}}, {GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Author: discord.User{ID: snowflakeID("100000000000000033")}, MessageReference: &discord.MessageReference{MessageID: snowflakePtr("100000000000000014")}}} {
@@ -392,7 +393,7 @@ func TestGarminAIContextAllowsReplyParticipantsButScopesAmbientToUser(t *testing
 			t.Fatalf("invalid ambient continuation exposed context: %#v", messages)
 		}
 	}
-	if !bot.stopGarminAIAmbient(ambient, "bor shut up") {
+	if !bot.stopGarminAIAmbient(ambient, "shut up") {
 		t.Fatal("ambient stop request was ignored")
 	}
 	if messages, ok := bot.garminAIAmbientContinuation(ambient, "still there?"); ok || messages != nil {
@@ -496,9 +497,9 @@ func TestGarminAIAmbientReplyPolicy(t *testing.T) {
 		"they*":                   false,
 		"what do you mean?":       true,
 		"can you explain that":    true,
-		"metrobot, are you okay?": true,
+		"metrobot, are you okay?": false,
 	} {
-		if got := garminAIAmbientTextReplyEligible(session, message, content); got != want {
+		if got := garminAmbientNeedsAnswer(content); got != want {
 			t.Errorf("ambient reply eligibility for %q = %v, want %v", content, got, want)
 		}
 	}

@@ -68,14 +68,6 @@ func leadingGarminSentences(answer string, limit int) string {
 	return answer
 }
 
-func garminRefusalAnswer(answer string) bool {
-	answer = strings.TrimSpace(answer)
-	return containsAnyGarminPhrase(answer,
-		"i can't do that", "i cant do that", "can't help with that", "cant help with that",
-		"not doing that", "i won't do that", "i wont do that", "won't help", "wont help", "not helping",
-		"not engaging", "keep it civil", "switch to english", "server rules")
-}
-
 func (b *Bot) sendGarminReply(s *bot.Client, m *discord.Message, content string) *discord.Message {
 	content, embed := cmd.ParseGarminReply(content)
 	var embeds []discord.Embed

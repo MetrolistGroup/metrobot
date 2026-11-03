@@ -205,6 +205,13 @@ func (b *Bot) onMessageCreate(s *bot.Client, m *discord.Message) {
 			go b.handleGarminAI(s, m, messages)
 			return
 		}
+		if garminReplyToBot(s, m) && b.garminMessageVisible(m.ChannelID.String(), m.ReferencedMessage.ID.String()) {
+			if b.autoWarnGarminAbuse(s, m, content) {
+				return
+			}
+			go b.handleGarminAI(s, m, []cmd.GarminAIMessage{b.garminAIUserMessage(m, content)})
+			return
+		}
 	}
 
 	// Check for "Ok Garmin" trigger (case insensitive, comma optional)
@@ -226,10 +233,13 @@ func (b *Bot) onMessageCreate(s *bot.Client, m *discord.Message) {
 			go b.handleGarminAutomaticAppSupport(s, m, messages)
 			return
 		}
-		if garminAIAmbientTargetsOtherUser(s, m) || b.stopGarminAIAmbient(m, content) || !garminAIAmbientEnabled(s, m.ChannelID.String()) {
+		if garminAIAmbientTargetsOtherUser(s, m) || !garminAIAmbientEnabled(s, m.ChannelID.String()) {
 			return
 		}
 		if messages, active := b.garminAIAmbientContinuation(m, content); active {
+			if b.stopGarminAIAmbient(m, content) {
+				return
+			}
 			ambientToken := b.tryBeginGarminAIAmbient(m)
 			if ambientToken == 0 {
 				return
