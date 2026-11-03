@@ -190,12 +190,12 @@ func TestLateReplyDoesNotInheritNewerQuestionSources(t *testing.T) {
 func TestPendingQuestionLineageIsBounded(t *testing.T) {
 	b := &Bot{}
 	var messages []cmd.GarminAIMessage
-	for i := 0; i <= 2*garminAICompactionMessages; i++ {
+	for i := 0; i <= garminAIPendingSourceMax; i++ {
 		m := supportTestMessage(20 + i)
 		messages = append(messages, cmd.GarminAIMessage{Role: "user", Content: "question"})
 		messages = b.rememberGarminAIUnansweredContext(m, messages)
 	}
-	m := supportTestMessage(20 + 2*garminAICompactionMessages)
+	m := supportTestMessage(20 + garminAIPendingSourceMax)
 	retained := b.garminAIUserContexts[garminAIUserContextKey(m)]
 	if len(retained.pendingSources) != 1 || len(retained.messages) != 1 || len(messages) != 1 {
 		t.Fatal("lineage overflow kept history without its deletion sources")

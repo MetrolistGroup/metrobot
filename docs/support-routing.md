@@ -73,13 +73,13 @@ A matching inspected change can support a backed-up, in-place nightly trial with
 ## Privacy and limits
 
 - Automatic routing receives up to 4,000 bytes of current text, a visible bot parent up to 1,500 bytes, and four retained turns up to 1,000 bytes each. It excludes profiles, IDs, summaries, reasoning and shared memory.
-- Support generation/compaction gets timestamps rather than Discord profiles.
+- Support generation gets timestamps rather than Discord profiles.
 - Automatic attachment-only requests are ignored. Images are removed from automatic handoff; filenames do not establish their contents. Ask for exact error text when an attachment was not read.
 - Decisions bodies are capped at 64 KiB. The catalog allows 128 eligible notes, 256-byte names and 640-byte descriptions. Invalid IDs, probabilities, distributions, types or envelopes fail closed.
 - Decisions has two routing slots, separate from the three answering-model slots. Routing has a 15-second deadline, with seven-second Qwen attempts (four seconds for Decider), at most one retry, a 100 ms pause and bounded key failover. Qwen evidence checks allow up to 45 seconds with twenty-second attempts, still within the support request's 90-second deadline. Redirects are refused.
 - Provider preferences deny data collection, require supported parameters and sort the default chat route by price. Decision routing keeps its existing provider preferences. Providers still receive the selected text: this is not local inference. No fixed cross-user session ID is sent.
 - Seen/in-flight maps hold at most 1,024 entries. Completed events are deduplicated for ten minutes; failed delivery can retry after normal limits. Deletions cancel affected requests and retain ten-minute tombstones. A send already in progress cannot be recalled.
-- Conversations expire after 24 hours and disappear on restart. Pending questions retain at most 40 source origins; overflowing that limit drops the corresponding history. No timers send unsolicited follow-ups.
+- Conversations keep up to 30 recent messages, starting with a user message, plus an omission note when older messages are dropped. Use `read_channel_history` for older context. They expire after 24 hours and disappear on restart. Pending questions retain at most 40 source origins; overflowing that limit drops the corresponding history. No timers send unsolicited follow-ups.
 - Routing logs record decisions, opaque message IDs, note names, probabilities, latency, model and reported cost, not message bodies or upstream error bodies.
 
 ## Short replies and embeds

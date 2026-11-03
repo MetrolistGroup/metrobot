@@ -14,10 +14,8 @@ import (
 )
 
 func TestGarminPromptSupportsSporadicDetailedConversation(t *testing.T) {
-	for _, expected := range []string{"Prioritize the newest user question", "message dates or time gaps", "at most 350 words", "Never retain individual profiles"} {
-		if !strings.Contains(cmd.GarminSystemPrompt()+garminAIConversationSummaryPrompt, expected) {
-			t.Errorf("conversation prompts missing %q", expected)
-		}
+	if !strings.Contains(cmd.GarminSystemPrompt(), "Prioritize the newest user question") {
+		t.Fatal("conversation prompt lost the latest-request rule")
 	}
 	for _, expected := range []string{"tracked_message_timestamps", "1900 characters", "Explicit summary, conversation-history, or detail requests", "Use web search proactively", "Be explicit about missing history", "Per-user memory is disabled"} {
 		if !strings.Contains(cmd.GarminSystemPrompt(), expected) {
@@ -171,7 +169,7 @@ func TestGarminPromptReadErrorStopsModelRequest(t *testing.T) {
 	}
 }
 
-func TestBasePromptOverrideDoesNotChangeSecondaryPrompts(t *testing.T) {
+func TestBasePromptOverrideDoesNotChangeSupportTriagePrompt(t *testing.T) {
 	database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -184,26 +182,16 @@ func TestBasePromptOverrideDoesNotChangeSecondaryPrompts(t *testing.T) {
 	var prompts []string
 	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		prompts = append(prompts, request.SystemPrompt)
-		if request.SystemPrompt == garminAppSupportTriagePrompt {
-			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{ToolCalls: []cmd.GarminAIToolCall{{Function: cmd.GarminAIFunctionCall{Name: "do_not_respond"}}}}}, nil
+		if request.SystemPrompt != garminAppSupportTriagePrompt {
+			t.Fatalf("triage request got edited base: %q", request.SystemPrompt)
 		}
-		if request.SystemPrompt != garminAIConversationSummaryPrompt {
-			t.Fatalf("secondary request got edited base: %q", request.SystemPrompt)
-		}
-		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: `{"summary":"earlier conversation","shared_memory":[]}`}}, nil
+		return garminHistoryTestCall("do_not_respond", `{}`), nil
 	})
 	message := &discord.Message{ID: snowflakeID("1"), ChannelID: snowflakeID(garminAppSupportID), Author: discord.User{ID: snowflakeID("3")}}
 	if _, err := b.runGarminAppSupportTriage(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: "hello"}}); err != nil {
 		t.Fatal(err)
 	}
-	messages := make([]cmd.GarminAIMessage, garminAICompactionMessages+1)
-	for i := range messages {
-		messages[i] = cmd.GarminAIMessage{Role: "user", Content: "hello"}
-	}
-	if _, err := b.compactGarminAIConversation(context.Background(), messages, "context"); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(prompts, []string{garminAppSupportTriagePrompt, garminAIConversationSummaryPrompt}) {
+	if !reflect.DeepEqual(prompts, []string{garminAppSupportTriagePrompt}) {
 		t.Fatalf("secondary prompts = %#v", prompts)
 	}
 }

@@ -1259,7 +1259,7 @@ func TestGarminDiscordContextIncludesChannelRolesAndPronouns(t *testing.T) {
 		Author: discord.User{ID: snowflakeID("123456789012345678"), Username: "speaker"},
 		Member: &discord.Member{RoleIDs: []snowflake.ID{snowflakeID("100000000000000042"), snowflakeID("100000000000000043")}},
 	}
-	context := (&Bot{}).garminDiscordContextForConversation(session, message, []cmd.GarminAIMessage{{Role: "assistant", Name: garminAIConversationSummaryName, Content: "earlier conversation" + garminAIConversationParticipantsPrefix + "discord_876543210987654321"}, {Role: "user", Name: "discord_123456789012345678", Content: "current message"}})
+	context := (&Bot{}).garminDiscordContextForConversation(session, message, []cmd.GarminAIMessage{{Role: "user", Name: "discord_876543210987654321", Content: "earlier conversation"}, {Role: "user", Name: "discord_123456789012345678", Content: "current message"}})
 	for _, expected := range []string{`"name":"general"`, `"name":"they/them"`, `"pronouns":["they/them"]`, `"tracked_conversation_users"`, `"discord_876543210987654321"`, `"display_name":"History User"`, "brief, direct, useful", "continued bot chat", "#bots"} {
 		if !strings.Contains(context, expected) {
 			t.Errorf("context missing %q: %s", expected, context)

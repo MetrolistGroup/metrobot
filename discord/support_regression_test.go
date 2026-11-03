@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -42,34 +41,6 @@ func TestSupportFollowupWithoutReplyKeepsUserContext(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("standalone follow-up was not classified")
-	}
-}
-
-func TestSupportCompactionDoesNotWriteSharedMemory(t *testing.T) {
-	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	before, err := memory.Read()
-	if err != nil {
-		t.Fatal(err)
-	}
-	b := &Bot{garminMemory: memory, garminAI: garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-		if !strings.Contains(request.Context, "timestamps only") || strings.Contains(request.Context, "PRIVATE_PROFILE") || strings.Contains(request.Context, "current_user") {
-			t.Fatal("support compaction inherited Discord profile context")
-		}
-		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: `{"summary":"Crash investigation remains unresolved","shared_memory":["Metrolist release notes use Markdown"]}`}}, nil
-	})}
-	messages := make([]cmd.GarminAIMessage, garminAICompactionMessages+1)
-	for i := range messages {
-		messages[i] = cmd.GarminAIMessage{Role: "user", Content: "support detail"}
-	}
-	m := supportTestMessage(101)
-	m.Author.Username = "PRIVATE_PROFILE"
-	got := b.prepareGarminAIConversation(context.Background(), nil, m, messages)
-	after, err := memory.Read()
-	if err != nil || after != before || len(got) >= len(messages) {
-		t.Fatal("support compaction failed or changed shared memory")
 	}
 }
 

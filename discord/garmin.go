@@ -12,16 +12,14 @@ import (
 )
 
 const (
-	garminAICooldown           = 3 * time.Second
-	garminAIMaxContent         = 1900
-	garminAIContextTTL         = 24 * time.Hour
-	garminAIAmbientTTL         = 2 * time.Minute
-	garminAIContextMax         = 500
-	garminAICompactionMessages = 20
-	garminAICompactionTimeout  = 20 * time.Second
-	garminAITimeout            = 45 * time.Second
-	garminSupportTimeout       = 90 * time.Second
-	garminAIMaxImages          = 20
+	garminAICooldown     = 3 * time.Second
+	garminAIMaxContent   = 1900
+	garminAIContextTTL   = 24 * time.Hour
+	garminAIAmbientTTL   = 2 * time.Minute
+	garminAIContextMax   = 500
+	garminAITimeout      = 45 * time.Second
+	garminSupportTimeout = 90 * time.Second
+	garminAIMaxImages    = 20
 )
 
 func (b *Bot) handleGarminAI(s *bot.Client, m *discord.Message, messages []cmd.GarminAIMessage) {
@@ -74,7 +72,7 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 	defer close(typingDone)
 	b.keepGarminTyping(s, m.ChannelID.String(), typingDone)
 	supportMode := m.ChannelID.String() == garminAppSupportID
-	messages = b.prepareGarminAIConversation(requestCtx, s, m, messages)
+	messages = boundGarminAIConversation(messages)
 	if requestCtx.Err() != nil {
 		return
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"reflect"
@@ -48,80 +47,6 @@ func lifecycleClient(t *testing.T, send func() (string, error)) *bot.Client {
 
 func lifecycleBot(model cmd.GarminAI) *Bot {
 	return &Bot{Logger: zap.NewNop(), garminAI: model, garminAISlots: make(chan struct{}, 2), garminAILastUsed: make(map[string]time.Time)}
-}
-
-func TestGarminLifecycleCompactionRejectsMalformedAndEmptySummaries(t *testing.T) {
-	for _, content := range []string{"", " ", "unstructured text", `{}`, `null`, `{"summary":" "}`, `{"summary":5}`, `{"summary":"truncated`, `{"shared_memory":["not evidence"]}`, `{"summary":"` + strings.Repeat("word ", 351) + `"}`} {
-		t.Run(content[:min(len(content), 40)], func(t *testing.T) {
-			messages := []cmd.GarminAIMessage{{Role: "assistant", Name: garminAIConversationSummaryName, Content: "earlier unresolved question"}}
-			for i := range garminAICompactionMessages + 1 {
-				messages = append(messages, cmd.GarminAIMessage{Role: "user", Content: fmt.Sprint(i)})
-			}
-			original := copyGarminAIMessages(messages)
-			b := lifecycleBot(garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: content}}, nil
-			}))
-			got := b.prepareGarminAIConversation(context.Background(), nil, lifecycleMessage("100"), messages)
-			if !reflect.DeepEqual(got, original) || !reflect.DeepEqual(messages, original) {
-				t.Fatal("invalid summary destroyed recent messages or the prior summary")
-			}
-		})
-	}
-	if summary := parseGarminAICompaction("```json\n{\"summary\":\"valid summary\",\"shared_memory\":[]}\n```"); summary != "valid summary" {
-		t.Fatalf("valid fenced summary rejected: %q", summary)
-	}
-}
-
-func TestGarminLifecycleCompactionFailureBoundsHonestlyWithoutSplittingExchange(t *testing.T) {
-	for _, priorSummary := range []bool{false, true} {
-		var messages []cmd.GarminAIMessage
-		if priorSummary {
-			messages = append(messages, cmd.GarminAIMessage{Role: "assistant", Name: garminAIConversationSummaryName, Content: "prior decisions"})
-		}
-		for i := range 23 {
-			messages = append(messages, cmd.GarminAIMessage{Role: "user", Content: fmt.Sprintf("question %d", i)}, cmd.GarminAIMessage{Role: "assistant", Content: fmt.Sprintf("answer %d", i)})
-		}
-		messages = append(messages, cmd.GarminAIMessage{Role: "user", Content: "current unresolved request"})
-		b := lifecycleBot(garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-			return nil, errors.New("offline failure")
-		}))
-		got := b.prepareGarminAIConversation(context.Background(), nil, lifecycleMessage("100"), messages)
-		if len(got) > 2*garminAICompactionMessages+1 || got[0].Name != garminAIConversationSummaryName || !strings.Contains(got[0].Content, "omitted") || got[1].Role != "user" || got[len(got)-1].Content != "current unresolved request" {
-			t.Fatalf("incorrect fallback: %#v", got)
-		}
-		if priorSummary && !strings.Contains(got[0].Content, "prior decisions") {
-			t.Fatal("fallback discarded the prior summary")
-		}
-		if again := boundGarminAIConversation(got); !reflect.DeepEqual(again, got) {
-			t.Fatal("bounding is not stable")
-		}
-	}
-}
-
-func TestGarminLifecycleCompactionCancellationAndContext(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	messages := []cmd.GarminAIMessage{{Role: "assistant", Name: garminAIConversationSummaryName, Content: "earlier summary"}}
-	for i := range garminAICompactionMessages + 1 {
-		messages = append(messages, cmd.GarminAIMessage{Role: "user", Content: fmt.Sprint(i), Images: []string{"https://example.invalid/image"}, Reasoning: "private reasoning", ReasoningContent: "private reasoning", ReasoningDetails: json.RawMessage(`{"private":true}`)})
-	}
-	messages[len(messages)-1].Content = "what about the unresolved question?"
-	b := lifecycleBot(garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-		if request.Messages[0].Content != "earlier summary" || !strings.Contains(request.Context, messages[len(messages)-1].Content) {
-			t.Error("compaction lost prior summary or current request context")
-		}
-		for _, m := range request.Messages {
-			if len(m.Images) != 0 || m.Reasoning != "" || m.ReasoningContent != "" || len(m.ReasoningDetails) != 0 {
-				t.Error("compaction retained image or reasoning data")
-			}
-		}
-		cancel()
-		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: `{"summary":"late summary","shared_memory":[]}`}}, nil
-	}))
-	got, err := b.compactGarminAIConversation(ctx, messages, "")
-	if !errors.Is(err, context.Canceled) || got != nil || messages[1].Reasoning == "" {
-		t.Fatalf("late compaction accepted or input mutated: %#v, %v", got, err)
-	}
 }
 
 func TestGarminLifecycleSnapshotsDoNotAliasMutableFields(t *testing.T) {

@@ -260,7 +260,7 @@ func (b *Bot) runSupportDecisionAgent(s *bot.Client, m *discord.Message, message
 	for i := range messages {
 		messages[i].Images = nil
 	}
-	messages = b.prepareGarminAIConversation(requestCtx, s, m, messages)
+	messages = boundGarminAIConversation(messages)
 	messages = b.rememberGarminAIUnansweredContext(m, messages)
 	ctx, cancelAgent := context.WithTimeout(requestCtx, garminSupportTimeout)
 	defer cancelAgent()

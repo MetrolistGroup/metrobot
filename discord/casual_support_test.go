@@ -38,33 +38,29 @@ func TestNonSupportChannelsUseOnlyAnsweringModel(t *testing.T) {
 	}
 }
 
-func TestNonSupportCompactionSkipsDecider(t *testing.T) {
-	sends, summaries, answers := 0, 0, 0
+func TestNonSupportLongConversationUsesOnlyAnsweringModel(t *testing.T) {
+	sends, answers := 0, 0
 	client := lifecycleClient(t, func() (string, error) {
 		sends++
 		return `{"id":"300","channel_id":"5"}`, nil
 	})
 	b := lifecycleBot(garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-		if request.SystemPrompt == garminAIConversationSummaryPrompt {
-			summaries++
-			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: `{"summary":"The user asked about Metrolist login."}`}}, nil
-		}
 		answers++
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "Login is supported."}}, nil
 	}))
 	b.garminDecisions = supportDecisionTestFunc(func(context.Context, cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
-		t.Fatal("non-support compaction or generation called Decider")
+		t.Fatal("non-support generation called Decider")
 		return nil, nil
 	})
-	messages := make([]cmd.GarminAIMessage, garminAICompactionMessages+1)
+	messages := make([]cmd.GarminAIMessage, garminAIConversationWindow+10)
 	for i := range messages {
 		messages[i] = cmd.GarminAIMessage{Role: "user", Content: "Metrolist login"}
 	}
 	m := lifecycleMessage("100")
 	m.Content = "garmin, explain login"
 	b.handleGarminAI(client, m, messages)
-	if summaries != 1 || answers != 1 || sends != 1 {
-		t.Fatalf("summaries=%d answers=%d sends=%d", summaries, answers, sends)
+	if answers != 1 || sends != 1 {
+		t.Fatalf("answers=%d sends=%d", answers, sends)
 	}
 }
 
