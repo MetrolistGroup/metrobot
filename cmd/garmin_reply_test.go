@@ -79,12 +79,19 @@ func TestGarminEmbedLimits(t *testing.T) {
 func TestGarminEmbedRejectsMalformedBlocks(t *testing.T) {
 	for _, input := range []string{
 		"ordinary text", "```json\n{\"title\":\"t\"}\n```", "```embed\n{\"title\":\"t\"}",
-		"```embed\n{}\n```", "```embed\nnull\n```", "```embed\n{\"title\":\"t\",\"image\":{\"url\":\"https://example.com\"}}\n```",
+		"```embed\n{}\n```", "```embed\nnull\n```",
 		"```embed\n{\"title\":\"t\",\"color\":\"red\"}\n```", "```embed\n{\"title\":\"t\"}\n```\nextra",
 		"```embed\n{\"title\":\"t\"}{}\n```", "inline ```embed\n{\"title\":\"t\"}\n```",
 	} {
 		if content, embed := ParseGarminReply(input); content != input || embed != nil {
 			t.Errorf("malformed block changed: %q, %#v", content, embed)
 		}
+	}
+}
+
+func TestGarminEmbedAcceptsFooterAndIgnoresUnknownKeys(t *testing.T) {
+	content, embed := ParseGarminReply("here you go\n```embed\n{\"title\":\"Test\",\"footer\":{\"text\":\"Metrolist\"},\"image\":{\"url\":\"https://example.com\"}}\n```")
+	if content != "here you go" || embed == nil || embed.Title != "Test" || embed.Footer == nil || embed.Footer.Text != "Metrolist" {
+		t.Fatalf("content %q, embed %#v", content, embed)
 	}
 }

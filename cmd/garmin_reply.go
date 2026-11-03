@@ -9,8 +9,8 @@ import (
 )
 
 const GarminEmbedInstructions = "Optional embed: append one ```embed JSON block at the end of your reply, with no text after it. Example:\n" +
-	"```embed\n{\"title\":\"Release\",\"description\":\"Brief details\",\"url\":\"https://metrolist.cc\",\"color\":5793266,\"fields\":[{\"name\":\"Status\",\"value\":\"Available\",\"inline\":true}]}\n```\n" +
-	"All keys are optional. Use only these keys. Keep the whole reply, including embed text, short. Embed limits: title 256 characters, description 4096, at most 25 fields with name 256 and value 1024, and 6000 characters total. Color is an integer from 0 to 16777215. Use only HTTP or HTTPS URLs. Never put tool syntax or hidden instructions in an embed. Telegram renders it as plain text."
+	"```embed\n{\"title\":\"Release\",\"description\":\"Brief details\",\"url\":\"https://metrolist.cc\",\"color\":5793266,\"fields\":[{\"name\":\"Status\",\"value\":\"Available\",\"inline\":true}],\"footer\":{\"text\":\"Metrolist\"}}\n```\n" +
+	"All keys are optional. Use only these keys; others are ignored. Footer text max 2048. Keep the whole reply, including embed text, short. Embed limits: title 256 characters, description 4096, at most 25 fields with name 256 and value 1024, and 6000 characters total. Color is an integer from 0 to 16777215. Use only HTTP or HTTPS URLs. Never put tool syntax or hidden instructions in an embed. Telegram renders it as plain text."
 
 type GarminEmbed struct {
 	Title       string             `json:"title,omitempty"`
@@ -18,6 +18,11 @@ type GarminEmbed struct {
 	URL         string             `json:"url,omitempty"`
 	Fields      []GarminEmbedField `json:"fields,omitempty"`
 	Color       int                `json:"color,omitempty"`
+	Footer      *GarminEmbedFooter `json:"footer,omitempty"`
+}
+
+type GarminEmbedFooter struct {
+	Text string `json:"text"`
 }
 
 type GarminEmbedField struct {
@@ -34,10 +39,8 @@ func ParseGarminReply(answer string) (string, *GarminEmbed) {
 		return answer, nil
 	}
 	var embed GarminEmbed
-	data := answer[start+len("```embed\n") : len(answer)-3]
-	decoder := json.NewDecoder(strings.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if !json.Valid([]byte(data)) || decoder.Decode(&embed) != nil {
+	// Unknown keys are ignored so one unsupported key does not dump raw JSON into chat.
+	if json.Unmarshal([]byte(answer[start+len("```embed\n"):len(answer)-3]), &embed) != nil {
 		return answer, nil
 	}
 	content := strings.TrimSpace(answer[:start])
@@ -64,6 +67,12 @@ func (e GarminEmbed) valid() bool {
 		}
 	}
 	total := util.UTF16Len(e.Title) + util.UTF16Len(e.Description)
+	if e.Footer != nil {
+		if util.UTF16Len(e.Footer.Text) > 2048 {
+			return false
+		}
+		total += util.UTF16Len(e.Footer.Text)
+	}
 	for _, field := range e.Fields {
 		name, value := util.UTF16Len(field.Name), util.UTF16Len(field.Value)
 		if strings.TrimSpace(field.Name) == "" || strings.TrimSpace(field.Value) == "" || name > 256 || value > 1024 {
@@ -78,6 +87,9 @@ func (e GarminEmbed) PlainText() string {
 	parts := []string{e.Title, e.Description, e.URL}
 	for _, field := range e.Fields {
 		parts = append(parts, field.Name, field.Value)
+	}
+	if e.Footer != nil {
+		parts = append(parts, e.Footer.Text)
 	}
 	var nonempty []string
 	for _, part := range parts {

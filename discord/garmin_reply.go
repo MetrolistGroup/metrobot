@@ -76,6 +76,9 @@ func (b *Bot) sendGarminReply(s *bot.Client, m *discord.Message, content string)
 		for _, field := range embed.Fields {
 			e.Fields = append(e.Fields, discord.EmbedField{Name: field.Name, Value: field.Value, Inline: ptr(field.Inline)})
 		}
+		if embed.Footer != nil && strings.TrimSpace(embed.Footer.Text) != "" {
+			e.Footer = &discord.EmbedFooter{Text: embed.Footer.Text}
+		}
 		embeds = []discord.Embed{e}
 	}
 	reply, err := s.Rest.CreateMessage(m.ChannelID, discord.MessageCreate{
