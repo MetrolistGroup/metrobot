@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/disgoorg/disgo/bot"
@@ -14,7 +13,7 @@ import (
 )
 
 // Support must not inherit the casual persona, prompt overrides, or shared memory.
-const garminAppSupportSystemPrompt = `You are Metrobot in the official Metrolist Discord. Help with the latest user message. Keep routine answers under 60 words unless the user asks for detail; use a short list for actual steps.
+const garminAppSupportSystemPrompt = `You are Metrobot in the official Metrolist Discord. Help with the latest user message.
 
 - Follow the user's current topic. A greeting is not a request to retry an earlier question. If they say "answer", answer their pending question. Use earlier messages only when the current message refers to them. Never append advice about an unrelated earlier topic.
 - Prefer a relevant saved note before technical guides: notes contain ready-to-send answers. Read it before answering. Use the rpc note for Discord connection/status questions; load its guide only for details the note does not cover. Use get_note with name=kmp for KMP release status, tester/source access or forking; source code and platform requirements do not prove a public release exists. Use playback for streamed-song/Source errors, casting for Wi-Fi casting, discovery for recommendations, the uploads note for uploaded-album artwork or metadata, and the report note for what to include in a bug report. Follow the note's diagnostic question before guessing a cause.
@@ -33,15 +32,6 @@ Hand off questions and the author's own unresolved app problems, even without a 
 var garminAppSupportTriageTools = []cmd.GarminAITool{
 	garminTool("handoff_to_app_support_agent", "Hand the final current message to the Metrolist support agent. Use only for a clear request that the agent can usefully answer.", `{"type":"object","properties":{},"additionalProperties":false}`),
 	garminTool("do_not_respond", "Ignore the final current message without replying or reacting.", `{"type":"object","properties":{},"additionalProperties":false}`),
-}
-
-var garminAppSupportTerms = map[string]struct{}{
-	"android": {}, "antivirus": {}, "apk": {}, "app": {}, "backup": {}, "browser": {}, "buffer": {},
-	"cache": {}, "cast": {}, "chrome": {}, "crash": {}, "donat": {}, "donate": {}, "donation": {}, "donor": {},
-	"download": {}, "firefox": {}, "huorong": {}, "install": {}, "kmp": {}, "library": {}, "login": {}, "lyric": {},
-	"malware": {}, "metrolist": {}, "offline": {}, "playback": {}, "playlist": {}, "proof": {}, "proxy": {},
-	"queue": {}, "restart": {}, "restore": {}, "role": {}, "sponsor": {}, "stream": {}, "sync": {}, "tester": {},
-	"theme": {}, "update": {}, "version": {}, "virus": {}, "virustotal": {}, "vpn": {}, "widget": {}, "youtube": {},
 }
 
 func (b *Bot) handleGarminAutomaticAppSupport(s *bot.Client, m *discord.Message, messages []cmd.GarminAIMessage) {
@@ -158,35 +148,4 @@ func (b *Bot) sendGarminAppSupportReply(s *bot.Client, m *discord.Message, conte
 		return nil, ""
 	}
 	return reply, content
-}
-
-func garminAppSupportIntent(content string) bool {
-	for _, token := range garminSupportTokens(content) {
-		if _, ok := garminAppSupportTerms[token]; ok {
-			return true
-		}
-	}
-	return false
-}
-
-func garminSupportTokens(content string) []string {
-	fields := strings.FieldsFunc(strings.ToLower(content), func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
-	})
-	for index, field := range fields {
-		fields[index] = garminSupportTokenRoot(field)
-	}
-	return fields
-}
-
-func garminSupportTokenRoot(token string) string {
-	for _, suffix := range []string{"ing", "ed", "es"} {
-		if len(token) > len(suffix)+3 && strings.HasSuffix(token, suffix) {
-			return strings.TrimSuffix(token, suffix)
-		}
-	}
-	if len(token) > 4 && strings.HasSuffix(token, "s") && !strings.HasSuffix(token, "ss") && !strings.HasSuffix(token, "us") && !strings.HasSuffix(token, "is") {
-		return strings.TrimSuffix(token, "s")
-	}
-	return token
 }

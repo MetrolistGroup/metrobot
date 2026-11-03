@@ -207,3 +207,43 @@ func TestBasePromptOverrideDoesNotChangeSecondaryPrompts(t *testing.T) {
 		t.Fatalf("secondary prompts = %#v", prompts)
 	}
 }
+
+func TestGarminReplyStyleHasOneSourceInEveryAgentPrompt(t *testing.T) {
+	for _, mode := range []string{"default", "general", "support", "override"} {
+		t.Run(mode, func(t *testing.T) {
+			b := lifecycleBot(nil)
+			m := lifecycleMessage("102")
+			switch mode {
+			case "general":
+				m.ChannelID = snowflakeID(garminGeneralID)
+			case "support":
+				m.ChannelID = snowflakeID(garminAppSupportID)
+			case "override":
+				database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer database.Close()
+				b.DB = database
+				if err := database.SetGarminSystemPrompt("admin's base prompt"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+				if count := strings.Count(request.SystemPrompt, cmd.GarminReplyStyle); count != 1 {
+					t.Fatalf("shared reply style appears %d times", count)
+				}
+				if mode != "support" && strings.Count(request.SystemPrompt, cmd.GarminWebLookupRule) != 1 {
+					t.Fatal("web lookup policy is missing or duplicated")
+				}
+				if strings.Contains(request.SystemPrompt, "no preamble, caveats") {
+					t.Fatal("prompt suppresses necessary conditions")
+				}
+				return garminHistoryTestCall("do_not_respond", `{}`), nil
+			})
+			if _, err := b.runGarminAI(context.Background(), nil, m, []cmd.GarminAIMessage{{Role: "user", Content: "hey"}}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
