@@ -109,17 +109,13 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 		systemPrompt += "\n\n" + cmd.GarminEmbedInstructions
 	}
 	conversation := append([]cmd.GarminAIMessage(nil), copyGarminAIMessages(messages)...)
+	boundGarminEmojiImages(conversation)
 	if s == nil || s.Rest == nil {
 		prepareGarminGIFs(ctx, nil, conversation, b.Logger)
 	} else {
 		prepareGarminGIFs(ctx, s.Rest.HTTPClient(), conversation, b.Logger)
 	}
-	var discordContext string
-	if appSupport {
-		discordContext = garminSupportDiscordContext(messages)
-	} else {
-		discordContext = b.garminDiscordContextForConversation(s, m, messages)
-	}
+	discordContext := b.garminDiscordContextForConversation(s, m, messages)
 	discordContext += "\nRequest time (UTC): " + time.Now().UTC().Format(time.RFC3339)
 	webQuery := garminWebSearchQuery(messages)
 	publicLookupSources := []string{garminUserText(messages), webQuery}
@@ -400,6 +396,7 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 		}
 		started := time.Now()
 		disableReasoning := finalOnly || result.ToolCalls > 0
+		boundGarminEmojiImages(conversation)
 		completion, err := b.garminAI.Complete(ctx, cmd.GarminAIRequest{
 			DisableReasoning: disableReasoning,
 			SystemPrompt:     systemPrompt,

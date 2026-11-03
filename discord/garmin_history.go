@@ -196,6 +196,9 @@ func (b *Bot) readGarminChannelMessagesContext(ctx context.Context, s *bot.Clien
 			"content_truncated": content != message.Content,
 			"timestamp":         message.CreatedAt.UTC().Format(time.RFC3339),
 		}
+		if emojis := garminMessageEmojis(&message); len(emojis) > 0 {
+			result["emojis"] = emojis
+		}
 		if snowflakeID(guildID) != 0 {
 			result["url"] = discordMessageURL(guildID, channelID, message.ID.String())
 		}

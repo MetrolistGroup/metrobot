@@ -568,7 +568,7 @@ func TestGarminEmojiToolsListAndViewLiveGuildEmojis(t *testing.T) {
 		t.Fatalf("listed emojis = %q, error %v", listed, err)
 	}
 	viewed, err := bot.viewGarminGuildEmoji(session, "100000000000000012", "soggy~1")
-	if err != nil || !strings.Contains(viewed, `"image_url":"https://cdn.discordapp.com/emojis/2.gif`) {
+	if err != nil || !strings.Contains(viewed, `"image_url":"https://cdn.discordapp.com/emojis/2.png`) {
 		t.Fatalf("viewed emoji = %q, error %v", viewed, err)
 	}
 	if images := garminAIToolImageURLs("view_discord_emoji", viewed); len(images) != 1 {

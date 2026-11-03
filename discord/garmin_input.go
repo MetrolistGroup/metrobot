@@ -12,12 +12,20 @@ import (
 
 func (b *Bot) garminAIUserMessage(m *discord.Message, prompt string) cmd.GarminAIMessage {
 	message := garminAIUserMessage(m, prompt)
-	if m == nil || m.ReferencedMessage == nil || !garminAIReferenceInScope(m) || !b.garminMessageVisible(m.ChannelID.String(), m.ReferencedMessage.ID.String()) {
+	if !b.garminAIReferenceVisible(m) {
 		return message
 	}
 	reference := m.ReferencedMessage
-	message.Images = uniqueGarminAIImageURLs(append(message.Images, garminAIImageURLs(reference)...), garminAIMaxImages)
-	return message
+	referenceImages := append(garminAIImageURLs(reference), garminAIEmojiImageURLs(reference)...)
+	message.Images = uniqueGarminAIImageURLs(append(message.Images, referenceImages...), garminAIMaxImages)
+	bounded := []cmd.GarminAIMessage{message}
+	boundGarminEmojiImages(bounded)
+	return bounded[0]
+}
+
+func (b *Bot) garminAIReferenceVisible(m *discord.Message) bool {
+	return m != nil && m.ReferencedMessage != nil && garminAIReferenceInScope(m) &&
+		(b == nil || b.garminMessageVisible(m.ChannelID.String(), m.ReferencedMessage.ID.String()))
 }
 
 func garminAIReferenceInScope(m *discord.Message) bool {
@@ -47,7 +55,7 @@ func garminAIUserMessage(m *discord.Message, prompt string) cmd.GarminAIMessage 
 		Role:    "user",
 		Name:    name,
 		Content: strings.TrimSpace(prompt),
-		Images:  garminAIImageURLs(m),
+		Images:  uniqueGarminAIImageURLs(append(garminAIImageURLs(m), garminAIEmojiImageURLs(m)...), garminAIMaxImages),
 	}
 	if message.Content == "" && len(message.Images) > 0 {
 		message.Content = "what is in this image?"
@@ -139,6 +147,9 @@ func garminAIToolImageURLs(toolName, output string) []string {
 }
 
 func uniqueGarminAIImageURLs(images []string, limit int) []string {
+	if len(images) == 0 || limit <= 0 {
+		return nil
+	}
 	seen := make(map[string]struct{}, len(images))
 	unique := make([]string, 0, min(len(images), limit))
 	for _, imageURL := range images {

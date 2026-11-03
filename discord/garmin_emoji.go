@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/discord"
 )
@@ -15,6 +16,105 @@ var (
 	garminAICustomShortcodePattern = regexp.MustCompile(`:([A-Za-z_~][A-Za-z0-9_~]{1,63}):`)
 	garminAILooseShortcodePattern  = regexp.MustCompile(`(^|[[:space:]]):([A-Za-z_~][A-Za-z0-9_~]{1,63})([[:space:].,!?;]|$)`)
 )
+
+const (
+	garminAIMaxEmojiImages = 4
+	garminAIMaxEmojiInputs = 20
+)
+
+type garminEmojiInput struct {
+	Source   string `json:"source"`
+	Name     string `json:"name"`
+	ID       string `json:"id,omitempty"`
+	Animated bool   `json:"animated,omitempty"`
+	Count    int    `json:"count,omitempty"`
+	ImageURL string `json:"image_url,omitempty"`
+}
+
+func (b *Bot) garminEmojiContext(m *discord.Message) map[string][]garminEmojiInput {
+	context := make(map[string][]garminEmojiInput)
+	if emojis := garminMessageEmojis(m); len(emojis) > 0 {
+		context["current_message"] = emojis
+	}
+	if b.garminAIReferenceVisible(m) {
+		if emojis := garminMessageEmojis(m.ReferencedMessage); len(emojis) > 0 {
+			context["replied_to_message"] = emojis
+		}
+	}
+	return context
+}
+
+func garminMessageEmojis(m *discord.Message) []garminEmojiInput {
+	if m == nil {
+		return nil
+	}
+	var inputs []garminEmojiInput
+	seen := make(map[string]bool)
+	add := func(source string, emoji discord.Emoji, count int) {
+		if len(inputs) == garminAIMaxEmojiInputs || len(emoji.Name) > 64 || emoji.Name == "" && emoji.ID == 0 {
+			return
+		}
+		key := source + ":" + emoji.ID.String() + ":" + emoji.Name
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		input := garminEmojiInput{Source: source, Name: emoji.Name, Animated: emoji.Animated, Count: count}
+		if emoji.ID != 0 {
+			input.ID = emoji.ID.String()
+			input.ImageURL = garminEmojiPreviewURL(emoji)
+		}
+		inputs = append(inputs, input)
+	}
+	for _, match := range garminAICustomEmojiPattern.FindAllStringSubmatch(m.Content, garminAIMaxEmojiInputs) {
+		if id := snowflakeID(match[2]); id != 0 {
+			add("content", discord.Emoji{ID: id, Name: match[1], Animated: strings.HasPrefix(match[0], "<a:")}, 0)
+		}
+	}
+	for _, reaction := range m.Reactions {
+		if reaction.Count > 0 {
+			add("reaction", reaction.Emoji, reaction.Count)
+		}
+		if len(inputs) == garminAIMaxEmojiInputs {
+			break
+		}
+	}
+	return inputs
+}
+
+func garminEmojiPreviewURL(emoji discord.Emoji) string {
+	// Static previews keep animated emojis within the same 128-pixel vision budget.
+	emoji.Animated = false
+	return garminEmojiImageURL(&emoji)
+}
+
+func garminAIEmojiImageURLs(m *discord.Message) []string {
+	var images []string
+	for _, emoji := range garminMessageEmojis(m) {
+		if emoji.ImageURL != "" {
+			images = append(images, emoji.ImageURL)
+		}
+	}
+	return uniqueGarminAIImageURLs(images, garminAIMaxEmojiImages)
+}
+
+func boundGarminEmojiImages(messages []cmd.GarminAIMessage) {
+	seen := make(map[string]bool)
+	// Prefer the latest message and its reply over retained emoji images.
+	for i := len(messages) - 1; i >= 0; i-- {
+		images := messages[i].Images[:0]
+		for _, imageURL := range messages[i].Images {
+			if strings.HasPrefix(imageURL, "https://cdn.discordapp.com/emojis/") {
+				if seen[imageURL] || len(seen) == garminAIMaxEmojiImages {
+					continue
+				}
+				seen[imageURL] = true
+			}
+			images = append(images, imageURL)
+		}
+		messages[i].Images = images
+	}
+}
 
 func garminAIEmojiByName(s *bot.Client, guildID, name string) (*discord.Emoji, bool) {
 	emojis, err := garminLiveGuildEmojis(s, guildID)
@@ -150,7 +250,7 @@ func (b *Bot) viewGarminGuildEmoji(s *bot.Client, guildID, name string) (string,
 		"name":      emoji.Name,
 		"shortcode": ":" + emoji.Name + ":",
 		"animated":  emoji.Animated,
-		"image_url": garminEmojiImageURL(emoji),
+		"image_url": garminEmojiPreviewURL(*emoji),
 	}), nil
 }
 

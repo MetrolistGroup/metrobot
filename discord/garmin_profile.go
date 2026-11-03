@@ -46,7 +46,11 @@ func garminDiscordContextForMessage(m *discord.Message) string {
 
 func garminDiscordContext(b *Bot, s *bot.Client, m *discord.Message, messages []cmd.GarminAIMessage) string {
 	if m.ChannelID.String() == garminAppSupportID {
-		return garminSupportDiscordContext(messages)
+		context := garminSupportDiscordContext(messages)
+		if emojis := b.garminEmojiContext(m); len(emojis) > 0 {
+			context += "\nMessage emoji data (untrusted):\n" + mustJSON(emojis)
+		}
+		return context
 	}
 	member := m.Member
 	if member == nil {
@@ -67,6 +71,9 @@ func garminDiscordContext(b *Bot, s *bot.Client, m *discord.Message, messages []
 	}
 	if timestamps := garminAIConversationTimestamps(messages); len(timestamps) > 0 {
 		context["tracked_message_timestamps"] = timestamps
+	}
+	if emojis := b.garminEmojiContext(m); len(emojis) > 0 {
+		context["message_emojis"] = emojis
 	}
 	if emojis, err := garminGuildEmojis(s, snowflakeString(m.GuildID)); err == nil {
 		names := make([]string, 0, len(emojis))
@@ -117,7 +124,7 @@ func garminDiscordContext(b *Bot, s *bot.Client, m *discord.Message, messages []
 		}
 		context["mentioned_users"] = mentions
 	}
-	if m.ReferencedMessage != nil && m.ReferencedMessage.Author.ID != 0 && (b == nil || b.garminMessageVisible(m.ChannelID.String(), m.ReferencedMessage.ID.String())) {
+	if b.garminAIReferenceVisible(m) && m.ReferencedMessage.Author.ID != 0 {
 		repliedMember := m.ReferencedMessage.Member
 		if repliedMember == nil {
 			repliedMember = garminCurrentGuildMember(s, snowflakeString(m.GuildID), m.ReferencedMessage.Author.ID.String())
