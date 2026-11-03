@@ -149,19 +149,23 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 		return
 	}
 	if m.ChannelID.String() == garminAppSupportID {
+		if !result.VerbatimNote {
+			result.Answer = truncateGarminAIResponse(result.Answer)
+		}
 		conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: result.Answer, Timestamp: time.Now().UTC()})
 		supportCompleted = b.sendGarminAppSupportReplyAndRememberIfVisible(s, m, result.Answer, conversation, result.NoteName) != nil
 		return
 	}
-	result.Answer = enforceGarminChannelReply(garminRedirectChannelID(s, m.ChannelID.String()), result.Answer, garminUserText(messages))
+	answer, embed := cmd.ParseGarminReply(result.Answer)
+	result.Answer = enforceGarminChannelReply(garminRedirectChannelID(s, m.ChannelID.String()), answer, garminUserText(messages))
 
 	renderedAnswer := renderGarminGuildEmojis(s, snowflakeString(m.GuildID), result.Answer)
 	if strings.TrimSpace(renderedAnswer) == "" && strings.TrimSpace(result.Answer) != "" {
 		return
 	}
 	result.Answer = renderedAnswer
-	formatted := formatAndTruncateGarminAIResult(result)
-	conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: formatted, Timestamp: time.Now().UTC()})
+	formatted := cmd.FormatGarminReply(formatAndTruncateGarminAIResult(result), embed)
+	conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: cmd.GarminReplyPlainText(formatted), Timestamp: time.Now().UTC()})
 	if ambient {
 		b.sendGarminAmbientReply(s, m, formatted, conversation, ambientToken)
 	} else {
@@ -472,8 +476,18 @@ func (b *Bot) garminAIAmbientFallbackReaction(s *bot.Client, m *discord.Message,
 }
 
 func (b *Bot) sendGarminReply(s *bot.Client, m *discord.Message, content string) *discord.Message {
+	content, embed := cmd.ParseGarminReply(content)
+	var embeds []discord.Embed
+	if embed != nil {
+		e := discord.Embed{Title: embed.Title, Description: embed.Description, URL: embed.URL, Color: embed.Color}
+		for _, field := range embed.Fields {
+			e.Fields = append(e.Fields, discord.EmbedField{Name: field.Name, Value: field.Value, Inline: ptr(field.Inline)})
+		}
+		embeds = []discord.Embed{e}
+	}
 	reply, err := s.Rest.CreateMessage(m.ChannelID, discord.MessageCreate{
-		Content: content,
+		Content: truncateGarminAIResponse(content),
+		Embeds:  embeds,
 		MessageReference: &discord.MessageReference{
 			MessageID: snowflakePtr(m.ID.String()),
 		},
@@ -1339,10 +1353,17 @@ func truncateGarminAIResponseTo(content string, limit int) string {
 	if len(content) <= limit {
 		return content
 	}
+	if limit <= 3 {
+		return strings.Repeat(".", max(0, limit))
+	}
 
 	content = content[:limit-3]
 	for !utf8.ValidString(content) {
 		content = content[:len(content)-1]
+	}
+	// Prefer a nearby word boundary without discarding most of a short answer.
+	if end := strings.LastIndexFunc(content, unicode.IsSpace); end >= len(content)*3/4 {
+		content = content[:end]
 	}
 	return strings.TrimSpace(content) + "..."
 }

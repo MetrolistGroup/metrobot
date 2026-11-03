@@ -34,7 +34,7 @@ const (
 	garminAIHistoryResultSize   = 128 * 1024
 )
 
-const garminReplyStyle = `Write like a helpful member of this Discord, in plain conversational English. Answer the latest message directly and stop once it is answered. Usually one or two sentences are enough. Use a list only for real steps. Skip praise, question restatements, customer-service introductions, unnecessary apologies and "let me know" endings. Avoid em dashes, decorative formatting and bold labels. Use straight quotes. Match the user's energy; routine chat needs no joke or fictional bot life. In banter, give one brief comeback rather than acting out a scene or promising to do something. Keep necessary conditions and safety warnings. Do not describe internal routing or evidence checks.`
+const garminReplyStyle = `Write in plain conversational English. Answer only the latest request, usually in one or two sentences under 60 words. Give the smallest complete answer. Name a smaller option or an unchecked limit in one line when useful. Decline essays, full code dumps and huge lists; offer a short summary or the smallest useful snippet. Keep replies within 1900 characters. Use active voice, plain words, straight quotes and short sentences. Cut filler, canned praise, vague attributions, forced metaphors, synonym cycling and customer-service endings. Avoid em dashes, decorative formatting and bold labels. Use lists only for real steps or comparisons. Match the user's energy; join banter with one brief comeback. Casual profanity is fine, never slurs, personal attacks or harassment. Keep necessary conditions and safety warnings. Do not describe internal routing or evidence checks.`
 
 //go:embed garmin_skills/*.md
 var garminSkillFiles embed.FS
@@ -42,6 +42,7 @@ var garminSkillFiles embed.FS
 type garminAIResult struct {
 	Answer           string
 	NoteName         string
+	VerbatimNote     bool
 	Conversation     []cmd.GarminAIMessage
 	ToolCalls        int
 	Skills           map[string]struct{}
@@ -174,6 +175,9 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 		result.Skills["support"] = struct{}{}
 	}
 	systemPrompt += "\n\nReply style:\n" + garminReplyStyle
+	if !appSupport {
+		systemPrompt += "\n\n" + cmd.GarminEmbedInstructions
+	}
 	conversation := append([]cmd.GarminAIMessage(nil), copyGarminAIMessages(messages)...)
 	if s == nil || s.Rest == nil {
 		prepareGarminGIFs(ctx, nil, conversation, b.Logger)
@@ -340,6 +344,7 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 			excerptTried = noteReference
 			if answer, ok := b.supportNoteExcerpt(ctx, m, messages, noteReference, noteSource); ok {
 				result.Answer, result.NoteName, result.Conversation = answer, noteReference, conversation
+				result.VerbatimNote = true
 				result.Unverified = false
 				return result, nil
 			}
@@ -613,6 +618,7 @@ When search_web is available, choose it for unfamiliar subjects, uncertain factu
 			result.Unverified = false
 			result.Answer = answer
 			result.NoteName = noteReference
+			result.VerbatimNote = noteReference != "" && supportNoteExcerptMatches(answer, noteSource)
 			return result, nil
 		}
 

@@ -2,15 +2,15 @@
 
 ## Configuration
 
-Set `openrouter_api_keys`, use a dedicated Decider for initial support triage and evidence checking, and Qwen3.7 Flash for the actual responses:
+Set `openrouter_api_keys`, use a dedicated Decider for initial support triage and evidence checking, and GLM 5.3 Flash for the actual responses:
 
 ```json
-{"openrouter_model": "qwen/qwen3.7-flash", "openrouter_decision_model": "perplexity/pplx-decider-flash-v1.2"}
+{"openrouter_model": "z-ai/glm-5.3-flash:floor", "openrouter_decision_model": "perplexity/pplx-decider-flash-v1.2"}
 ```
 
-Decider first determines whether a message needs support and supplies the matching note, if any. Only accepted requests reach Qwen. Qwen drafts are checked before delivery; a failed request stays silent. Ordinary chat uses Qwen directly.
+Decider first determines whether a message needs support and supplies the matching note, if any. Only accepted requests reach the chat model. Generated drafts are checked before delivery; a failed request stays silent. Ordinary chat uses GLM directly.
 
-Optional Qwen-only mode sets both fields to `qwen/qwen3.7-flash`. In that mode, Qwen judgments use chat completions with a validated tool schema, not the Decider-only API. Routing has reasoning disabled; evidence checks request a 512-token reasoning budget and return a concrete finding for rejected drafts. Routing choice weights are normalized before applying the existing thresholds; model scores are not calibrated accuracy estimates. Qwen evidence checking makes one defect decision: `none` maps to acceptance, any named defect to rejection. Its logged grounding value is therefore 1 or 0, not a confidence estimate. This avoids a contradictory second score rejecting an answer while naming no defect; Decider retains its probability gate. Invalid, missing or truncated verdicts fail closed after at most one retry. Qwen endpoints reject `tool_choice=required`, so both Qwen decision paths validate returned calls rather than requiring that unsupported parameter.
+Optional Qwen decisions use `openrouter_decision_model: "qwen/qwen3.7-flash"`; the chat model stays independent. In that mode, Qwen judgments use chat completions with a validated tool schema, not the Decider-only API. Routing has reasoning disabled; evidence checks request a 512-token reasoning budget and return a concrete finding for rejected drafts. Routing choice weights are normalized before applying the existing thresholds; model scores are not calibrated accuracy estimates. Qwen evidence checking makes one defect decision: `none` maps to acceptance, any named defect to rejection. Its logged grounding value is therefore 1 or 0, not a confidence estimate. This avoids a contradictory second score rejecting an answer while naming no defect; Decider retains its probability gate. Invalid, missing or truncated verdicts fail closed after at most one retry. Qwen endpoints reject `tool_choice=required`, so both Qwen decision paths validate returned calls rather than requiring that unsupported parameter.
 
 An empty decision model uses legacy chat triage **without an independent answer check**. Existing configurations are not changed automatically. No database migration or persistent routing statistics are added.
 
@@ -27,9 +27,9 @@ Decisions asks two independent questions: whether the message needs an answer, a
 | Send a generated answer | Grounding probability ≥ 0.80 and no named defect |
 | Offer More from this note | Independent note-use probability ≥ 0.95 |
 
-A selected note is not permission to dump its full body. With Decider configured, Qwen generates the response from the retrieved reference. In Qwen-only decision mode, even a tentative top-ranked note is loaded as reference material instead of discarding it when its normalized routing weight misses the threshold. This does not authorize a reply: after `get_note` the separate applicability selector must choose one complete authored section at the same 0.85/0.20 thresholds. The runtime sends that section verbatim, including its heading, preamble and warnings, rather than asking Qwen to paraphrase it. Markdown code examples do not create sections. Unmatched, uncertain, multi-section or live-data questions continue through the agent and evidence checker. A Qwen draft judged to use a note must match an authored section (or the whole retrieved note) exactly: the checker cannot approve added claims by calling them a faithful paraphrase. Complex note synthesis can therefore abstain instead of inventing an answer. Only delivered answers enter assistant history; rejected drafts do not.
+A selected note is not permission to dump its full body. With Decider configured, the chat model generates the response from the retrieved reference. In Qwen-only decision mode, even a tentative top-ranked note is loaded as reference material instead of discarding it when its normalized routing weight misses the threshold. This does not authorize a reply: after `get_note` the separate applicability selector must choose one complete authored section at the same 0.85/0.20 thresholds. The runtime sends that section verbatim, including its heading, preamble and warnings, rather than asking Qwen to paraphrase it. Markdown code examples do not create sections. Unmatched, uncertain, multi-section or live-data questions continue through the agent and evidence checker. A Qwen draft judged to use a note must match an authored section (or the whole retrieved note) exactly: the checker cannot approve added claims by calling them a faithful paraphrase. Complex note synthesis can therefore abstain instead of inventing an answer. Only delivered answers enter assistant history; rejected drafts do not.
 
-Routing and evidence checks run only in app-support. Every other channel uses Qwen directly, including Metrolist questions and follow-ups, with no Decider classification, evidence check or confirmed-fix learning call. Ordinary chat keeps its own prompt, project reference and read-only tools.
+Routing and evidence checks run only in app-support. Every other channel uses the chat model directly, including Metrolist questions and follow-ups, with no Decider classification, evidence check or confirmed-fix learning call. Ordinary chat keeps its own prompt, project reference and read-only tools.
 
 ## Evidence and practical answers
 
@@ -77,10 +77,27 @@ A matching inspected change can support a backed-up, in-place nightly trial with
 - Automatic attachment-only requests are ignored. Images are removed from automatic handoff; filenames do not establish their contents. Ask for exact error text when an attachment was not read.
 - Decisions bodies are capped at 64 KiB. The catalog allows 128 eligible notes, 256-byte names and 640-byte descriptions. Invalid IDs, probabilities, distributions, types or envelopes fail closed.
 - Decisions has two routing slots, separate from the three answering-model slots. Routing has a 15-second deadline, with seven-second Qwen attempts (four seconds for Decider), at most one retry, a 100 ms pause and bounded key failover. Qwen evidence checks allow up to 45 seconds with twenty-second attempts, still within the support request's 90-second deadline. Redirects are refused.
-- Provider preferences deny data collection, require supported parameters and sort by latency. Providers still receive the selected text: this is not local inference. No fixed cross-user session ID is sent.
+- Provider preferences deny data collection, require supported parameters and sort the default chat route by price. Decision routing keeps its existing provider preferences. Providers still receive the selected text: this is not local inference. No fixed cross-user session ID is sent.
 - Seen/in-flight maps hold at most 1,024 entries. Completed events are deduplicated for ten minutes; failed delivery can retry after normal limits. Deletions cancel affected requests and retain ten-minute tombstones. A send already in progress cannot be recalled.
 - Conversations expire after 24 hours and disappear on restart. Pending questions retain at most 40 source origins; overflowing that limit drops the corresponding history. No timers send unsolicited follow-ups.
 - Routing logs record decisions, opaque message IDs, note names, probabilities, latency, model and reported cost, not message bodies or upstream error bodies.
+
+## Short replies and embeds
+
+The default chat model is `z-ai/glm-5.3-flash:floor`, with low reasoning effort and a 768-token completion budget. Explicit reasoning-free retry and summary requests still disable reasoning. The `:floor` route sorts eligible providers by price. Existing decision models keep their own budgets and reasoning settings.
+
+Replies ask for plain, short answers. Essays, full code dumps and huge lists get a brief refusal or a summary offer. Casual profanity is allowed; slurs and harassment are not. Generated Discord AI replies reuse the 1900-byte clipper, preserve UTF-8 and prefer a nearby word boundary. They stay in one message. Verbatim support-note attachments and private note access retain their existing behavior.
+
+For an embed, the model can append one trailing block:
+
+````text
+here is the release.
+```embed
+{"title":"Release","description":"Brief details","url":"https://metrolist.cc","fields":[{"name":"Status","value":"Available","inline":true}],"color":5793266}
+```
+````
+
+The parser accepts only title, description, URL, fields and color. It validates Discord's per-field and total limits using UTF-16 lengths, checks HTTP/HTTPS URLs and 24-bit colors, and falls back to text for invalid embeds. Malformed JSON stays plain text and is subject to reply clipping. The bot disables mentions and stores the delivered embed text in conversation history. Telegram's public reply helper renders the same format as plain text. Telegram has no AI chat handler.
 
 ## Chat memory and prompt settings
 

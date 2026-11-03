@@ -5,6 +5,23 @@ import (
 	"testing"
 )
 
+func TestDefaultOpenRouterModel(t *testing.T) {
+	for _, model := range []string{"", "  ", " vendor/custom "} {
+		cfg := validConfig()
+		cfg.OpenRouterModel = model
+		if err := cfg.validate(); err != nil {
+			t.Fatal(err)
+		}
+		want := strings.TrimSpace(model)
+		if want == "" {
+			want = "z-ai/glm-5.3-flash:floor"
+		}
+		if cfg.OpenRouterModel != want {
+			t.Fatalf("model = %q, want %q", cfg.OpenRouterModel, want)
+		}
+	}
+}
+
 func TestValidateRejectsEmptyOpenRouterKey(t *testing.T) {
 	config := validConfig()
 	config.OpenRouterAPIKeys = []string{"key", "  "}

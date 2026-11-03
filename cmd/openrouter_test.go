@@ -30,11 +30,11 @@ func TestOpenRouterClientUsesCapableRouteByDefault(t *testing.T) {
 		t.Fatalf("Ask() error = %v", err)
 	}
 
-	if request.Model != openRouterDefaultModel || len(request.Models) != 0 {
+	if request.Model != "z-ai/glm-5.3-flash:floor" || len(request.Models) != 0 {
 		t.Errorf("model route = (%q, %v), want %q", request.Model, request.Models, openRouterDefaultModel)
 	}
-	if request.Reasoning == nil || request.Reasoning.Enabled == nil || *request.Reasoning.Enabled || request.Reasoning.MaxTokens != 0 || request.Reasoning.Exclude || request.MaxTokens != 1024 {
-		t.Errorf("reasoning = %#v with %d output tokens, want disabled reasoning and 1024 output", request.Reasoning, request.MaxTokens)
+	if request.Reasoning == nil || request.Reasoning.Enabled != nil || request.Reasoning.Effort != "low" || request.Reasoning.MaxTokens != 0 || request.Reasoning.Exclude || request.MaxTokens != 768 {
+		t.Errorf("reasoning = %#v with %d output tokens, want low reasoning and 768 output", request.Reasoning, request.MaxTokens)
 	}
 	if request.SessionID != "" {
 		t.Errorf("unrelated conversations were grouped into session %q", request.SessionID)
@@ -42,7 +42,7 @@ func TestOpenRouterClientUsesCapableRouteByDefault(t *testing.T) {
 	if len(request.Messages) == 0 || request.Messages[0].Cache {
 		t.Errorf("undocumented model cache support was assumed: %#v", request.Messages)
 	}
-	if request.Provider == nil || request.Provider.ZDR || request.Provider.DataCollection != "deny" || !request.Provider.RequireParameters || request.Provider.Sort.By != "latency" || request.Provider.Sort.Partition != "none" {
+	if request.Provider == nil || request.Provider.ZDR || request.Provider.DataCollection != "deny" || !request.Provider.RequireParameters || request.Provider.Sort.By != "price" || request.Provider.Sort.Partition != "none" {
 		t.Errorf("provider routing = %#v", request.Provider)
 	}
 	if referer != "https://github.com/MetrolistGroup/metrobot" || title != "Metrobot" {
@@ -118,12 +118,14 @@ func TestOpenRouterClientMigratesPreviousQwenDefault(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newOpenRouterClient([]string{"key"}, openRouterPreviousQwen, server.URL, server.Client())
-	if _, err := client.Ask(context.Background(), testGarminMessages("hi")); err != nil {
-		t.Fatalf("Ask() error = %v", err)
-	}
-	if request.Model != openRouterDefaultModel || request.Reasoning == nil || request.Reasoning.Enabled == nil || *request.Reasoning.Enabled || request.Reasoning.MaxTokens != 0 || request.Reasoning.Exclude {
-		t.Fatalf("previous default migration = model %q, reasoning %#v", request.Model, request.Reasoning)
+	for _, model := range []string{openRouterPreviousQwen, openRouterOlderQwen, openRouterPreviousModel, openRouterOlderModel, openRouterDefaultModel} {
+		client := newOpenRouterClient([]string{"key"}, model, server.URL, server.Client())
+		if _, err := client.Ask(context.Background(), testGarminMessages("hi")); err != nil {
+			t.Fatalf("Ask() error = %v", err)
+		}
+		if request.Model != openRouterDefaultModel || request.Reasoning == nil || request.Reasoning.Enabled != nil || request.Reasoning.Effort != "low" || request.Reasoning.MaxTokens != 0 || request.Reasoning.Exclude {
+			t.Fatalf("previous default %s migration = model %q, reasoning %#v", model, request.Model, request.Reasoning)
+		}
 	}
 }
 
@@ -223,21 +225,23 @@ func TestOpenRouterClientCacheCapabilitiesAndCustomPrompts(t *testing.T) {
 	}
 }
 
-func TestOpenRouterClientHonorsDisableReasoningForCustomModel(t *testing.T) {
+func TestOpenRouterClientHonorsDisableReasoning(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request chatCompletionRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
 		}
-		if request.Reasoning == nil || request.Reasoning.Enabled == nil || *request.Reasoning.Enabled {
+		if request.Reasoning == nil || request.Reasoning.Enabled == nil || *request.Reasoning.Enabled || request.Reasoning.Effort != "" {
 			t.Error("explicit reasoning disable was ignored")
 		}
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
 	}))
 	defer server.Close()
-	client := newOpenRouterClient([]string{"key"}, "openai/gpt-4.1-mini", server.URL, server.Client())
-	if _, err := client.Complete(context.Background(), GarminAIRequest{DisableReasoning: true, Messages: testGarminMessages("hi")}); err != nil {
-		t.Fatal(err)
+	for _, model := range []string{openRouterDefaultModel, "openai/gpt-4.1-mini"} {
+		client := newOpenRouterClient([]string{"key"}, model, server.URL, server.Client())
+		if _, err := client.Complete(context.Background(), GarminAIRequest{DisableReasoning: true, Messages: testGarminMessages("hi")}); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/MetrolistGroup/metrobot/cmd"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"go.uber.org/zap"
 )
@@ -61,6 +62,35 @@ func TestTelegramNoteReplyBoundaries(t *testing.T) {
 type telegramNoteHTTPFunc func(*http.Request) (*http.Response, error)
 
 func (f telegramNoteHTTPFunc) Do(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestTelegramEmbedReplyDegradesToPlainText(t *testing.T) {
+	sent := 0
+	client := telegramNoteHTTPFunc(func(r *http.Request) (*http.Response, error) {
+		body := `{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"test"}}`
+		if strings.HasSuffix(r.URL.Path, "/sendMessage") {
+			sent++
+			if err := r.ParseForm(); err != nil {
+				t.Error(err)
+			}
+			if r.FormValue("text") != "here you go.\nrelease\n<plain text>\nhttps://metrolist.cc\nstatus\navailable" || r.FormValue("parse_mode") != "" || r.FormValue("chat_id") != "123" || r.FormValue("reply_to_message_id") != "456" || r.FormValue("disable_web_page_preview") != "true" {
+				t.Errorf("embed fallback = %v", r.Form)
+			}
+			body = `{"ok":true,"result":{"message_id":789,"chat":{"id":123,"type":"group"}}}`
+		} else if !strings.HasSuffix(r.URL.Path, "/getMe") {
+			t.Errorf("unexpected request: %s", r.URL.Path)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	bot, err := tgbotapi.NewBotAPIWithClient("test", "http://telegram.invalid/bot%s/%s", client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := cmd.FormatGarminReply("here you go.", &cmd.GarminEmbed{Title: "release", Description: "<plain text>", URL: "https://metrolist.cc", Fields: []cmd.GarminEmbedField{{Name: "status", Value: "available"}}})
+	sendPublicReply(bot, 123, 456, text, "HTML", false, zap.NewNop())
+	if sent != 1 {
+		t.Fatalf("sent %d replies", sent)
+	}
+}
 
 func TestTelegramSendHelpersUploadFullReplyAndKeepCleanup(t *testing.T) {
 	for _, test := range []struct {

@@ -4,12 +4,15 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/MetrolistGroup/metrobot/config"
 )
 
 const (
 	openRouterEndpoint      = "https://openrouter.ai/api/v1/chat/completions"
-	openRouterDefaultModel  = "qwen/qwen3.7-flash"
-	openRouterPreviousQwen  = "qwen/qwen3.8-flash"
+	openRouterDefaultModel  = config.DefaultOpenRouterModel
+	openRouterPreviousQwen  = "qwen/qwen3.7-flash"
+	openRouterOlderQwen     = "qwen/qwen3.8-flash"
 	openRouterPreviousModel = "openai/gpt-5.4-nano"
 	openRouterOlderModel    = "openai/gpt-5-mini"
 	openRouterLegacyDefault = "upstage/solar-pro4"
@@ -29,7 +32,7 @@ func NewOpenRouterClient(keys []string, model string) *OpenRouterClient {
 
 func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http.Client) *OpenRouterClient {
 	model = strings.TrimSpace(model)
-	useDefaultRoute := model == "" || model == openRouterDefaultModel || model == openRouterPreviousQwen || model == openRouterPreviousModel || model == openRouterOlderModel || model == openRouterLegacyDefault || model == openRouterBrokenDefault
+	useDefaultRoute := model == "" || model == openRouterDefaultModel || model == openRouterPreviousQwen || model == openRouterOlderQwen || model == openRouterPreviousModel || model == openRouterOlderModel || model == openRouterLegacyDefault || model == openRouterBrokenDefault
 	if useDefaultRoute {
 		model = openRouterDefaultModel
 	}
@@ -51,9 +54,14 @@ func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http
 					Partition: "none",
 				},
 			}
-			if useDefaultRoute || request.DisableReasoning {
+			if strings.HasSuffix(model, ":floor") {
+				request.Provider.Sort.By = "price"
+			}
+			if request.DisableReasoning {
 				disabled := false
 				request.Reasoning = &chatReasoning{Enabled: &disabled}
+			} else if useDefaultRoute {
+				request.Reasoning = &chatReasoning{Effort: "low"}
 			}
 			// session_id is routing/trace grouping, not history; let OpenRouter derive it per conversation.
 			if openRouterExplicitCacheModel(model) && len(request.Messages) > 0 {

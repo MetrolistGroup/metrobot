@@ -7,6 +7,8 @@ import (
 	"sort"
 )
 
+const chatDecisionModel = "qwen/qwen3.7-flash"
+
 // Use the same decision contract for Qwen without sending it to the Decider-only API.
 func chatDecisionBody(model string, request DecisionRequest) ([]byte, error) {
 	questions := request.Questions
@@ -87,7 +89,7 @@ func parseChatDecision(data []byte, request DecisionRequest) (*DecisionResponse,
 			Cost   *float64 `json:"cost"`
 		} `json:"usage"`
 	}
-	if json.Unmarshal(data, &wire) != nil || wire.Model != openRouterDefaultModel || len(wire.Choices) != 1 || wire.Usage == nil {
+	if json.Unmarshal(data, &wire) != nil || wire.Model != chatDecisionModel || len(wire.Choices) != 1 || wire.Usage == nil {
 		return nil, errors.New("invalid chat decision response")
 	}
 	choice := wire.Choices[0]

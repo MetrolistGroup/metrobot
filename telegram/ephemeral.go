@@ -2,8 +2,10 @@ package telegram
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/util"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"go.uber.org/zap"
@@ -18,6 +20,9 @@ func sendEphemeralNoteReply(bot *tgbotapi.BotAPI, chatID int64, replyToMsgID int
 }
 
 func sendPublicReply(bot *tgbotapi.BotAPI, chatID int64, replyToMsgID int, text string, parseMode string, autoDelete bool, logger *zap.Logger) {
+	if plain := cmd.GarminReplyPlainText(text); plain != strings.TrimSpace(text) {
+		text, parseMode = plain, ""
+	}
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ReplyToMessageID = replyToMsgID
 	msg.DisableWebPagePreview = true

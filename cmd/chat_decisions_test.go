@@ -13,7 +13,7 @@ const chatDecisionArguments = `{"should_answer":{"reason":"A direct question.","
 
 func chatDecisionFixture(arguments string) []byte {
 	body, _ := json.Marshal(map[string]any{
-		"model":   openRouterDefaultModel,
+		"model":   chatDecisionModel,
 		"choices": []any{map[string]any{"finish_reason": "tool_calls", "message": GarminAIMessage{ToolCalls: []GarminAIToolCall{{Function: GarminAIFunctionCall{Name: "submit_decisions", Arguments: arguments}}}}}},
 		"usage":   map[string]any{"prompt_tokens": 100, "completion_tokens": 40, "cost": 0.001},
 	})
@@ -21,7 +21,7 @@ func chatDecisionFixture(arguments string) []byte {
 }
 
 func TestQwenDecisionsWireContract(t *testing.T) {
-	if client := NewDecisionsClient([]string{"key"}, openRouterDefaultModel); client.endpoint != openRouterEndpoint {
+	if client := NewDecisionsClient([]string{"key"}, chatDecisionModel); client.endpoint != openRouterEndpoint {
 		t.Fatal("Qwen was sent to the Decider-only endpoint")
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -30,7 +30,7 @@ func TestQwenDecisionsWireContract(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		if body.Model != openRouterDefaultModel || body.ToolChoice != "" || body.Reasoning == nil || body.Reasoning.Enabled == nil || *body.Reasoning.Enabled || body.Provider.DataCollection != "deny" || !body.Provider.RequireParameters {
+		if body.Model != chatDecisionModel || body.ToolChoice != "" || body.Reasoning == nil || body.Reasoning.Enabled == nil || *body.Reasoning.Enabled || body.Provider.DataCollection != "deny" || !body.Provider.RequireParameters {
 			t.Errorf("unexpected Qwen request: %#v", body)
 		}
 		if len(body.Tools) != 1 || !body.Tools[0].Function.Strict || len(body.Messages) != 2 || body.Messages[1].Role != "user" || !strings.Contains(body.Messages[1].Content, "nightly") {
@@ -39,7 +39,7 @@ func TestQwenDecisionsWireContract(t *testing.T) {
 		_, _ = w.Write(chatDecisionFixture(chatDecisionArguments))
 	}))
 	defer server.Close()
-	client := newDecisionsClient([]string{"key"}, openRouterDefaultModel, server.URL, server.Client())
+	client := newDecisionsClient([]string{"key"}, chatDecisionModel, server.URL, server.Client())
 	response, err := client.Decide(context.Background(), decisionTestRequest())
 	if err != nil || !response.ValidFor(decisionTestRequest()) || *response.Answers["route"].Probabilities["n0"] != 1 || *response.Usage.InputTokens != 100 || response.Answers["should_answer"].Reason == "" {
 		t.Fatalf("Qwen decision = %#v, %v", response, err)
@@ -51,7 +51,7 @@ func TestQwenEvidenceUsesOneVerdict(t *testing.T) {
 		"grounded": {Type: "noul", Instructions: "Use only evidence.", Criteria: map[string]string{"true": "Supported", "false": "Unsupported"}},
 		"problem":  {Type: "choice", Criteria: map[string]string{"none": "Supported", "unsupported": "Invented"}},
 	}}
-	body, err := chatDecisionBody(openRouterDefaultModel, request)
+	body, err := chatDecisionBody(chatDecisionModel, request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestQwenDecisionsRetryMalformedVerdict(t *testing.T) {
 		_, _ = w.Write(chatDecisionFixture(args))
 	}))
 	defer server.Close()
-	client := newDecisionsClient([]string{"key"}, openRouterDefaultModel, server.URL, server.Client())
+	client := newDecisionsClient([]string{"key"}, chatDecisionModel, server.URL, server.Client())
 	response, err := client.Decide(context.Background(), decisionTestRequest())
 	if err != nil || response == nil || calls != 2 {
 		t.Fatalf("response=%v err=%v calls=%d", response, err, calls)

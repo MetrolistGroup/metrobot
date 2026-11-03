@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+const DefaultOpenRouterModel = "z-ai/glm-5.3-flash:floor"
+
 type Config struct {
 	DiscordToken            string   `json:"discord_token"`
 	TelegramToken           string   `json:"telegram_token"`
@@ -60,6 +62,10 @@ func Load(path string) (*Config, error) {
 }
 
 func (c *Config) validate() error {
+	c.OpenRouterModel = strings.TrimSpace(c.OpenRouterModel)
+	if c.OpenRouterModel == "" {
+		c.OpenRouterModel = DefaultOpenRouterModel
+	}
 	c.OpenRouterDecisionModel = strings.TrimSpace(c.OpenRouterDecisionModel)
 	checks := []struct {
 		name  string
