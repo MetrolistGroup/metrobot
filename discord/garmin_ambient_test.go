@@ -37,6 +37,7 @@ func TestGarminAmbientRequiresClearContinuation(t *testing.T) {
 		{"garmin is annoying", "try the setting.", false},
 		{"i told metrobot, are you okay?", "try the setting.", false},
 		{"alice, what do you mean?", "try the setting.", false},
+		{"why did you suggest that, alice?", "try the setting.", false},
 		{"<@42> can you explain that", "try the setting.", false},
 		{"thanks alice", "try the setting.", false},
 		{"thanks", "try the setting.", false},
@@ -55,6 +56,23 @@ func TestGarminAmbientRequiresClearContinuation(t *testing.T) {
 				t.Fatalf("directed = %v, want %v", got, test.want)
 			}
 		})
+	}
+}
+
+func TestGarminAmbientDoesNotResumeAfterInterveningMessageIsDeleted(t *testing.T) {
+	b := lifecycleBot(&fakeGarminAI{})
+	m := lifecycleMessage("104")
+	m.Content = "what do you mean?"
+	seedGarminAmbientExchange(b, m, "try the setting.")
+	m.ID = snowflakeID("104")
+	b.storeCachedMessage(cachedLogMessage{ID: "102", ChannelID: m.ChannelID.String(), AuthorID: "42"})
+	b.forgetDeletedGarminContexts(m.ChannelID.String(), "102")
+	b.cachedMessage(m.ChannelID.String(), "102", true)
+	if _, directed := b.garminAIAmbientContinuation(m, m.Content); directed {
+		t.Fatal("deleting intervening chatter reopened ambient replies")
+	}
+	if _, retained := b.garminAIHistory(m, "", false); !retained {
+		t.Fatal("stopping ambient replies erased explicit conversation history")
 	}
 }
 

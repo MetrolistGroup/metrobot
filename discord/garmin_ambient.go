@@ -82,13 +82,16 @@ func (b *Bot) garminAIAmbientRequestActive(m *discord.Message, token uint64) boo
 func (b *Bot) garminAIAmbientRequestActiveLocked(m *discord.Message, token uint64) bool {
 	key := garminAIUserContextKey(m)
 	context, active := b.garminAIUserContexts[key]
-	return token != 0 && active && b.garminAIAmbientBusy[key] == token && time.Now().Before(context.ambientUntil) && b.garminMessageVisibleLocked(m.ChannelID.String(), m.ID.String()) && b.garminAmbientUninterrupted(m, context.replyID)
+	if token == 0 || !active || b.garminAIAmbientBusy[key] != token || !time.Now().Before(context.ambientUntil) {
+		return false
+	}
+	return b.garminMessageVisibleLocked(m.ChannelID.String(), m.ID.String()) && b.garminAmbientUninterrupted(m, context.replyID)
 }
 
 func (b *Bot) sendGarminAmbientReply(s *bot.Client, m *discord.Message, content string, conversation []cmd.GarminAIMessage, token uint64) *discord.Message {
 	b.garminAIMu.Lock()
 	defer b.garminAIMu.Unlock()
-	if !b.garminAIAmbientRequestActiveLocked(m, token) || !b.garminMessageVisibleLocked(m.ChannelID.String(), m.ID.String()) {
+	if !b.garminAIAmbientRequestActiveLocked(m, token) {
 		return nil
 	}
 	reply := b.sendGarminReply(s, m, content)
@@ -168,14 +171,14 @@ func garminAIAmbientTargetsOtherUser(s *bot.Client, m *discord.Message) bool {
 var garminAmbientMentionPattern = regexp.MustCompile(`<@!?(\d+)>`)
 
 // Only explicit references to the preceding answer qualify without an address.
-var garminAmbientFollowupPattern = regexp.MustCompile(`(?i)^(?:(?:what (?:do|did) you mean|(?:can|could) you (?:please )?(?:explain|clarify) (?:that|your (?:answer|reply))|(?:please )?(?:explain|clarify) (?:that|your (?:answer|reply))|tell me more about that)[.!?]*|why did you (?:say|suggest|recommend) .+)[.!?]*$`)
+var garminAmbientFollowupPattern = regexp.MustCompile(`(?i)^(?:what (?:do|did) you mean|(?:can|could) you (?:please )?(?:explain|clarify) (?:that|your (?:answer|reply))|(?:please )?(?:explain|clarify) (?:that|your (?:answer|reply))|tell me more about that|why did you (?:say|suggest|recommend) (?:that|this|it))[.!?]*$`)
 
 func garminAmbientNeedsAnswer(content string) bool {
 	content = strings.ToLower(strings.TrimSpace(content))
 	if content == "yes" || content == "yes please" || content == "no" {
 		return true
 	}
-	return garminAmbientFollowupPattern.MatchString(strings.TrimSpace(content))
+	return garminAmbientFollowupPattern.MatchString(content)
 }
 
 func garminAmbientStop(content string) bool {

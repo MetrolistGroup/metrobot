@@ -297,6 +297,11 @@ func (b *Bot) forgetDeletedGarminContexts(channelID, messageID string) {
 		if retained.channelID == channelID && (retained.requestID == messageID || retained.replyID == messageID || slices.Contains(retained.pendingSources, messageID)) {
 			delete(b.garminAIUserContexts, key)
 			delete(b.garminAIAmbientBusy, key)
+		} else if retained.channelID == channelID && snowflakeID(messageID) > snowflakeID(retained.replyID) {
+			// Removing intervening chatter must not reopen an ambient exchange.
+			retained.ambientUntil = time.Time{}
+			b.garminAIUserContexts[key] = retained
+			delete(b.garminAIAmbientBusy, key)
 		}
 	}
 	for id, parent := range b.garminAIParents[channelID] {
