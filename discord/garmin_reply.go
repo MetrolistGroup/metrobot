@@ -71,19 +71,41 @@ func leadingGarminSentences(answer string, limit int) string {
 func (b *Bot) sendGarminReply(s *bot.Client, m *discord.Message, content string) *discord.Message {
 	content, embed := cmd.ParseGarminReply(content)
 	var embeds []discord.Embed
-	if embed != nil {
+	if embed != nil && embed.HasEmbedContent() {
 		e := discord.Embed{Title: embed.Title, Description: embed.Description, URL: embed.URL, Color: embed.Color}
 		for _, field := range embed.Fields {
 			e.Fields = append(e.Fields, discord.EmbedField{Name: field.Name, Value: field.Value, Inline: ptr(field.Inline)})
 		}
-		if embed.Footer != nil && strings.TrimSpace(embed.Footer.Text) != "" {
-			e.Footer = &discord.EmbedFooter{Text: embed.Footer.Text}
+		if embed.Author != nil {
+			e.Author = &discord.EmbedAuthor{Name: embed.Author.Name, URL: embed.Author.URL, IconURL: embed.Author.IconURL}
+		}
+		if embed.Footer != nil {
+			e.Footer = &discord.EmbedFooter{Text: embed.Footer.Text, IconURL: embed.Footer.IconURL}
+		}
+		if embed.Thumbnail != nil {
+			e.Thumbnail = &discord.EmbedResource{URL: embed.Thumbnail.URL}
+		}
+		if embed.Image != nil {
+			e.Image = &discord.EmbedResource{URL: embed.Image.URL}
+		}
+		if embed.Timestamp != "" {
+			timestamp, _ := time.Parse(time.RFC3339, embed.Timestamp)
+			e.Timestamp = &timestamp
 		}
 		embeds = []discord.Embed{e}
 	}
+	var components []discord.LayoutComponent
+	if embed != nil && len(embed.Buttons) > 0 {
+		var buttons []discord.InteractiveComponent
+		for _, button := range embed.Buttons {
+			buttons = append(buttons, discord.NewLinkButton(button.Label, button.URL))
+		}
+		components = []discord.LayoutComponent{discord.NewActionRow(buttons...)}
+	}
 	reply, err := s.Rest.CreateMessage(m.ChannelID, discord.MessageCreate{
-		Content: truncateGarminAIResponse(content),
-		Embeds:  embeds,
+		Content:    truncateGarminAIResponse(content),
+		Embeds:     embeds,
+		Components: components,
 		MessageReference: &discord.MessageReference{
 			MessageID: snowflakePtr(m.ID.String()),
 		},

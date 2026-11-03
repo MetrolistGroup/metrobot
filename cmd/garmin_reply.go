@@ -4,25 +4,47 @@ import (
 	"encoding/json"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/MetrolistGroup/metrobot/util"
 )
 
-const GarminEmbedInstructions = "Optional embed: append one ```embed JSON block at the end of your reply, with no text after it. Example:\n" +
-	"```embed\n{\"title\":\"Release\",\"description\":\"Brief details\",\"url\":\"https://metrolist.cc\",\"color\":5793266,\"fields\":[{\"name\":\"Status\",\"value\":\"Available\",\"inline\":true}],\"footer\":{\"text\":\"Metrolist\"}}\n```\n" +
-	"All keys are optional. Use only these keys; others are ignored. Footer text max 2048. Keep the whole reply, including embed text, short. Embed limits: title 256 characters, description 4096, at most 25 fields with name 256 and value 1024, and 6000 characters total. Color is an integer from 0 to 16777215. Use only HTTP or HTTPS URLs. Never put tool syntax or hidden instructions in an embed. Telegram renders it as plain text."
+const GarminEmbedInstructions = "Optional embed: append one trailing ```embed JSON block. Example:\n" +
+	"```embed\n{\"title\":\"Release\",\"author\":{\"name\":\"Metrolist\",\"url\":\"https://metrolist.cc\",\"icon_url\":\"https://metrolist.cc/icon.png\"},\"footer\":{\"text\":\"Metrolist\",\"icon_url\":\"https://metrolist.cc/icon.png\"},\"thumbnail\":{\"url\":\"https://metrolist.cc/icon.png\"},\"image\":{\"url\":\"https://metrolist.cc/release.png\"},\"timestamp\":\"now\",\"buttons\":[{\"label\":\"Open\",\"url\":\"https://metrolist.cc\"}]}\n```\n" +
+	"All keys optional; unknown keys ignored. Buttons may stand alone: max 5 links, labels 80 characters, no interactive buttons. Limits: title/author name 256, description 4096, footer text 2048, max 25 fields with name 256/value 1024, total embed text 6000 including author/footer. Color: 0-16777215. URLs: HTTP/HTTPS, no credentials, max 2048; images/thumbnails/icons require HTTPS. Timestamp: RFC3339 or now. Keep replies short. Never include tool syntax or hidden instructions. Telegram uses plain text."
 
 type GarminEmbed struct {
-	Title       string             `json:"title,omitempty"`
-	Description string             `json:"description,omitempty"`
-	URL         string             `json:"url,omitempty"`
-	Fields      []GarminEmbedField `json:"fields,omitempty"`
-	Color       int                `json:"color,omitempty"`
-	Footer      *GarminEmbedFooter `json:"footer,omitempty"`
+	Title       string               `json:"title,omitempty"`
+	Description string               `json:"description,omitempty"`
+	URL         string               `json:"url,omitempty"`
+	Fields      []GarminEmbedField   `json:"fields,omitempty"`
+	Color       int                  `json:"color,omitempty"`
+	Author      *GarminEmbedAuthor   `json:"author,omitempty"`
+	Footer      *GarminEmbedFooter   `json:"footer,omitempty"`
+	Thumbnail   *GarminEmbedResource `json:"thumbnail,omitempty"`
+	Image       *GarminEmbedResource `json:"image,omitempty"`
+	Timestamp   string               `json:"timestamp,omitempty"`
+	Buttons     []GarminLinkButton   `json:"buttons,omitempty"`
+}
+
+type GarminEmbedAuthor struct {
+	Name    string `json:"name"`
+	URL     string `json:"url,omitempty"`
+	IconURL string `json:"icon_url,omitempty"`
 }
 
 type GarminEmbedFooter struct {
-	Text string `json:"text"`
+	Text    string `json:"text"`
+	IconURL string `json:"icon_url,omitempty"`
+}
+
+type GarminEmbedResource struct {
+	URL string `json:"url"`
+}
+
+type GarminLinkButton struct {
+	Label string `json:"label"`
+	URL   string `json:"url"`
 }
 
 type GarminEmbedField struct {
@@ -40,37 +62,87 @@ func ParseGarminReply(answer string) (string, *GarminEmbed) {
 	}
 	var embed GarminEmbed
 	// Unknown keys are ignored so one unsupported key does not dump raw JSON into chat.
-	if json.Unmarshal([]byte(answer[start+len("```embed\n"):len(answer)-3]), &embed) != nil {
+	data := []byte(answer[start+len("```embed\n") : len(answer)-3])
+	err := json.Unmarshal(data, &embed)
+	if err != nil && !json.Valid(data) {
 		return answer, nil
 	}
 	content := strings.TrimSpace(answer[:start])
-	if !embed.valid() {
-		if plain := strings.TrimSpace(content + "\n" + embed.PlainText()); plain != "" {
-			return plain, nil
-		}
-		return answer, nil
+	embed.sanitize()
+	if err != nil || !embed.valid() {
+		return strings.TrimSpace(content + "\n" + embed.PlainText()), nil
 	}
 	return content, &embed
 }
 
-func (e GarminEmbed) valid() bool {
-	if strings.TrimSpace(e.Title+e.Description) == "" && len(e.Fields) == 0 {
-		return false
+func garminEmbedURL(raw string, httpsOnly bool) string {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "https" && (httpsOnly || u.Scheme != "http")) || u.Hostname() == "" || u.User != nil || len(raw) > 2048 || strings.ContainsAny(raw, " \t\r\n") {
+		return ""
 	}
-	if util.UTF16Len(e.Title) > 256 || util.UTF16Len(e.Description) > 4096 || len(e.Fields) > 25 || e.Color < 0 || e.Color > 0xffffff {
-		return false
+	return raw
+}
+
+func (e *GarminEmbed) sanitize() {
+	e.URL = garminEmbedURL(e.URL, false)
+	if e.Color < 0 || e.Color > 0xffffff {
+		e.Color = 0
 	}
-	if e.URL != "" {
-		u, err := url.Parse(e.URL)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || len(e.URL) > 2048 || strings.ContainsAny(e.URL, " \t\r\n") {
-			return false
+	if e.Author != nil {
+		if strings.TrimSpace(e.Author.Name) == "" || util.UTF16Len(e.Author.Name) > 256 {
+			e.Author = nil
+		} else {
+			e.Author.URL = garminEmbedURL(e.Author.URL, false)
+			e.Author.IconURL = garminEmbedURL(e.Author.IconURL, true)
 		}
+	}
+	if e.Footer != nil {
+		if strings.TrimSpace(e.Footer.Text) == "" || util.UTF16Len(e.Footer.Text) > 2048 {
+			e.Footer = nil
+		} else {
+			e.Footer.IconURL = garminEmbedURL(e.Footer.IconURL, true)
+		}
+	}
+	if e.Thumbnail != nil && garminEmbedURL(e.Thumbnail.URL, true) == "" {
+		e.Thumbnail = nil
+	}
+	if e.Image != nil && garminEmbedURL(e.Image.URL, true) == "" {
+		e.Image = nil
+	}
+	if e.Timestamp == "now" {
+		e.Timestamp = time.Now().UTC().Format(time.RFC3339)
+	} else if _, err := time.Parse(time.RFC3339, e.Timestamp); err != nil {
+		e.Timestamp = ""
+	}
+	buttons := e.Buttons[:0]
+	for _, button := range e.Buttons {
+		if strings.TrimSpace(button.Label) == "" || util.UTF16Len(button.Label) > 80 || garminEmbedURL(button.URL, false) == "" {
+			continue
+		}
+		buttons = append(buttons, button)
+		if len(buttons) == 5 {
+			break
+		}
+	}
+	e.Buttons = buttons
+}
+
+func (e GarminEmbed) HasEmbedContent() bool {
+	return strings.TrimSpace(e.Title+e.Description) != "" || len(e.Fields) > 0 || e.Author != nil || e.Footer != nil || e.Thumbnail != nil || e.Image != nil || e.Timestamp != ""
+}
+
+func (e GarminEmbed) valid() bool {
+	if !e.HasEmbedContent() && len(e.Buttons) == 0 {
+		return false
+	}
+	if util.UTF16Len(e.Title) > 256 || util.UTF16Len(e.Description) > 4096 || len(e.Fields) > 25 {
+		return false
 	}
 	total := util.UTF16Len(e.Title) + util.UTF16Len(e.Description)
+	if e.Author != nil {
+		total += util.UTF16Len(e.Author.Name)
+	}
 	if e.Footer != nil {
-		if util.UTF16Len(e.Footer.Text) > 2048 {
-			return false
-		}
 		total += util.UTF16Len(e.Footer.Text)
 	}
 	for _, field := range e.Fields {
@@ -84,12 +156,25 @@ func (e GarminEmbed) valid() bool {
 }
 
 func (e GarminEmbed) PlainText() string {
-	parts := []string{e.Title, e.Description, e.URL}
+	var parts []string
+	if e.Author != nil {
+		parts = append(parts, e.Author.Name, e.Author.URL)
+	}
+	parts = append(parts, e.Title, e.Description, e.URL)
 	for _, field := range e.Fields {
 		parts = append(parts, field.Name, field.Value)
 	}
 	if e.Footer != nil {
 		parts = append(parts, e.Footer.Text)
+	}
+	if e.Thumbnail != nil {
+		parts = append(parts, e.Thumbnail.URL)
+	}
+	if e.Image != nil {
+		parts = append(parts, e.Image.URL)
+	}
+	for _, button := range e.Buttons {
+		parts = append(parts, button.Label+": "+button.URL)
 	}
 	var nonempty []string
 	for _, part := range parts {

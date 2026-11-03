@@ -64,6 +64,10 @@ type telegramNoteHTTPFunc func(*http.Request) (*http.Response, error)
 func (f telegramNoteHTTPFunc) Do(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestTelegramEmbedReplyDegradesToPlainText(t *testing.T) {
+	wantTexts := []string{
+		"here you go.\nMetrolist\nhttps://metrolist.cc/team\nrelease\n<plain text>\nhttps://metrolist.cc\nstatus\navailable\nfooter\nhttps://metrolist.cc/image.png\nOpen: https://metrolist.cc",
+		"Open: https://metrolist.cc",
+	}
 	sent := 0
 	client := telegramNoteHTTPFunc(func(r *http.Request) (*http.Response, error) {
 		body := `{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"test"}}`
@@ -72,7 +76,7 @@ func TestTelegramEmbedReplyDegradesToPlainText(t *testing.T) {
 			if err := r.ParseForm(); err != nil {
 				t.Error(err)
 			}
-			if r.FormValue("text") != "here you go.\nrelease\n<plain text>\nhttps://metrolist.cc\nstatus\navailable" || r.FormValue("parse_mode") != "" || r.FormValue("chat_id") != "123" || r.FormValue("reply_to_message_id") != "456" || r.FormValue("disable_web_page_preview") != "true" {
+			if sent > len(wantTexts) || r.FormValue("text") != wantTexts[sent-1] || r.FormValue("parse_mode") != "" || r.FormValue("chat_id") != "123" || r.FormValue("reply_to_message_id") != "456" || r.FormValue("disable_web_page_preview") != "true" {
 				t.Errorf("embed fallback = %v", r.Form)
 			}
 			body = `{"ok":true,"result":{"message_id":789,"chat":{"id":123,"type":"group"}}}`
@@ -85,9 +89,17 @@ func TestTelegramEmbedReplyDegradesToPlainText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := cmd.FormatGarminReply("here you go.", &cmd.GarminEmbed{Title: "release", Description: "<plain text>", URL: "https://metrolist.cc", Fields: []cmd.GarminEmbedField{{Name: "status", Value: "available"}}})
+	buttons := []cmd.GarminLinkButton{{Label: "Open", URL: "https://metrolist.cc"}}
+	text := cmd.FormatGarminReply("here you go.", &cmd.GarminEmbed{
+		Title: "release", Description: "<plain text>", URL: "https://metrolist.cc",
+		Fields: []cmd.GarminEmbedField{{Name: "status", Value: "available"}},
+		Author: &cmd.GarminEmbedAuthor{Name: "Metrolist", URL: "https://metrolist.cc/team", IconURL: "https://metrolist.cc/author.png"},
+		Footer: &cmd.GarminEmbedFooter{Text: "footer", IconURL: "https://metrolist.cc/footer.png"},
+		Image:  &cmd.GarminEmbedResource{URL: "https://metrolist.cc/image.png"}, Buttons: buttons,
+	})
 	sendPublicReply(bot, 123, 456, text, "HTML", false, zap.NewNop())
-	if sent != 1 {
+	sendPublicReply(bot, 123, 456, cmd.FormatGarminReply("", &cmd.GarminEmbed{Buttons: buttons}), "HTML", false, zap.NewNop())
+	if sent != len(wantTexts) {
 		t.Fatalf("sent %d replies", sent)
 	}
 }
