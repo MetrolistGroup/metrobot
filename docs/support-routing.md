@@ -16,6 +16,8 @@ An empty decision model uses legacy chat triage **without an independent answer 
 
 ## Request handling
 
+Explicit Discord chat accepts case-insensitive `garmin <prompt>` with any prompt, without brackets or a required comma. `garmin, <prompt>`, conversational aliases, bot mentions and direct replies remain supported. Telegram has no AI chat handler.
+
 Automatic routing handles clear help requests in the configured guild's app-support channel. It ignores bots, webhooks, commands, chatter, thanks, staff coordination, human-directed replies and requests requiring staff action. Replies to this bot and retained, same-user follow-ups can continue a question without using Discord's Reply button.
 
 Decisions asks two independent questions: whether the message needs an answer, and which eligible note or agent should handle it.
@@ -84,7 +86,7 @@ A matching inspected change can support a backed-up, in-place nightly trial with
 
 ## Short replies and embeds
 
-The default chat model is `z-ai/glm-5.3-flash:floor`, with low reasoning effort and a 768-token completion budget. Explicit reasoning-free retry and summary requests still disable reasoning. The `:floor` route sorts eligible providers by price. Existing decision models keep their own budgets and reasoning settings.
+The default chat model is `z-ai/glm-5.3-flash:floor`, with low reasoning effort and a 768-token completion budget. GLM requires reasoning, so tool follow-ups, final-answer retries and OCR also use low effort rather than the rejected `reasoning.enabled=false` setting. Other models still honor explicit reasoning-free requests. The `:floor` route sorts eligible providers by price. Existing decision models keep their own budgets and reasoning settings.
 
 Replies ask for plain, short answers. Essays, full code dumps and huge lists get a brief refusal or a summary offer. Casual profanity is allowed; slurs and harassment are not. Generated Discord AI replies reuse the 1900-byte clipper, preserve UTF-8 and prefer a nearby word boundary. They stay in one message. Verbatim support-note attachments and private note access retain their existing behavior.
 

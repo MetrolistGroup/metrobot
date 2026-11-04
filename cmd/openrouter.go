@@ -36,6 +36,7 @@ func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http
 	if useDefaultRoute {
 		model = openRouterDefaultModel
 	}
+	baseModel, _, _ := strings.Cut(model, ":")
 	return &OpenRouterClient{newChatCompletionClient(
 		keys,
 		endpoint,
@@ -57,11 +58,12 @@ func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http
 			if strings.HasSuffix(model, ":floor") {
 				request.Provider.Sort.By = "price"
 			}
-			if request.DisableReasoning {
+			if baseModel == "z-ai/glm-5.3-flash" {
+				// GLM rejects reasoning.enabled=false, including tool follow-ups and OCR.
+				request.Reasoning = &chatReasoning{Effort: "low"}
+			} else if request.DisableReasoning {
 				disabled := false
 				request.Reasoning = &chatReasoning{Enabled: &disabled}
-			} else if useDefaultRoute {
-				request.Reasoning = &chatReasoning{Effort: "low"}
 			}
 			// session_id is routing/trace grouping, not history; let OpenRouter derive it per conversation.
 			if openRouterExplicitCacheModel(model) && len(request.Messages) > 0 {

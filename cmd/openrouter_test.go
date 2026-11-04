@@ -225,23 +225,37 @@ func TestOpenRouterClientCacheCapabilitiesAndCustomPrompts(t *testing.T) {
 	}
 }
 
-func TestOpenRouterClientHonorsDisableReasoning(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request chatCompletionRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-		}
-		if request.Reasoning == nil || request.Reasoning.Enabled == nil || *request.Reasoning.Enabled || request.Reasoning.Effort != "" {
-			t.Error("explicit reasoning disable was ignored")
-		}
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
-	}))
-	defer server.Close()
-	for _, model := range []string{openRouterDefaultModel, "openai/gpt-4.1-mini"} {
-		client := newOpenRouterClient([]string{"key"}, model, server.URL, server.Client())
-		if _, err := client.Complete(context.Background(), GarminAIRequest{DisableReasoning: true, Messages: testGarminMessages("hi")}); err != nil {
-			t.Fatal(err)
-		}
+func TestOpenRouterClientUsesSupportedReasoningMode(t *testing.T) {
+	for _, test := range []struct {
+		model     string
+		mandatory bool
+	}{
+		{openRouterDefaultModel, true},
+		{"z-ai/glm-5.3-flash", true},
+		{"z-ai/glm-5.3-flash:nitro", true},
+		{"openai/gpt-4.1-mini", false},
+	} {
+		t.Run(test.model, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request chatCompletionRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+				}
+				if test.mandatory {
+					if request.Reasoning == nil || request.Reasoning.Enabled != nil || request.Reasoning.Effort != "low" {
+						t.Error("mandatory-reasoning model must keep low reasoning for tool follow-ups and OCR")
+					}
+				} else if request.Reasoning == nil || request.Reasoning.Enabled == nil || *request.Reasoning.Enabled || request.Reasoning.Effort != "" {
+					t.Error("explicit reasoning disable was ignored")
+				}
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+			}))
+			defer server.Close()
+			client := newOpenRouterClient([]string{"key"}, test.model, server.URL, server.Client())
+			if _, err := client.Complete(context.Background(), GarminAIRequest{DisableReasoning: true, Messages: testGarminMessages("hi")}); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

@@ -92,7 +92,7 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 	// A failed attempt is handled silently; retain pending questions, never a failure reply.
 	supportCompleted = true
 	if err != nil {
-		b.Logger.Error("Metrobot AI request failed", zap.String("user", m.Author.ID.String()), zap.Error(err))
+		b.Logger.Error("Metrobot AI request failed", zap.String("user", m.Author.ID.String()), zap.String("channel_id", m.ChannelID.String()), zap.String("message_id", m.ID.String()), zap.Error(err))
 		return
 	}
 	if ctx.Err() != nil || result == nil {
