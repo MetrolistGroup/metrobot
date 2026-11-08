@@ -31,7 +31,7 @@ func cleanYouTubeSourceIndicators(content string) (string, bool) {
 		for _, part := range parts {
 			key, _, _ := strings.Cut(part, "=")
 			decoded, err := url.QueryUnescape(key)
-			if err == nil && decoded == "si" {
+			if err == nil && (decoded == "si" || decoded == "is") {
 				removed = true
 				continue
 			}

@@ -315,13 +315,39 @@ func TestGarminKillRequiresAuthorizedReplyAndUsesUserTimeout(t *testing.T) {
 }
 
 func TestCleanYouTubeSourceIndicators(t *testing.T) {
-	input := `one https://youtu.be/abc?si=source. two https://www.youtube.com/watch?v=def&si=source&t=12#part three https://music.youtube.com/watch?v=ghi&si=source four https://example.com/?si=keep`
-	want := `one https://youtu.be/abc. two https://www.youtube.com/watch?v=def&t=12#part three https://music.youtube.com/watch?v=ghi four https://example.com/?si=keep`
-	if got, changed := cleanYouTubeSourceIndicators(input); !changed || got != want {
-		t.Fatalf("cleanYouTubeSourceIndicators() = %q, %v; want %q, true", got, changed, want)
-	}
-	if got, changed := cleanYouTubeSourceIndicators("https://youtube.example/watch?si=keep"); changed || got != "https://youtube.example/watch?si=keep" {
-		t.Fatalf("non-YouTube URL changed to %q", got)
+	for _, test := range []struct{ name, input, want string }{
+		{
+			"si links",
+			`one https://youtu.be/abc?si=source. two https://www.youtube.com/watch?v=def&si=source&t=12#part three https://music.youtube.com/watch?v=ghi&si=source four https://example.com/?si=keep`,
+			`one https://youtu.be/abc. two https://www.youtube.com/watch?v=def&t=12#part three https://music.youtube.com/watch?v=ghi four https://example.com/?si=keep`,
+		},
+		{
+			"reported is link",
+			`https://youtu.be/f550E6rVcIU?is=ClbJFCc_df8wDqtM`,
+			`https://youtu.be/f550E6rVcIU`,
+		},
+		{
+			"quoted is link",
+			`watch "https://youtu.be/f550E6rVcIU?is=ClbJFCc_df8wDqtM".`,
+			`watch "https://youtu.be/f550E6rVcIU".`,
+		},
+		{
+			"mixed and encoded indicators preserve other parameters",
+			`https://music.youtube.com/watch?v=abc&si=one&is=two&%69%73=three&t=12&list=a%2fb+c#part`,
+			`https://music.youtube.com/watch?v=abc&t=12&list=a%2fb+c#part`,
+		},
+		{
+			"non-YouTube hosts",
+			`https://youtube.example/watch?si=keep&is=keep https://youtu.be.example/?is=keep`,
+			`https://youtube.example/watch?si=keep&is=keep https://youtu.be.example/?is=keep`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			wantChanged := test.input != test.want
+			if got, changed := cleanYouTubeSourceIndicators(test.input); got != test.want || changed != wantChanged {
+				t.Fatalf("cleanYouTubeSourceIndicators() = %q, %v; want %q, %v", got, changed, test.want, wantChanged)
+			}
+		})
 	}
 }
 
@@ -374,7 +400,7 @@ func TestYouTubeSourceLinkIsRepostedAsUserThenDeleted(t *testing.T) {
 
 	bot := &Bot{Config: &config.Config{DiscordGuildID: "100000000000000012"}, Logger: zap.NewNop()}
 	bot.onMessageCreate(session, &discord.Message{
-		ID: snowflakeID("100000000000000029"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Content: "watch https://youtu.be/video?si=source",
+		ID: snowflakeID("100000000000000029"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Content: "watch https://youtu.be/video?is=source",
 		Author: discord.User{ID: snowflakeID("100000000000000056"), Username: "account", Avatar: ptr("account-avatar")},
 		Member: &discord.Member{Nick: ptr("Server Name"), Avatar: ptr("server-avatar")},
 	})
