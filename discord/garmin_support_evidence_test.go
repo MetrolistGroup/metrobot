@@ -12,6 +12,43 @@ import (
 	"github.com/disgoorg/disgo/discord"
 )
 
+func TestSupportPromptsUseCurrentNoteCatalog(t *testing.T) {
+	b, _, _ := newSupportDecisionTestBot(t)
+	if err := b.Notes.AddNote("download", "Install Metrolist and choose a platform/package", "Get the app from https://metrolist.cc"); err != nil {
+		t.Fatal(err)
+	}
+	message := supportTestMessage(101)
+	message.Content = "How do I install Metrolist on iOS?"
+	request, catalog, err := b.supportDecisionRequest(message, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, note := range catalog {
+		found = found || note.Name == "download"
+	}
+	if !found || !strings.Contains(request.Questions["route"].Instructions, "download reference") {
+		t.Fatal("installation routing lost the current download note")
+	}
+	skill, err := loadGarminSupportAnswerSkill()
+	if err != nil {
+		t.Fatal(err)
+	}
+	playback, err := loadGarminSupportGuide("playback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	instructions := garminAppSupportSystemPrompt + skill + playback + request.Questions["route"].Instructions
+	for _, stale := range []string{"name=kmp", "`kmp`", "kmp reference", "ver covers", "report bug reports", "playbackkmp", "historical rewrite labels in the playback note"} {
+		if strings.Contains(instructions, stale) {
+			t.Errorf("support instructions still direct the model to a removed note: %q", stale)
+		}
+	}
+	if !strings.Contains(playback, "logs note") {
+		t.Fatal("playback diagnostics no longer point to the surviving logs note")
+	}
+}
+
 func TestSupportAnswerNormalizationPreservesSteps(t *testing.T) {
 	for _, answer := range []string{
 		"Open your profile menu.\n\n1. Choose Integrations.\n2. Open Discord.\n3. Log in and enable Rich Presence.",
