@@ -28,7 +28,15 @@ type GarminAI interface {
 	Complete(ctx context.Context, request GarminAIRequest) (*GarminAICompletion, error)
 }
 
+const (
+	GarminChatOutputTokens    = 768
+	GarminSupportOutputTokens = 768
+	GarminTriageOutputTokens  = 128
+	GarminOCROutputTokens     = 768
+)
+
 type GarminAIRequest struct {
+	MaxOutputTokens  int
 	DisableReasoning bool
 	SystemPrompt     string
 	Context          string
@@ -323,9 +331,12 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 		DisableReasoning: input.DisableReasoning,
 		Model:            c.model,
 		Messages:         make([]chatMessage, 1, messageCapacity),
-		MaxTokens:        768,
+		MaxTokens:        input.MaxOutputTokens,
 		Stream:           false,
 		Tools:            append([]GarminAITool(nil), input.Tools...),
+	}
+	if request.MaxTokens <= 0 {
+		request.MaxTokens = GarminChatOutputTokens
 	}
 	for i := range request.Tools {
 		request.Tools[i].Function.Parameters = append(json.RawMessage(nil), request.Tools[i].Function.Parameters...)

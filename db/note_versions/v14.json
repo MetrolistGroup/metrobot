@@ -1,0 +1,77 @@
+[
+  {
+    "name": "discover",
+    "short_desc": "Metrolist Home recommendations and Your daily discover. Historical 13.x labels may differ in v14; not account sync.",
+    "content": "## Your daily discover\nIn Android 13.x, **Your daily discover** appeared on **Home**, based on liked songs. It was a recommendation section, not a saved Library playlist. An active Home filter or no related recommendations could hide it.\n\nMetrolist v14 is the multiplatform rewrite. Those 13.x labels and conditions may differ. Include your platform and what you see if the section is missing; do not assume every platform has the same Home layout."
+  },
+  {
+    "name": "appname",
+    "short_desc": "Why Metrolist is called Metrolist; name origin only.",
+    "content": "Metrolist gets its name from listening to music while taking the metro."
+  },
+  {
+    "name": "download",
+    "short_desc": "Download songs for offline listening in Metrolist v14. Historical Android storage and menu details; not app packages.",
+    "content": "For Metrolist v14 on Android, iOS and desktop. The following Android 13.x details may differ in v14; confirm your platform and visible menus if needed.\n\n## Download a song\nAndroid 13.x used the song's three-dot menu > **Download**, or **Remove download** to remove it. Do not assume identical v14 labels on every platform.\n\n## Where are my downloaded files?\nIn Android 13.x, downloads played inside Metrolist from its private download cache, not the phone's Downloads or Music folder. Do not promise a v14 export feature or a shared filesystem path without current evidence."
+  },
+  {
+    "name": "kmp",
+    "short_desc": "Metrolist v14 public KMP rewrite, platforms, OS minimums, source, packages and upgrading 13.x. No access gate.",
+    "content": "```faq\n# Metrolist v14\n\n## What is KMP?\nKotlin Multiplatform shares code across platforms. Metrolist v14 is the KMP rewrite and is now the Metrolist app. Version 14.0.0 was released on 14 November 2026.\n\n## Is it public? Can I fork it?\nMetrolist is free and public at https://github.com/MetrolistGroup/Metrolist under GPL-3.0. No donation, tester role or source-access permission is required. There is one app and one public repository.\n\n## Which systems and packages are supported?\n- Android 7+ (API 24): universal `Metrolist.apk`, app ID `com.metrolist.music`, with Google Cast built in.\n- iOS 17+: `Metrolist.ipa`, signed with a sideloading tool; `metrolist-altstore.json` is also available.\n- Windows 10+: x64 installer or portable zip, ARM64 portable zip.\n- macOS 15+: Apple silicon or Intel DMG. The app is unsigned, so trust it before opening.\n- Linux: x64 or ARM64 AppImage; the community AUR package is `metrolist-desktop-bin`.\nThere are no MSI, DEB, RPM or Flatpak downloads.\n\nGet official downloads at https://github.com/MetrolistGroup/Metrolist/releases/latest and install instructions at https://github.com/MetrolistGroup/Metrolist/tree/main/docs/install.\n\n## Does Android v14 update 13.x?\nYes. Back up your library and settings, then install `Metrolist.apk` over your existing app. It keeps `com.metrolist.music`. Do not uninstall or clear app data. Restoring a backup can replace destination data; downloaded audio, credentials and platform-specific settings may not transfer.\n\n## Can I import playlists?\nMetrolist imports backups and playlists from 30+ clients and 6 services, including Spotify playlists. Playback uses matched YouTube Music tracks, not Spotify audio. Some tracks may not match.\n```"
+  },
+  {
+    "name": "logs",
+    "short_desc": "Collect Metrolist v14 logs: playback events on supported platforms or Android logcat for crashes.",
+    "content": "For playback events on Android, desktop or iOS, use `.playback`.\n\n## Record Android logs\n1. Install [LogFox](https://github.com/F0x1d/LogFox/releases/latest) and [Shizuku](https://github.com/thedjchi/Shizuku/releases/latest).\n2. Start Shizuku following its instructions, then grant LogFox access. Wireless debugging needs Android 11+; older versions need ADB from a computer or root.\n3. Record in LogFox, reproduce the problem, then stop and export.\n4. Remove private information before sharing the relevant part. Include app/OS versions and reproduction steps. Never share passwords, cookies or tokens.\n5. Stop LogFox and Shizuku when finished.\n\nFor desktop or iOS crashes, include the platform and exact error; Android logcat instructions do not apply."
+  },
+  {
+    "name": "nightly",
+    "short_desc": "Install the public Metrolist v14 nightly for Android, Linux x64 or Windows x64. Back up; unstable, no promised fix.",
+    "content": "## Try nightly\nNightly is the rolling [GitHub prerelease tagged nightly](https://github.com/MetrolistGroup/Metrolist/releases/tag/nightly), rebuilt on every push to main. It may be unstable and does not guarantee a fix.\n\n1. Back up your library and settings.\n2. Android 7+: download [Metrolist.apk](https://github.com/MetrolistGroup/Metrolist/releases/download/nightly/Metrolist.apk). Linux x64: choose the versioned `metrolist-desktop-linux-x64-<version>+<sha7>.AppImage` on the prerelease. Windows x64: choose [Metrolist-Desktop-windows.zip](https://github.com/MetrolistGroup/Metrolist/releases/download/nightly/Metrolist-Desktop-windows.zip).\n3. Nightly installs over stable in place. **Do not uninstall or clear app data.** If installation fails, provide the exact error.\n\nVersions look like `14.0.0+54715a5`. Do not assume other platform assets are available in nightly; check its uploaded files."
+  },
+  {
+    "name": "playback",
+    "short_desc": "First checks for Metrolist v14 playback, Source errors or songs stuck at 0:00 on any platform; playback-event logs.",
+    "content": "## Songs will not play\nFor Metrolist v14 on Android, iOS, Windows, macOS or Linux:\n1. Try another song and check whether YouTube Music plays on the same connection.\n2. Close Metrolist and reopen it.\n3. If available, try another audio-quality setting. **Settings > Player > Audio quality** is a 13.x Android path and may differ in v14.\n\nThese checks do not identify the cause. Do not uninstall, clear app data or log out as a routine fix. Back up before trying another build. Include one reproducible track, exact error, app/OS version and previous attempts if it still fails.\n\n## Playback event logs\nThese Devtools labels come from the pre-v14 rewrite and may differ in v14 on Android, desktop or iOS.\n1. Open **Settings > About** and tap/click the Metrolist icon three times to unlock Devtools.\n2. Return to **Settings > Devtools** and leave it enabled.\n3. Reproduce the problem, then return to **Playback event log**.\n4. Android or desktop: choose **Share**. Android opens the share sheet; desktop saves a `metrolist-playback-*.txt` file in the app log directory. iOS: choose **Copy** and save the text to a file.\n5. Remove private information before sharing the relevant part with your app/OS version and reproduction steps. Never share cookies, tokens or credentials.\n\nIf the app will not open, report the crash and platform instead."
+  },
+  {
+    "name": "playbackkmp",
+    "short_desc": "Compatibility alias for playback: Metrolist v14 playback-event logs on Android, desktop or iOS. Not startup-crash logs.",
+    "content": "## Songs will not play\nFor Metrolist v14 on Android, iOS, Windows, macOS or Linux:\n1. Try another song and check whether YouTube Music plays on the same connection.\n2. Close Metrolist and reopen it.\n3. If available, try another audio-quality setting. **Settings > Player > Audio quality** is a 13.x Android path and may differ in v14.\n\nThese checks do not identify the cause. Do not uninstall, clear app data or log out as a routine fix. Back up before trying another build. Include one reproducible track, exact error, app/OS version and previous attempts if it still fails.\n\n## Playback event logs\nThese Devtools labels come from the pre-v14 rewrite and may differ in v14 on Android, desktop or iOS.\n1. Open **Settings > About** and tap/click the Metrolist icon three times to unlock Devtools.\n2. Return to **Settings > Devtools** and leave it enabled.\n3. Reproduce the problem, then return to **Playback event log**.\n4. Android or desktop: choose **Share**. Android opens the share sheet; desktop saves a `metrolist-playback-*.txt` file in the app log directory. iOS: choose **Copy** and save the text to a file.\n5. Remove private information before sharing the relevant part with your app/OS version and reproduction steps. Never share cookies, tokens or credentials.\n\nIf the app will not open, report the crash and platform instead."
+  },
+  {
+    "name": "report",
+    "short_desc": "What to include in a bug report, or whether to report every failed song. Not a diagnosis or a fix.",
+    "content": "## Report a playback problem\nYou do not need a separate report for every failed song. Start with one reproducible example: the track name or public link, exact error, app/OS version and steps that trigger it. If several tracks fail in the same way, list a few examples together.\n\nMention what you already tried and whether downloaded songs still work. Remove private information from any logs or screenshots before sharing them."
+  },
+  {
+    "name": "repo",
+    "short_desc": "Public Metrolist v14 source, forks, license and official project links.",
+    "content": "Metrolist v14 is the public KMP rewrite in one repository: https://github.com/MetrolistGroup/Metrolist. You can fork it under GPL-3.0. No donation, tester role or source-access permission is required.\n\nWebsite and FAQ: https://metrolist.cc/#faq\nInstall docs: https://github.com/MetrolistGroup/Metrolist/tree/main/docs/install\nDiscord: https://dsc.gg/metrolist\nTelegram: https://t.me/metrolistapp\nMostafa Alagamy created Metrolist. Nyx and Lamp created metrobot."
+  },
+  {
+    "name": "rpc",
+    "short_desc": "Connect Discord Rich Presence, fix Invisible status, or explain missing profile buttons. Not Google login or Last.fm.",
+    "content": "Only authorize through the app's sign-in flow. Never share passwords, tokens or callback URLs.\n\nFor Metrolist v14 on Android, iOS and desktop. These steps come from pre-v14 source review; labels may differ.\n\n## Connect Discord\n1. Open the account/profile menu > **Integrations > Discord**.\n2. Choose **Log in** and complete Discord authorization in the flow the app opens.\n3. Enable **Rich Presence** on that page and play music.\n\n## Presence is not showing\nCheck that Discord is connected and Rich Presence is enabled. If your Discord status is **Invisible**, change it to **Online**, **Do Not Disturb** or **Idle**.\n\n## Profile buttons are missing\nDiscord may hide your own buttons from you. Ask someone else to view your profile."
+  },
+  {
+    "name": "uploads",
+    "short_desc": "Uploaded albums with missing artwork, wrong track order, titles or metadata. Distinguish YouTube Music uploads from local files.",
+    "content": "For YouTube Music uploads in Metrolist v14. The upload destination was checked in Android 13.x; v14 menus may differ. Confirm platform and current behavior before giving upload steps.\n\n## Artwork or track details look wrong\nDoes the same album show the right cover, titles and track order in YouTube Music? If it looks correct there but wrong in Metrolist, report one affected album, what differs, and your app version.\n\nDo not repeatedly delete or re-upload your library, clear app data or reinstall to test it. Missing artwork alone does not identify the cause.\n\n## Where does an upload go?\nMetrolist's upload feature sends your files to YouTube Music. It does not just add them to a local folder. If you mean local audio files rather than YouTube Music uploads, include your app and platform when asking for help."
+  },
+  {
+    "name": "up",
+    "short_desc": "Update Metrolist v14 on Android, iOS or desktop, including 13.x in-place Android upgrades and Izzy updates.",
+    "content": "## Update Metrolist\nBack up your library and settings first. Get the package for your platform from [official releases](https://github.com/MetrolistGroup/Metrolist/releases/latest). Follow the [platform install docs](https://github.com/MetrolistGroup/Metrolist/tree/main/docs/install) for iOS signing or desktop installation.\n\n## Android\nInstall the universal [Metrolist.apk](https://github.com/MetrolistGroup/Metrolist/releases/latest/download/Metrolist.apk) over your existing app, including 13.x installs. Requires Android 7+. Google Cast is built in. **Do not uninstall or clear app data.** If installation fails, provide the exact installer error and installed version; debug or differently signed builds may not update in place.\n\nThe GitHub build has an in-app updater. **Settings > Updater > Check for updates**, **Automatically check for updates** and **Enable update notifications** are 13.x labels and may differ in v14. Checking does not install updates automatically. Android must allow notifications.\n\nThe [IzzyOnDroid build](https://apt.izzysoft.de/fdroid/index/apk/com.metrolist.music) omits the in-app updater. Use the package client you installed it with."
+  },
+  {
+    "name": "ver",
+    "short_desc": "Choose a Metrolist v14 package for Android, iOS, Windows, macOS or Linux, including Izzy and old FOSS/GMS names.",
+    "content": "## Which package?\n- Android 7+ (API 24): universal `Metrolist.apk`, app ID `com.metrolist.music`, with Google Cast built in.\n- iOS 17+: `Metrolist.ipa`, signed with a sideloading tool; `metrolist-altstore.json` is also available.\n- Windows 10+: x64 installer or portable zip, ARM64 portable zip.\n- macOS 15+: Apple silicon or Intel DMG. The app is unsigned, so trust it before opening.\n- Linux: x64 or ARM64 AppImage; the community AUR package is `metrolist-desktop-bin`.\nThere are no MSI, DEB, RPM or Flatpak downloads.\n\nDownload from https://github.com/MetrolistGroup/Metrolist/releases/latest. Android's former standard/FOSS and Google Cast/GMS flavours merged into one APK. `Metrolist-with-Google-Cast.apk`, if listed for old links, is the same app. The separate [IzzyOnDroid build](https://apt.izzysoft.de/fdroid/index/apk/com.metrolist.music) only omits the in-app updater. Back up before updating; Android v14 updates 13.x in place. Nightly is an unstable development build."
+  },
+  {
+    "name": "whatsnightly",
+    "short_desc": "Explain Metrolist v14 nightly versus stable and its rolling public prerelease.",
+    "content": "Nightly is Metrolist's unstable development build, rebuilt on every push to main as the public [nightly prerelease](https://github.com/MetrolistGroup/Metrolist/releases/tag/nightly). Versions look like `14.0.0+54715a5`. It can include newer changes and new bugs. Back up before installing it over stable in place. Use `.nightly` for available Android, Linux x64 and Windows x64 downloads; use stable for the regular release."
+  }
+]

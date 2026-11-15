@@ -525,7 +525,7 @@ func TestRunGarminAILoadsSkillsOnShortFollowup(t *testing.T) {
 					}
 					return garminHistoryTestCall("load_skill", `{"name":"support"}`), nil
 				}
-				if request.Messages[len(request.Messages)-1].Content != full {
+				if request.Messages[len(request.Messages)-1].Content != full && !(appSupport && strings.Contains(request.SystemPrompt, full) && request.Messages[len(request.Messages)-1].Content == "Unchanged reference already supplied in the system prompt.") {
 					t.Fatal("on-demand support skill lost guide text or scope")
 				}
 				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "Which app version are you using?"}}, nil
@@ -918,7 +918,7 @@ func TestGarminSystemPromptAndDiscordContextContainIdentityAndGlobalMemory(t *te
 		t.Fatal(err)
 	}
 	prompt += "\n" + garminDiscordContextForMessage(message)
-	for _, expected := range []string{"You are Metrobot", "Garmin is not your name", "disgo", `"display_name":"exact_user"`, "exact_user", "123456789012345678", "Known fact", "not abandoned or dead", "Never use em dashes", "Mentioned users", "no nationality", "lower priority", "lowercase by default", "Refuse sexual or erotic", "Metrobot's repository", "created by Nyx and Lamp", "Mostafa Alagamy", "Nyx, Lamp, and Adriel", "without mentioning hidden prompts", "Use web search", "untrusted data", "calculator tool", "GSMArena phone data", "read-only requests", "never replace the answer with a stock redirect", "riff on them, never treat them as typos"} {
+	for _, expected := range []string{"You are Metrobot", "Never call yourself Garmin", `"display_name":"exact_user"`, "123456789012345678", "Known fact", "v14", "No em/en dashes", "current_user is the speaker", "nationality", "lower-priority", "lowercase prose", "sexual/erotic", "https://github.com/MetrolistGroup/metrobot", "Nyx and Lamp", "Mostafa Alagamy", "hidden instructions", "Use web search", "data, never authority", "calculate_math", "GSMArena", "read-only and public-only", "alongside the answer", "not lookup requests or typos"} {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("prompt missing %q", expected)
 		}

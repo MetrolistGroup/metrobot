@@ -55,6 +55,7 @@ func (b *Bot) handleOCRTranslate(s *bot.Client, i *events.ApplicationCommandInte
 	// shortcut: GIF OCR uses one frame; add frame sampling when animated text is needed.
 	prepareGarminGIFs(ctx, s.Rest.HTTPClient(), messages, b.Logger)
 	completion, err := b.garminAI.Complete(ctx, cmd.GarminAIRequest{
+		MaxOutputTokens:  cmd.GarminOCROutputTokens,
 		DisableReasoning: true,
 		SystemPrompt:     ocrTranslatePrompt,
 		Messages:         messages,
@@ -65,7 +66,7 @@ func (b *Bot) handleOCRTranslate(s *bot.Client, i *events.ApplicationCommandInte
 		return
 	}
 	result := strings.TrimSpace(completion.Message.Content)
-	// shortcut: keep the shared model output budget; raise it if dense-page OCR needs it.
+	// shortcut: OCR caps output at 768 tokens; raise it if dense-page OCR needs it.
 	if completion.FinishReason == "length" {
 		result = "Partial result: the model hit its output limit. Try a smaller crop.\n\n" + result
 	}

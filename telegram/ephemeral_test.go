@@ -122,7 +122,7 @@ func TestTelegramSendHelpersUploadFullReplyAndKeepCleanup(t *testing.T) {
 			text := strings.Repeat("**Full 界𝄞**\n<https://example.com>\n", 200)
 			filename := "note.md"
 			if test.formatted {
-				text = "<b>Latest GitHub Actions runs:</b>\n\n" + strings.Repeat("Run #1000 failed or was cancelled. "+strings.Repeat("a", 175)+" (1234567)\n", 20)
+				text = "<b>Metrolist nightly downloads:</b>\n\n" + strings.Repeat("Nightly asset download: "+strings.Repeat("a", 175)+" (1234567)\n", 20)
 				filename = "message.txt"
 			}
 			synctest.Test(t, func(t *testing.T) {

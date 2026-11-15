@@ -291,3 +291,24 @@ func TestOpenRouterClientRetriesRateLimitThreeTimes(t *testing.T) {
 		t.Fatalf("Ask() error = %v after %d requests, want initial request plus 3 retries", err, requests)
 	}
 }
+
+func TestOpenRouterExplicitOutputBudgetsKeepGLMLowReasoning(t *testing.T) {
+	var request chatCompletionRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer server.Close()
+	client := newOpenRouterClient([]string{"key"}, "", server.URL, server.Client())
+	for _, budget := range []int{GarminChatOutputTokens, GarminSupportOutputTokens, GarminTriageOutputTokens, GarminOCROutputTokens} {
+		if _, err := client.Complete(context.Background(), GarminAIRequest{MaxOutputTokens: budget, DisableReasoning: true, Messages: testGarminMessages("hello")}); err != nil {
+			t.Fatal(err)
+		}
+		if request.MaxTokens != budget || request.Reasoning == nil || request.Reasoning.Effort != "low" || request.Reasoning.Enabled != nil {
+			t.Fatalf("GLM budget/reasoning=%+v", request)
+		}
+	}
+}

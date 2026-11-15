@@ -105,3 +105,13 @@ The first database open records `note_markup_v1` in `migrations`, in the same tr
 A successful validated edit activates markup on a literal legacy note. Put examples inside a longer ordinary fence if they must remain literal. Renaming alone does not activate markup.
 
 The marker is written even on an empty database. Restarts never repeat the migration, including after directives are removed or an old name is reused. Failure rolls back bodies, interpretation metadata and marker together. Preserve all of them when upgrading.
+
+## Metrolist v14 note migration
+
+After `note_markup_v1`, startup runs `metrolist_v14_notes_v1` once in a transaction. It compares exact stored content against the four earlier authored sets retained in `db/note_versions/pre_v14*.json`. A known legacy `kmp` FAQ wrapper also qualifies. A changed description, including a blank routing opt-out, counts as a staff edit. Only eligible rows receive the current content, description and active markup metadata. Failure rolls back the note changes and marker. The marker also records an empty database; this migration is not a seed.
+
+For the last authored set before v14, it updates `discover`, `download`, `kmp`, `logs`, `nightly`, `playback`, `playbackkmp`, `repo`, `rpc`, `uploads`, `up`, `ver` and `whatsnightly`. It skips unchanged `appname` and `report` as already current. Older known sets can also receive current descriptions for those two notes. Notes from a schema without descriptions need manual review. All 15 names remain available; `playbackkmp` contains the same guidance as `playback`.
+
+For every name, it skips absent rows and preserves unknown/staff-edited rows. It logs the outcome for each note, including manual-review warnings for preserved staff edits. It does not overwrite a changed description, activate markup on a skipped note, or recreate a deleted/renamed note. Restarts do not revisit rows after the marker exists. Review the startup log to learn which rows actually changed on a particular installation.
+
+The migration does not change a live shared-memory file, a stored system-prompt override or staff-authored `testertour` content. Staff should review old product/access claims in those sources. Automatic donor welcomes now use `donorwelcome` when present and a public-app thank-you otherwise; they never load `testertour`. Existing `note:kmp:question` menus remain compatible with the current FAQ.

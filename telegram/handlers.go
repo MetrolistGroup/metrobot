@@ -188,7 +188,7 @@ func (b *Bot) tgHandleHelp(msg *tgbotapi.Message) {
 <b>Bot info:</b>
 • /version - Show release info
 • /latest - Show the latest release
-• /actions - GitHub Actions build status
+• /actions - Metrolist nightly downloads
 • /ping - Check latency to services
 
 <b>Moderation (admin only):</b>

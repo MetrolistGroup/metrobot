@@ -141,7 +141,7 @@ func TestNewDonorGetsPingingWelcomeNote(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if err := database.AddNote(donorWelcomeNote, "Tester onboarding", "Welcome to the tester team!"); err != nil {
+	if err := database.AddNote(donorWelcomeNote, "Donor welcome", "Thank you for supporting Metrolist!"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -158,7 +158,7 @@ func TestNewDonorGetsPingingWelcomeNote(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatal(err)
 		}
-		if payload.Content != "<@100000000000000056>\nWelcome to the tester team!" {
+		if payload.Content != "<@100000000000000056>\nThank you for supporting Metrolist!" {
 			t.Errorf("content = %q", payload.Content)
 		}
 		if !slices.Equal(payload.AllowedMentions.Users, []snowflake.ID{snowflakeID("100000000000000056")}) || len(payload.AllowedMentions.Parse) != 0 {

@@ -19,8 +19,8 @@ func TestAuthoredSupportNotesAreValid(t *testing.T) {
 	if err := json.Unmarshal(data, &notes); err != nil {
 		t.Fatal(err)
 	}
-	if len(notes) == 0 {
-		t.Fatal("empty support note update")
+	if len(notes) != 15 {
+		t.Fatal("expected all 15 managed support notes")
 	}
 	seen := make(map[string]bool)
 	for _, note := range notes {

@@ -359,7 +359,7 @@ func (b *Bot) registerCommands() error {
 		Description: "Show the latest release",
 	}, discord.SlashCommandCreate{
 		Name:        "actions",
-		Description: "Show GitHub Actions build status",
+		Description: "Show Metrolist nightly downloads",
 		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionBool{
 			Name:        "stay",
 			Description: "Keep message permanently (admin only)",

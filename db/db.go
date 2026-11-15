@@ -167,6 +167,9 @@ func (d *DB) migrate() error {
 	if err := d.migrateNoteMarkup(); err != nil {
 		return err
 	}
+	if err := d.migrateV14Notes(); err != nil {
+		return err
+	}
 	return d.migrateSettings()
 }
 

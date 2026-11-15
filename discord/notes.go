@@ -18,7 +18,8 @@ import (
 	"go.uber.org/zap"
 )
 
-const kmpNoteSelectCustomID = "note:kmp:question" // Keep already-posted legacy FAQ menus usable.
+// Resolve old menus through the current v14 FAQ; the ID carries no tester-access policy.
+const kmpNoteSelectCustomID = "note:kmp:question"
 
 func newDiscordNoteMessage(content, prefix string) discord.MessageCreate {
 	message := discord.MessageCreate{Content: prefix + content}

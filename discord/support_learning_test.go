@@ -144,6 +144,10 @@ func TestSupportEvidenceCheckFitsLargeResearch(t *testing.T) {
 		if body, _ := json.Marshal(request); len(body) > cmd.DecisionsBodyMax-512 {
 			t.Fatalf("evidence request is %d bytes", len(body))
 		}
+		sources, _ := json.Marshal(request.State.(map[string]any)["tool_results"])
+		if strings.Count(string(sources), `"tool":"get_metrolist_issue"`) != 1 {
+			t.Fatal("checker resends identical evidence")
+		}
 		return supportNoulDecision("grounded", .9), nil
 	})}
 	if accepted, _, err := b.supportAnswerGrounded(context.Background(), supportTestMessage(5), messages, conversation, "draft", nil); err != nil || !accepted {
@@ -170,7 +174,11 @@ func TestSupportResearchToolBudget(t *testing.T) {
 			}
 		}
 		if refused == 0 && request.Tools != nil {
-			return garminHistoryTestCall("search_metrolist_code", `{"query":"lyrics translation"}`), nil
+			calls := make([]cmd.GarminAIToolCall, garminSupportResearchBudget+1)
+			for i := range calls {
+				calls[i] = cmd.GarminAIToolCall{ID: fmt.Sprint(i), Type: "function", Function: cmd.GarminAIFunctionCall{Name: "search_metrolist_code", Arguments: `{"query":"lyrics translation"}`}}
+			}
+			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{ToolCalls: calls}}, nil
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "answer"}}, nil
 	})

@@ -28,7 +28,7 @@ func TestSupportNamedDefectCannotPassHighGrounding(t *testing.T) {
 func TestPlaybackAndCastingGuidesAreDiscoverableAndScoped(t *testing.T) {
 	for _, name := range []string{"playback", "casting"} {
 		guide, err := loadGarminSupportGuide(name)
-		if err != nil || !strings.Contains(guide, "standalone Android") {
+		if err != nil || !strings.Contains(guide, "Metrolist v14") || !strings.Contains(guide, "may differ") {
 			t.Fatalf("guide %s lost scope: %v", name, err)
 		}
 		var found bool

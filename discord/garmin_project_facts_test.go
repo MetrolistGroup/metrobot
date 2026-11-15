@@ -76,3 +76,27 @@ func TestCasualChatCanCorrectLoginClaimAndRetrieveGuides(t *testing.T) {
 		})
 	}
 }
+
+func TestV14ProjectDetailsLoadOnDemand(t *testing.T) {
+	reference, err := loadGarminSkill("metrolist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, err := loadGarminProjectReference()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fact := range []string{"v14.0.0", "14 November 2026", "Android 7+", "iOS 17+", "Windows 10+", "ARM64 portable", "macOS 15+", "unsigned", "metrolist-desktop-bin", "com.metrolist.music", "Metrolist.apk", "No donation, tester role or source-access gate remains", "metrolist-installer-windows-x64-VERSION.exe", "F-Cast", "ListenBrainz", "metrolist-altstore.json", "SHA256SUMS"} {
+		if !strings.Contains(reference, fact) {
+			t.Errorf("missing v14 fact %q", fact)
+		}
+	}
+	for _, old := range []string{"in maintenance mode", "com.metrolist.music.kmp", "MetrolistGroup/Metrolist-KMP", "requires the GMS", "restricted source", "No native ARM64"} {
+		if strings.Contains(reference, old) {
+			t.Errorf("old product split %q", old)
+		}
+	}
+	if strings.Contains(core, "SHA256SUMS") || strings.Contains(core, "F-Cast") || !strings.Contains(core, "public") {
+		t.Fatal("static prefix includes rare details or omits public status")
+	}
+}

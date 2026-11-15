@@ -24,7 +24,7 @@ const testKMPNote = `## What is KMP?
 
 KMP stands for Kotlin Multiplatform.
 
-## What platforms will be supported?
+## What platforms are supported?
 
 * Linux
 * macOS
@@ -32,9 +32,9 @@ KMP stands for Kotlin Multiplatform.
 * Android
 * iOS
 
-## When will Metrolist-KMP be released?
+## When was the rewrite released?
 
-There is currently no fixed release date.`
+Metrolist v14.0.0 was released on 14 November 2026. It is free and public.`
 
 func TestGarminAppSupportTriageUsesModelActions(t *testing.T) {
 	for _, test := range []struct {

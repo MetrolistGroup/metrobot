@@ -19,7 +19,7 @@ const (
 	garminAIContextMax   = 500
 	garminAITimeout      = 45 * time.Second
 	garminSupportTimeout = 90 * time.Second
-	garminAIMaxImages    = 20
+	garminAIMaxImages    = 8
 )
 
 func (b *Bot) handleGarminAI(s *bot.Client, m *discord.Message, messages []cmd.GarminAIMessage) {

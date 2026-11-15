@@ -13,11 +13,6 @@
   "permaadmin_telegram_ids": ["123"],
   "github_owner": "MetrolistGroup",
   "github_repo": "Metrolist",
-  "actions_workflow_file": "build.yml",
-  "actions_artifact_names": {
-    "foss": "app-release",
-    "gms": "app-with-Google-cast"
-  },
   "log_file": "bot.log",
   "discord_log_channel": "1234567890123456789",
   "starboard_channel_id": "",

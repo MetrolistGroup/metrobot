@@ -25,8 +25,9 @@ type Config struct {
 	PermaAdminDiscordIDs  []string `json:"permaadmin_discord_ids"`
 	PermaAdminTelegramIDs []string `json:"permaadmin_telegram_ids"`
 
-	GitHubOwner          string `json:"github_owner"`
-	GitHubRepo           string `json:"github_repo"`
+	GitHubOwner string `json:"github_owner"`
+	GitHubRepo  string `json:"github_repo"`
+	// Deprecated Actions keys remain accepted for existing installations.
 	ActionsWorkflowFile  string `json:"actions_workflow_file"`
 	ActionsArtifactNames struct {
 		Foss string `json:"foss"`
@@ -77,9 +78,6 @@ func (c *Config) validate() error {
 		{"discord_guild_id", c.DiscordGuildID},
 		{"github_owner", c.GitHubOwner},
 		{"github_repo", c.GitHubRepo},
-		{"actions_workflow_file", c.ActionsWorkflowFile},
-		{"actions_artifact_names.foss", c.ActionsArtifactNames.Foss},
-		{"actions_artifact_names.gms", c.ActionsArtifactNames.GMS},
 		{"log_file", c.LogFile},
 	}
 

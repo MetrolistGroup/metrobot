@@ -112,7 +112,7 @@ func (b *Bot) registerCommands() {
 		{Command: "delnote", Description: "Delete a note (admin)"},
 		{Command: "version", Description: "Show release info"},
 		{Command: "latest", Description: "Show the latest release"},
-		{Command: "actions", Description: "GitHub Actions build status"},
+		{Command: "actions", Description: "Metrolist nightly downloads"},
 		{Command: "ban", Description: "Permanently ban a user (admin)"},
 		{Command: "dban", Description: "Ban a user and delete their messages (admin)"},
 		{Command: "tban", Description: "Temporarily ban a user (admin)"},

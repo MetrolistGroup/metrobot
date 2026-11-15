@@ -104,9 +104,8 @@ func main() {
 
 	logger.Info("database initialized")
 
-	actionsClient, err := gh.NewActionsClient(cfg.GitHubToken, cfg.GitHubOwner, cfg.GitHubRepo, cfg.ActionsWorkflowFile)
-	if err != nil {
-		logger.Fatal("failed to initialize GitHub Actions client", zap.Error(err))
+	if cfg.ActionsWorkflowFile != "" || cfg.ActionsArtifactNames.Foss != "" || cfg.ActionsArtifactNames.GMS != "" {
+		logger.Info("ignoring legacy actions_workflow_file and actions_artifact_names; nightly uses GitHub release tag assets")
 	}
 	releasesClient, err := gh.NewReleasesClient(cfg.GitHubToken, cfg.GitHubOwner, cfg.GitHubRepo)
 	if err != nil {
@@ -115,7 +114,7 @@ func main() {
 
 	notesHandler := &cmd.NotesHandler{DB: database}
 	versionHandler := &cmd.VersionHandler{Releases: releasesClient}
-	actionsHandler := &cmd.ActionsHandler{Actions: actionsClient, Config: cfg}
+	actionsHandler := &cmd.ActionsHandler{Releases: releasesClient}
 	// Create timer manager for proper cleanup
 	timerManager := NewTimerManager()
 

@@ -29,7 +29,7 @@ const (
 	blockedGuildTagID       = "1469982893056200819"
 	donorRoleID             = "1528525769570127872"
 	donorWelcomeChannelID   = "1528531338196418683"
-	donorWelcomeNote        = "testertour"
+	donorWelcomeNote        = "donorwelcome"
 )
 
 var garminDirectSlurPatterns = []*regexp.Regexp{
@@ -1445,7 +1445,14 @@ func (b *Bot) onGuildMemberUpdate(s *bot.Client, m *events.GuildMemberUpdate) {
 func (b *Bot) sendDonorWelcome(s *bot.Client, userID string) {
 	note, err := b.Notes.GetNoteDocument(donorWelcomeNote)
 	if err != nil {
-		b.Logger.Error("failed to load donor welcome note", zap.Error(err))
+		// Retire tester onboarding while retaining a thank-you for new donors.
+		_, sendErr := s.Rest.CreateMessage(snowflakeID(donorWelcomeChannelID), discord.MessageCreate{
+			Content:         fmt.Sprintf("<@%s>\nThank you for supporting Metrolist. Metrolist v14 is free and public for everyone.", userID),
+			AllowedMentions: &discord.AllowedMentions{Users: []snowflake.ID{snowflakeID(userID)}},
+		})
+		if sendErr != nil {
+			b.Logger.Error("failed to send donor thank-you", zap.Error(sendErr))
+		}
 		return
 	}
 	rendered := note.Render()

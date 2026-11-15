@@ -53,3 +53,32 @@ func TestDonorWelcomeRichRejectionKeepsTargetOnlyFallback(t *testing.T) {
 		t.Fatal("fallback broadened mentions")
 	}
 }
+
+func TestDonorWelcomeThanksWithoutTesterOnboarding(t *testing.T) {
+	database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	notes := &cmd.NotesHandler{DB: database}
+	if err := notes.AddNote("testertour", "Old onboarding", "Donation grants tester and source access."); err != nil {
+		t.Fatal(err)
+	}
+	var got deliveredNote
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = readDeliveredNote(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"38","channel_id":"5"}`))
+	}))
+	defer server.Close()
+	client := mustTestClient(t)
+	client.Rest = testREST(server.Client())
+	client.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: client.Rest.HTTPClient().Transport, target: server.URL}
+	(&Bot{Notes: notes, Logger: zap.NewNop()}).sendDonorWelcome(client, "56")
+	if !strings.Contains(got.Message.Content, "Thank you") || !strings.Contains(got.Message.Content, "free and public") || strings.Contains(got.Message.Content, "access") {
+		t.Fatal("old onboarding leaked", got)
+	}
+	if mentions := got.Message.AllowedMentions; mentions == nil || len(mentions.Users) != 1 || mentions.Users[0] != 56 || len(mentions.Parse) != 0 || len(mentions.Roles) != 0 {
+		t.Fatal("thank-you broadened mentions")
+	}
+}

@@ -222,7 +222,7 @@ func TestSupportNoteMessagesLive(t *testing.T) {
 		name, question  string
 		want, forbidden []string
 	}{
-		{"fork-access", "Can I fork Metrolist KMP? I have tester access.", []string{"source", "license"}, []string{"permission from staff", "you can clone", "#metrolist-kmp"}},
+		{"fork-access", "Can I fork Metrolist KMP? I have tester access.", []string{"source", "license"}, []string{"permission from staff", "restricted source", "#metrolist-kmp"}},
 		{"metadata", "My uploaded album shows a cover on only one song. Why?", []string{"youtube music", "correct", "?"}, []string{"known limitation", "tag editor", "music.youtube.com/upload"}},
 		{"report-songs", "Should I report every song that fails to play?", []string{"reproducible", "version"}, []string{"temporary extractor", "audio source"}},
 	} {
@@ -307,12 +307,12 @@ func TestSupportAgentLive(t *testing.T) {
 		{id: "metadata-ambiguous", messages: []cmd.GarminAIMessage{{Role: "user", Content: "I added cover art to an album I uploaded but it only shows on one song. Why?"}}, wantAnswer: true, forbidden: []string{"clear app data", "reinstall", "known bug", "known limitation", "likely", "fixed in nightly", "edit the album", "no in-app"}},
 		{id: "metadata-failed-attempt", messages: []cmd.GarminAIMessage{{Role: "user", Content: "My uploaded album has no cover and the tracks are in the wrong order."}, {Role: "assistant", Content: "Are these local files or an album uploaded to YouTube Music?"}, {Role: "user", Content: "YouTube Music uploads. I updated and uploaded it again; still the same."}}, wantAnswer: true, forbidden: []string{"try uploading again", "try updating", "clear app data", "fixed in nightly", "music.youtube.com/upload", "edit the album", "youtube studio", "cannot fix", "can't fix"}},
 		{id: "report-every-song", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Should I report every song that fails to play?"}}, wantAnswer: true, selectedNote: "report", wantNote: "report", forbidden: []string{"extractor issues", "source issues", "audio source"}},
-		{id: "restricted-source-fork", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Can I fork Metrolist KMP? I have tester access."}}, wantAnswer: true, selectedNote: "kmp", forbidden: []string{"cannot make a fork", "only use the official", "not allowed to fork", "#metrolist-kmp", "personal use", "explicit permission"}},
+		{id: "public-source-fork", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Can I fork Metrolist KMP? I have tester access."}}, wantAnswer: true, selectedNote: "kmp", forbidden: []string{"cannot make a fork", "only use the official", "not allowed to fork", "#metrolist-kmp", "personal use", "explicit permission"}},
 		{id: "donation-links", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Where can I donate? Give me the links."}}, wantAnswer: true, selectedNote: "donate", forbidden: []string{"check the `donate`", "see the `donate`"}},
 		{id: "source-error", messages: []cmd.GarminAIMessage{{Role: "user", Content: "What if it said playback failed because of Source error"}}, wantAnswer: true},
 		{id: "streamed-only", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Source error"}, {Role: "assistant", Content: "Does it happen with downloaded songs too?"}, {Role: "user", Content: "Downloaded songs work. It only fails on songs I stream."}}, wantAnswer: true},
 		{id: "wifi-casting", messages: []cmd.GarminAIMessage{{Role: "user", Content: "The option to stream to another device via WiFi is still not working?"}}, wantAnswer: true, forbidden: []string{"downloaded songs", "source error"}},
-		{id: "kmp-availability", messages: []cmd.GarminAIMessage{{Role: "user", Content: "is kmp released?"}}, wantAnswer: true, wantNote: "kmp", forbidden: []string{"pinned", "check the `kmp` note", "is released for", "source exists"}},
+		{id: "kmp-availability", messages: []cmd.GarminAIMessage{{Role: "user", Content: "is kmp released?"}}, wantAnswer: true, wantNote: "kmp", forbidden: []string{"pinned", "check the `kmp` note", "not yet", "tester access required"}},
 		{id: "kmp-windows-arm", messages: []cmd.GarminAIMessage{{Role: "user", Content: "Will kmp work on Windows ARM or is it only Windows x64?"}}, wantAnswer: true, selectedNote: "kmp", forbidden: []string{"prismo", "prism", "emulation", "playback checks", "at this time"}},
 		{id: "impersonation-report", messages: []cmd.GarminAIMessage{{Role: "user", Content: "how do i tell someone about a fake google play impersonation app"}}, wantAnswer: true, forbidden: []string{"in-app reporting", "cannot verify", "dsc.gg", "t.me", "playback"}},
 		{id: "impersonation-contact", messages: []cmd.GarminAIMessage{{Role: "user", Content: "how do i tell someone about a fake google play impersonation app"}, {Role: "assistant", Content: "Share the fake app's store link with the moderators here."}, {Role: "user", Content: "who would i contact for this though"}}, wantAnswer: true, forbidden: []string{"dsc.gg", "t.me", "playback", "cannot verify"}},
@@ -523,7 +523,7 @@ func TestSupportAgentLive(t *testing.T) {
 				if strings.HasPrefix(test.id, "metadata-") && (!strings.Contains(strings.ToLower(r.Answer), "youtube music") || !strings.Contains(r.Answer, "?")) {
 					t.Error("metadata answer skipped the diagnostic question")
 				}
-				if test.id == "restricted-source-fork" && (strings.HasPrefix(r.Answer, "Yes") || strings.HasPrefix(r.Answer, "No.")) {
+				if test.id == "public-source-fork" && (strings.HasPrefix(r.Answer, "Yes") || strings.HasPrefix(r.Answer, "No.")) {
 					t.Error("tester access was turned into a blanket permission decision")
 				}
 				if test.id == "donation-links" && !strings.Contains(r.Answer, "https://") {

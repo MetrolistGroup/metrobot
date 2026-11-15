@@ -27,7 +27,7 @@ func TestSupportRetryReservesReferenceAndAnswerRounds(t *testing.T) {
 			}
 			return garminHistoryTestCall("load_support_guide", `{"name":"discovery"}`), nil
 		}
-		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "Your daily discover is on Home in standalone Android."}}, nil
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "Android 13.x had Your daily discover on Home; v14 labels may differ."}}, nil
 	})
 	b.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
 		checks++
@@ -68,7 +68,7 @@ func TestSupportLookupFailureStaysSilentAndRetainsQuestion(t *testing.T) {
 	followup.Content = "answer"
 	messages = b.garminAITriggeredConversation(followup, followup.Content)
 	b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "Your daily discover is on Home in standalone Android."}}, nil
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "Android 13.x had Your daily discover on Home; v14 labels may differ."}}, nil
 	})
 	b.garminAILastUsed[m.Author.ID.String()] = time.Now().Add(-garminAICooldown)
 	b.handleGarminAutomaticAppSupport(client, followup, messages)

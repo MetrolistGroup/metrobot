@@ -10,7 +10,7 @@ func loadGarminSupportAnswerSkill() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("loading support skill: %w", err)
 	}
-	project, err := loadGarminSkill("metrolist")
+	project, err := loadGarminProjectReference()
 	if err != nil {
 		return "", err
 	}
@@ -29,4 +29,13 @@ func loadGarminSupportGuide(name string) (string, error) {
 	default:
 		return "", fmt.Errorf("unknown support guide %q; available guides: rpc, login, scrobbling, playlists, discovery, playback, casting", name)
 	}
+}
+
+func loadGarminProjectReference() (string, error) {
+	project, err := loadGarminSkill("metrolist")
+	if err != nil {
+		return "", err
+	}
+	core, _, _ := strings.Cut(project, "\n## On-demand platform and feature details")
+	return strings.TrimSpace(core), nil
 }

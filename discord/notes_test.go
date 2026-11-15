@@ -29,7 +29,7 @@ func TestDiscordNoteMessageBoundaries(t *testing.T) {
 	}{
 		{name: "ASCII boundary", content: strings.Repeat("a", 1999) + "\n"},
 		{name: "newline overflow", content: strings.Repeat("a", 2000) + "\n", file: true},
-		{name: "actions failure streak", content: "**Latest GitHub Actions runs:**\n\n" + strings.Repeat("Run #1000 failed or was cancelled. "+strings.Repeat("a", 60)+" (1234567)\n", 20), file: true},
+		{name: "long nightly asset list", content: "**Metrolist nightly downloads:**\n\n" + strings.Repeat("Nightly asset download: "+strings.Repeat("a", 60)+" (1234567)\n", 24), file: true},
 		{name: "wrapped URL overflow", content: suppressDiscordEmbeds(strings.Repeat("https://example.com ", 100)), file: true},
 		{name: "BMP boundary", content: strings.Repeat("界", 2000)},
 		{name: "supplementary boundary", content: strings.Repeat("𝄞", 1000)},

@@ -154,9 +154,11 @@ type ReleasesClient struct {
 	owner  string
 	repo   string
 
-	mu        sync.Mutex
-	cached    []*ReleaseInfo
-	fetchedAt time.Time
+	mu               sync.Mutex
+	cached           []*ReleaseInfo
+	fetchedAt        time.Time
+	nightly          *ReleaseInfo
+	nightlyFetchedAt time.Time
 }
 
 func NewReleasesClient(token, owner, repo string) (*ReleasesClient, error) {
@@ -326,4 +328,49 @@ func (r *ReleasesClient) GetRelease(ctx context.Context, tag string) (*ReleaseIn
 		}
 	}
 	return nil, nil
+}
+
+// GetNightly resolves the rolling tag directly even when it is outside the release listing.
+func (r *ReleasesClient) GetNightly(ctx context.Context) (*ReleaseInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	if r.nightly != nil && time.Since(r.nightlyFetchedAt) < 5*time.Minute {
+		result := cloneReleases([]*ReleaseInfo{r.nightly})[0]
+		r.mu.Unlock()
+		return result, nil
+	}
+	r.mu.Unlock()
+	client, err := publicRepositoryClient(ctx, r.client, r.owner, r.repo)
+	if err != nil {
+		return nil, err
+	}
+	release, _, err := client.Repositories.GetReleaseByTag(ctx, r.owner, r.repo, "nightly")
+	if isForbiddenGitHubError(err) {
+		client, err = newPublicGitHubClient()
+		if err != nil {
+			return nil, err
+		}
+		release, _, err = client.Repositories.GetReleaseByTag(ctx, r.owner, r.repo, "nightly")
+	}
+	var responseError *github.ErrorResponse
+	if errors.As(err, &responseError) && responseError.Response != nil && responseError.Response.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("fetching nightly release: %w", err)
+	}
+	if release.GetDraft() || release.GetTagName() != "nightly" || !release.GetPrerelease() {
+		return nil, fmt.Errorf("nightly tag is not a published prerelease")
+	}
+	info := &ReleaseInfo{TagName: release.GetTagName(), PublishedAt: release.GetPublishedAt().Time, HTMLURL: release.GetHTMLURL()}
+	for _, asset := range release.Assets {
+		info.Assets = append(info.Assets, ReleaseAsset{Name: asset.GetName(), DownloadURL: asset.GetBrowserDownloadURL(), Size: asset.GetSize(), DownloadCount: asset.GetDownloadCount()})
+	}
+	r.mu.Lock()
+	r.nightly = cloneReleases([]*ReleaseInfo{info})[0]
+	r.nightlyFetchedAt = time.Now()
+	r.mu.Unlock()
+	return info, nil
 }

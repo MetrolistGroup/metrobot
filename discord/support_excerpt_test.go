@@ -10,9 +10,9 @@ import (
 )
 
 func TestSupportNoteSectionsPreserveScopeAndCode(t *testing.T) {
-	source := "For standalone Android only.\n\n## First\nStep one. Back up first.\n```text\n## Not a section\n```\n\n## Second\nStep two."
+	source := "For Metrolist v14 Android only.\n\n## First\nStep one. Back up first.\n```text\n## Not a section\n```\n\n## Second\nStep two."
 	sections := supportNoteSections(source)
-	if len(sections) != 2 || !strings.HasPrefix(sections[0], "For standalone Android only.") || !strings.Contains(sections[0], "Back up first.") || !strings.Contains(sections[0], "## Not a section") || sections[1] != "For standalone Android only.\n\n## Second\nStep two." {
+	if len(sections) != 2 || !strings.HasPrefix(sections[0], "For Metrolist v14 Android only.") || !strings.Contains(sections[0], "Back up first.") || !strings.Contains(sections[0], "## Not a section") || sections[1] != "For Metrolist v14 Android only.\n\n## Second\nStep two." {
 		t.Fatalf("sections=%q", sections)
 	}
 	if got := supportNoteSections("plain note\nwith a link"); len(got) != 1 || got[0] != "plain note\nwith a link" {
@@ -40,7 +40,7 @@ func excerptDecision(request cmd.DecisionRequest, selected string, probability f
 func TestSupportExcerptSendsRetrievedSnapshotWithoutParaphrasing(t *testing.T) {
 	b, _, _ := newSupportDecisionTestBot(t)
 	b.Config.OpenRouterDecisionModel = "qwen/qwen3.7-flash"
-	const body = "## Released?\nNot yet. No date is set.\n\n## Access?\nAsk staff about access."
+	const body = "## Released?\nMetrolist v14 is public.\n\n## Access?\nNo tester role or donation is required."
 	if err := b.Notes.AddNote("release", "Release status and access", body); err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestSupportExcerptSendsRetrievedSnapshotWithoutParaphrasing(t *testing.T) {
 	m.Content = "Is it released?"
 	ctx := context.WithValue(context.Background(), supportSelectedNoteContextKey{}, "release")
 	result, err := b.runGarminAI(ctx, nil, m, []cmd.GarminAIMessage{{Role: "user", Content: m.Content}})
-	if err != nil || result.Answer != "## Released?\nNot yet. No date is set." || result.NoteName != "release" || result.Unverified {
+	if err != nil || result.Answer != "## Released?\nMetrolist v14 is public." || result.NoteName != "release" || result.Unverified {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
 }

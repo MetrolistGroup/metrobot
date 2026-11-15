@@ -7,7 +7,7 @@ func TestLoadGarminSupportAnswerSkillIsCoreOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := loadGarminSkill("metrolist")
+	project, err := loadGarminProjectReference()
 	if err != nil {
 		t.Fatal(err)
 	}

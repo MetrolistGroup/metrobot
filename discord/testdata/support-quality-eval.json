@@ -1,5 +1,5 @@
 [
-  {"id":"kmp-fork-access","message":"Can I fork Metrolist KMP? I have tester access.","expected":["kmp"]},
+  {"id":"kmp-fork-access","message":"Can I fork Metrolist v14 or do I need tester access to the source?","expected":["kmp"]},
   {"id":"uploaded-artwork","message":"My uploaded album shows a cover on only one song. Why?","expected":["uploads"]},
   {"id":"report-failed-songs","message":"Should I report every song that fails to play?","expected":["report"]},
   {"id":"payment-arrangement","message":"I will buy a physical gift card and send it to staff","expected":["none"]},

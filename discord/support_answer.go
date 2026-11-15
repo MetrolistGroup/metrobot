@@ -24,8 +24,8 @@ Evidence:
 - A confirmed-fixes entry supports saying it worked for a previous report with the same symptom/scope, not that it is the present user's cause.
 
 Reject concrete defects:
-- unsupported: invented app capabilities, causes, remedies, menus, exact versions or staff/payment arrangements, even hedged with 'usually' or 'might'. No external knowledge may fill an evidence gap. Missing source access does not prove forking is forbidden or permitted. Standalone's GPL license does not establish KMP licensing. Do not approve personal-use cloning, distribution rights, maintainer-permission rules or request channels without explicit evidence for those exact claims.
-- wrong_scope: wrong platform/build, ignored conditions, or altered step order. Do not invent standalone pull-to-refresh or an Auto-sync toggle cycle; follow the loaded guide. Google login and Discord authorization are separate.
+- unsupported: invented app capabilities, causes, remedies, menus, exact versions or staff/payment arrangements, even hedged with 'usually' or 'might'. No external knowledge may fill an evidence gap. Metrolist v14 is the public GPL-3.0 rewrite in the official repository. No donor/tester/source gate remains; reject invented restrictions or staff-access channels.
+- wrong_scope: wrong platform/build, ignored conditions, or altered step order. Do not apply 13.x paths to v14 as verified steps or invent an Auto-sync toggle cycle; follow the loaded guide. Google login and Discord authorization are separate.
 - unsafe: destructive steps without an applicable source/explicit request AND backup/data-loss warning; requests for credentials, callback URLs, private files or public payment proof. Never invent a proof-submission channel.
 - off_request: irrelevant facts, unasked tutorials/donation instructions, failed steps repeated, canned closing offers, internal writing instructions, or replies to resolved/staff-action messages. A requested link must be included if retrieved, not replaced with a note name.
 - needs_research: a specific answerable fact is missing AND relevant retrieval could supply it. Do not demand research for a genuinely blocking clarification, ordinary bug-report details or an honest unknown after relevant retrieval failed.
@@ -53,6 +53,7 @@ func (b *Bot) supportAnswerGrounded(ctx context.Context, m *discord.Message, mes
 		Result    string `json:"result"`
 	}
 	var sources []source
+	seenSources := make(map[source]bool)
 	for _, message := range messages {
 		if message.Role == "user" || message.Role == "assistant" {
 			history = append(history, supportDecisionTurn{Role: message.Role, Content: message.Content})
@@ -67,7 +68,11 @@ func (b *Bot) supportAnswerGrounded(ctx context.Context, m *discord.Message, mes
 			}
 		}
 		if call, ok := calls[message.ToolCallID]; message.Role == "tool" && ok {
-			sources = append(sources, source{call.Name, call.Arguments, message.Content})
+			evidence := source{call.Name, call.Arguments, message.Content}
+			if !seenSources[evidence] {
+				sources = append(sources, evidence)
+				seenSources[evidence] = true
+			}
 		}
 	}
 	linkSources := []string{skill}

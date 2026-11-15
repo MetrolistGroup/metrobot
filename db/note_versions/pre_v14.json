@@ -1,0 +1,77 @@
+[
+  {
+    "name": "discover",
+    "short_desc": "Find Your daily discover on standalone Android Home, or explain why it is missing. Not account sync or KMP.",
+    "content": "## Your daily discover\nOn standalone Android, **Your daily discover** appears on **Home**, based on your liked songs. It is a recommendation section, not a saved Library playlist.\n\nClear any active Home filter to see it. You need liked songs with related recommendations; the section stays hidden when there are no results."
+  },
+  {
+    "name": "appname",
+    "short_desc": "Why Metrolist is called Metrolist; name origin only.",
+    "content": "Metrolist gets its name from listening to music while taking the metro."
+  },
+  {
+    "name": "download",
+    "short_desc": "Download songs for offline listening or find downloaded audio on standalone Android. Not APK downloads or KMP.",
+    "content": "For standalone Android Metrolist.\n\n## Download a song\nOpen the song's three-dot menu and choose **Download**. Use **Remove download** in the same menu to remove it.\n\n## Where are my downloaded files?\nDownloads play inside Metrolist. They are stored in its private download cache, not as music files in your phone's Downloads or Music folder."
+  },
+  {
+    "name": "kmp",
+    "short_desc": "Metrolist-KMP release timing, tester/source access, forking, platforms, OS minimums, packages and migration.",
+    "content": "```faq\n# Metrolist KMP\n\n## What is KMP?\nKotlin Multiplatform lets developers share code across operating systems. Metrolist-KMP is the rewrite for Android, iPhone/iPad and desktop.\n\n## Is KMP publicly released?\nNot yet. Tester builds are available through the hidden tester-release channel. There is no fixed public release date.\n\n## How do I get tester access?\nDonate at least $1 USD to one of the developers, then show staff proof of the donation to receive tester-channel access. Use `.donate` for the developers' links. Keep payment details out of public chat. Tester-build access does not automatically include source access. You can also wait for the public release.\n\n## Does tester access let me fork KMP?\nTester access is for builds; it does not automatically include the source. To fork KMP, you need source access and must follow the license supplied with that source. Tester access alone does not establish the reuse terms. Standalone Metrolist's GPL-3.0 license is separate.\n\n## Which systems does KMP support?\n- Android 9+: one universal APK.\n- iPhone/iPad: iOS/iPadOS 17+, ARM64. The IPA must be signed using a sideloading tool.\n- macOS 15 Sequoia+: choose the Apple Silicon or Intel DMG for your Mac.\n- Windows 10+: x64. No native ARM64 package is currently built.\n- Linux: x86_64 and ARM64 AppImages. Login needs GTK3 and WebKitGTK 4.1/JavaScriptCore runtime libraries.\n\nGet the packages posted for your build in the tester channel. These requirements are for KMP, not standalone Android Metrolist.\n\n## Does the Android APK update regular Metrolist?\nNo. KMP installs alongside it as a separate app (`com.metrolist.music.kmp`). Keep the old app until you have backed up and checked your migration. Standalone Android uses `com.metrolist.music` and requires Android 8+.\n\n## Can I transfer my library and settings?\nKMP can import standalone Metrolist backups. Back up both apps first: restoring can replace the destination library and settings. Downloaded audio, credentials and platform-specific settings may not transfer.\n\n## Can I import Spotify playlists?\nYes. KMP can import Spotify playlists, but plays matched tracks from YouTube Music, not Spotify audio. Some tracks may not match.\n\n## Will KMP replace regular Metrolist?\nThat is the plan when it is ready for daily use. Regular Metrolist still receives maintenance fixes.\n```"
+  },
+  {
+    "name": "logs",
+    "short_desc": "Record Android logcat with LogFox and Shizuku when logs are needed. For KMP playback events use playbackkmp.",
+    "content": "## Record Android logs\n1. Install [LogFox](https://github.com/F0x1d/LogFox/releases/latest) and [Shizuku](https://github.com/thedjchi/Shizuku/releases/latest).\n2. Start Shizuku following its setup instructions, then grant LogFox Shizuku access. Wireless debugging needs Android 11+; older versions need ADB from a computer or root.\n3. Start recording in LogFox, reproduce the problem, then stop and export the log.\n4. Remove private information before sharing the relevant part. Include your Metrolist version, Android version and reproduction steps. Never share passwords, cookies or tokens.\n5. Stop LogFox and Shizuku when finished.\n\nFor KMP playback-event logs, use `.playbackkmp`."
+  },
+  {
+    "name": "nightly",
+    "short_desc": "Install standalone Android nightly in place, with a backup and instability warning. Not KMP or a promised fix.",
+    "content": "## Try the Android nightly\nNightly is the development build and may be unstable. It may include newer fixes, but trying it does not guarantee your problem is fixed.\n\n1. Back up your library and settings.\n2. Download the [nightly APK with Google Cast](https://github.com/MetrolistGroup/Metrolist/releases/download/nightly/Metrolist-with-Google-Cast.apk).\n3. Install it over your existing standalone Metrolist app. **Do not uninstall or clear app data.**\n\nRequires Android 8+. If installation fails, share the exact installer error; debug or differently signed builds may not update in place."
+  },
+  {
+    "name": "playback",
+    "short_desc": "First checks for standalone Android streaming failures, Source errors or songs stuck at 0:00. Not KMP or startup crashes.",
+    "content": "## Songs will not play\nFor standalone Android:\n1. Try another song and check whether YouTube Music plays on the same connection.\n2. Force close Metrolist and reopen it.\n3. Try another setting under **Settings > Player > Audio quality**.\n\nDo not uninstall, clear app data or log out as a routine fix. If you clear anything, clear only cache. Back up before trying a different build."
+  },
+  {
+    "name": "playbackkmp",
+    "short_desc": "Export Metrolist-KMP playback-event logs on Android, desktop or iOS. Not a fix or a startup-crash log.",
+    "content": "## KMP playback logs\n1. Open **Settings > About** and tap/click the Metrolist icon three times to unlock Devtools.\n2. Return to **Settings > Devtools** and leave it enabled.\n3. Reproduce the problem, then return to **Playback event log**.\n4. On Android or desktop, choose **Share**. Android opens the share sheet; desktop saves a `metrolist-playback-*.txt` file in the app log directory. On iOS, choose **Copy** and save the text to a file.\n5. Remove private information before sharing the relevant log, along with your KMP version, OS and reproduction steps. Never post cookies, tokens or credentials.\n\nOlder builds may use different labels. If the app will not open, report the crash and platform instead."
+  },
+  {
+    "name": "report",
+    "short_desc": "What to include in a bug report, or whether to report every failed song. Not a diagnosis or a fix.",
+    "content": "## Report a playback problem\nYou do not need a separate report for every failed song. Start with one reproducible example: the track name or public link, exact error, app/OS version and steps that trigger it. If several tracks fail in the same way, list a few examples together.\n\nMention what you already tried and whether downloaded songs still work. Remove private information from any logs or screenshots before sharing them."
+  },
+  {
+    "name": "repo",
+    "short_desc": "Standalone Android source repository and forks; distinguish restricted KMP source access from tester-build access.",
+    "content": "Standalone Android source: https://github.com/MetrolistGroup/Metrolist\n\nYou can fork it under its GPL-3.0 license. KMP is a separate project with restricted source access; tester-build access does not automatically grant source access."
+  },
+  {
+    "name": "rpc",
+    "short_desc": "Connect Discord Rich Presence, fix Invisible status, or explain missing profile buttons. Not Google login or Last.fm.",
+    "content": "Only authorize through the app's sign-in flow. Never share passwords, tokens or callback URLs.\n\n## Connect Discord\n1. Open the account/profile menu > **Integrations > Discord** (called **Discord Integration** on standalone Android).\n2. Choose **Log in** and complete Discord authorization in the flow the app opens.\n3. Enable **Rich Presence** on that page and play music.\n\n## Presence is not showing\nCheck that Discord is connected and Rich Presence is enabled. If your Discord status is **Invisible**, change it to **Online**, **Do Not Disturb** or **Idle**.\n\n## Profile buttons are missing\nDiscord may hide your own buttons from you. Ask someone else to view your profile."
+  },
+  {
+    "name": "uploads",
+    "short_desc": "Uploaded albums with missing artwork, wrong track order, titles or metadata. Distinguish YouTube Music uploads from local files.",
+    "content": "For YouTube Music uploads in standalone Android Metrolist.\n\n## Artwork or track details look wrong\nDoes the same album show the right cover, titles and track order in YouTube Music? If it looks correct there but wrong in Metrolist, report one affected album, what differs, and your app version.\n\nDo not repeatedly delete or re-upload your library, clear app data or reinstall to test it. Missing artwork alone does not identify the cause.\n\n## Where does an upload go?\nMetrolist's upload feature sends your files to YouTube Music. It does not just add them to a local folder. If you mean local audio files rather than YouTube Music uploads, include your app and platform when asking for help."
+  },
+  {
+    "name": "up",
+    "short_desc": "Check for standalone Android updates and notifications, update GitHub/Izzy installs, or handle APK installation errors. Not KMP.",
+    "content": "## Check for updates\n**GitHub builds:** open **Settings > Updater > Check for updates**. You can enable **Automatically check for updates** and **Enable update notifications** there. Android must also allow notifications. Updates still need to be installed; checking is not automatic installation.\n\n**IzzyOnDroid:** use the F-Droid/Izzy client you installed Metrolist with. That build has no in-app updater.\n\n## Install the update\nDownload the matching [standard APK](https://github.com/MetrolistGroup/Metrolist/releases/latest/download/Metrolist.apk) or [Google Cast APK](https://github.com/MetrolistGroup/Metrolist/releases/latest/download/Metrolist-with-Google-Cast.apk). Back up your library and settings, then install over your existing app. **Do not uninstall or clear app data.**\n\nStandalone Metrolist requires Android 8+. If Android rejects the APK, share the exact installer error and your app variant/version. Debug or differently signed builds may not update in place. KMP is a separate app, not an update to standalone Metrolist."
+  },
+  {
+    "name": "ver",
+    "short_desc": "Choose standalone Android standard/FOSS, Google Cast/GMS, Izzy or nightly. Distinguish KMP's separate Android APK.",
+    "content": "## Which Android APK?\n- **Standard/FOSS** (`Metrolist.apk`): built-in updater, no Google Cast.\n- **Google Cast/GMS** (`Metrolist-with-Google-Cast.apk`): built-in updater and Google Cast.\n- **Izzy** (`Metrolist-izzy.apk`): updates through your package client; no built-in updater or Google Cast.\n\nStandalone Metrolist requires Android 8+. Its APK covers ARM64, ARMv7, x86 and x86_64; you do not need to choose a CPU version.\n\n**Nightly** is the development channel, currently published as a Google Cast APK. It may be unstable. **KMP** is a separate app with one universal Android APK and an Android 9+ minimum."
+  },
+  {
+    "name": "whatsnightly",
+    "short_desc": "Explain nightly versus stable. Use nightly for installation; live release lookup for current versions.",
+    "content": "A nightly is a development build, like a Minecraft snapshot. It can include newer changes and new bugs. Use stable for the regular release, or `.nightly` for installation instructions."
+  }
+]

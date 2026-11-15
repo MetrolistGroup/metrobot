@@ -30,10 +30,10 @@ type garminAIContext struct {
 const (
 	// Keep the legacy marker so summaries and omission notes stay out of support evidence.
 	garminAIConversationSummaryName  = "conversation_summary"
-	garminAIConversationWindow       = 30
+	garminAIConversationWindow       = 12
 	garminAIConversationOmissionNote = "Earlier messages were omitted. Use read_channel_history to fetch them if needed."
 	garminAIPendingSourceMax         = 40
-	garminAIImageMessageWindow       = 10
+	garminAIImageMessageWindow       = 4
 )
 
 func (b *Bot) garminAIContinuation(m *discord.Message, prompt string) ([]cmd.GarminAIMessage, bool) {

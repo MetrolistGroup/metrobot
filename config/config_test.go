@@ -75,3 +75,13 @@ func validConfig() Config {
 	config.ActionsArtifactNames.GMS = "gms"
 	return config
 }
+
+func TestLegacyActionsKeysAreOptional(t *testing.T) {
+	cfg := validConfig()
+	cfg.ActionsWorkflowFile = ""
+	cfg.ActionsArtifactNames.Foss = ""
+	cfg.ActionsArtifactNames.GMS = ""
+	if err := cfg.validate(); err != nil {
+		t.Fatal(err)
+	}
+}

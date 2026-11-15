@@ -11,7 +11,7 @@ import (
 )
 
 func TestGarminConversationWindowKeepsRecentCompleteExchanges(t *testing.T) {
-	for _, test := range []struct{ count, start int }{{0, 0}, {1, 0}, {29, 0}, {30, 0}, {31, 2}, {32, 2}, {33, 4}, {100, 70}} {
+	for _, test := range []struct{ count, start int }{{0, 0}, {1, 0}, {11, 0}, {12, 0}, {13, 2}, {14, 2}, {15, 4}, {100, 88}} {
 		t.Run(fmt.Sprint(test.count), func(t *testing.T) {
 			var messages []cmd.GarminAIMessage
 			for i := range test.count {
@@ -119,7 +119,7 @@ func TestGarminWindowPreservesContextTTLAndImageRetention(t *testing.T) {
 	for _, message := range retained.messages {
 		images += len(message.Images)
 	}
-	if images != 10 {
-		t.Fatalf("retained images for %d messages, want 10", images)
+	if images != 4 {
+		t.Fatalf("retained images for %d messages, want 4", images)
 	}
 }
