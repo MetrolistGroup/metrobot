@@ -368,7 +368,7 @@ func (b *Bot) registerCommands() error {
 		},
 	}, discord.SlashCommandCreate{
 		Name:        "ban",
-		Description: "Permanently ban a user (admin only)",
+		Description: "Permanently ban a user (admin/moderator)",
 		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
 			Name:        "user",
 			Description: "User to ban",

@@ -414,12 +414,12 @@ func TestModeratorRoleHasOnlyRequestedModerationActions(t *testing.T) {
 	bot := &Bot{}
 	member := &discord.Member{RoleIDs: []snowflake.ID{snowflakeID(discordModeratorRoleID)}}
 
-	for _, action := range []string{"kill", "sban", "kick", "mute", "timeout"} {
+	for _, action := range []string{"kill", "ban", "sban", "kick", "mute", "timeout"} {
 		if !bot.canUseModerationAction(member, "100000000000000024", action) {
 			t.Errorf("moderator cannot use %s", action)
 		}
 	}
-	for _, action := range []string{"ban", "dban", "tban", "warn"} {
+	for _, action := range []string{"dban", "tban", "warn", "addadmin", "editnote"} {
 		if bot.canUseModerationAction(member, "100000000000000024", action) {
 			t.Errorf("moderator can unexpectedly use %s", action)
 		}

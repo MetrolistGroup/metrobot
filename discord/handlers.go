@@ -368,7 +368,7 @@ func (b *Bot) canUseModerationAction(member *discord.Member, callerID, action st
 		return false
 	}
 	switch action {
-	case "kill", "sban", "kick", "mute", "timeout":
+	case "kill", "ban", "sban", "kick", "mute", "timeout":
 		return true
 	default:
 		return false
@@ -451,7 +451,7 @@ var helpPages = []struct {
 }{
 	{"Notes", "• `/notes` - List all available notes\n• `/note [name]` - Show a specific note\n• `/note [name] [short_desc] [content]` - Add a note (admin only)\n• `/addnote [name] [short_desc] [content]` - Add a new note (admin only)\n• `/editnote [name] [short_desc] [content]` - Edit a note (admin only)\n• `/renamenote [name] [new_name]` - Rename a note (admin only)\n• `/delnote [name]` - Delete a note (admin only)\n• All saved notes are available in #app-support"},
 	{"Bot info", "• `/gsm [search]` - Look up phone specifications on GSMArena\n• `/nanoreview [search]` - Look up devices on NanoReview\n• `/technicalcity [search]` - Look up CPUs and GPUs on Technical City\n• `/gsmcompare`, `/nanoreviewcompare`, `/technicalcitycompare` - Compare two devices on one source\n• `/quote` - Turn the previous message into a quote image\n• `/nuke [user]` or reply `garmin nuke them` - Send a cartoon nuke GIF\n• Message Apps > OCR Translate - Read image text and translate it into English\n• `/version [version]` - Show release info\n• `/latest` - Show the latest release\n• `/actions` - Show GitHub Actions build status\n• `/ping` - Check latency to various services"},
-	{"Moderation", "• `/ban [user] [reason]` - Permanently ban a user\n• `/dban [user] [reason]` - Ban and delete messages\n• `/tban [user] [duration] [reason]` - Temporarily ban a user\n• `/sban [user] [reason]` - Softban a user (admin/moderator)\n• `/kick [user] [reason]` - Kick a user (admin/moderator)\n• `/timeout [user] [duration] [reason]` - Timeout a user (admin/moderator)\n• `/mute [user] [duration] [reason]` - Timeout alias (admin/moderator)\n• `/warn [user] [reason]` - Warn a user\n• `/warnings [user]` - Show warnings for a user\n• `/unwarn [user] [id]` - Remove a warning from a user\n• `/dehoist [user] [dry]` - Dehoist a user, or omit user to rerun the server\n• `/approvenick [user]` - Allow a user's next nickname change without dehoisting\n• `/bulkrole [role] [users]` - Add a lower role to multiple users (Manage Roles required)\n• `/purge [count]` - Delete recent messages\n• `/scanreactions` - Scan recent messages for prohibited reactions"},
+	{"Moderation", "• `/ban [user] [reason]` - Permanently ban a user (admin/moderator)\n• `/dban [user] [reason]` - Ban and delete messages\n• `/tban [user] [duration] [reason]` - Temporarily ban a user\n• `/sban [user] [reason]` - Softban a user (admin/moderator)\n• `/kick [user] [reason]` - Kick a user (admin/moderator)\n• `/timeout [user] [duration] [reason]` - Timeout a user (admin/moderator)\n• `/mute [user] [duration] [reason]` - Timeout alias (admin/moderator)\n• `/warn [user] [reason]` - Warn a user\n• `/warnings [user]` - Show warnings for a user\n• `/unwarn [user] [id]` - Remove a warning from a user\n• `/dehoist [user] [dry]` - Dehoist a user, or omit user to rerun the server\n• `/approvenick [user]` - Allow a user's next nickname change without dehoisting\n• `/bulkrole [role] [users]` - Add a lower role to multiple users (Manage Roles required)\n• `/purge [count]` - Delete recent messages\n• `/scanreactions` - Scan recent messages for prohibited reactions"},
 	{"Admin and triggers", "**Admin management (permaadmin only)**\n• `/addadmin [user]` - Add a bot admin\n• `/removeadmin [user]` - Remove a bot admin\n\n**Metrobot AI (admin only)**\n• `/memory view` - View shared AI memory (admin only)\n• `/memory append|replace|clear` - Update shared AI memory (Nyx and Lamp only)\n• `/ctx-reset`, `ok garmin ctx-reset` or `France Modération ctx-reset` - Forget earlier AI context in this channel\n\n**Prefix commands**\nModeration actions can also use `!action [user] [args]`, such as `!ban @user spam`.\n\n**Note triggers**\nType `.notename` to display a note, such as `.help` or `.rules`."},
 }
 
@@ -664,7 +664,7 @@ func (b *Bot) handleActions(s *bot.Client, i *events.ApplicationCommandInteracti
 }
 
 func (b *Bot) handleBan(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string) {
-	if !b.DB.IsAdmin("discord", callerID, b.Config) {
+	if !b.canUseModerationAction(interactionMember(i), callerID, "ban") {
 		respondEphemeral(s, i, "You don't have ban permissions.")
 		return
 	}
