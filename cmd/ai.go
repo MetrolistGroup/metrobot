@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 const chatCompletionAttemptTimeout = 15 * time.Second
@@ -259,7 +261,17 @@ type chatProviderPrice struct {
 	Completion float64 `json:"completion,omitempty"`
 }
 
+type chatCompletionUsage struct {
+	PromptTokens        int      `json:"prompt_tokens"`
+	CompletionTokens    int      `json:"completion_tokens"`
+	Cost                *float64 `json:"cost"`
+	PromptTokensDetails *struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+}
+
 type chatCompletionResponse struct {
+	Usage   *chatCompletionUsage `json:"usage"`
 	Choices []struct {
 		Message      chatMessage `json:"message"`
 		FinishReason string      `json:"finish_reason"`
@@ -541,6 +553,7 @@ func (c *chatCompletionClient) askWithKey(ctx context.Context, payload []byte, k
 	if json.Unmarshal(body, &result) != nil || result.Error != nil {
 		return nil, false, fmt.Errorf("invalid %s response", c.provider)
 	}
+	logChatCompletionUsage(c.model, result.Usage)
 	if len(result.Choices) == 0 {
 		return nil, false, fmt.Errorf("%s returned no choices", c.provider)
 	}
@@ -587,4 +600,19 @@ func retryChatCompletionStatus(status int) bool {
 	default:
 		return false
 	}
+}
+
+// logChatCompletionUsage records per-call tokens and provider-reported cost so spend can be measured.
+func logChatCompletionUsage(model string, usage *chatCompletionUsage) {
+	if usage == nil {
+		return
+	}
+	fields := []zap.Field{zap.String("model", model), zap.Int("prompt_tokens", usage.PromptTokens), zap.Int("completion_tokens", usage.CompletionTokens)}
+	if usage.PromptTokensDetails != nil {
+		fields = append(fields, zap.Int("cached_tokens", usage.PromptTokensDetails.CachedTokens))
+	}
+	if usage.Cost != nil {
+		fields = append(fields, zap.Float64("cost_usd", *usage.Cost))
+	}
+	zap.L().Info("chat completion usage", fields...)
 }
