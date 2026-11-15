@@ -1,0 +1,18 @@
+{
+  "name": "metrobot-note-editor",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun server.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@codemirror/lang-go": "^6.0.1",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/theme-one-dark": "^6.1.3",
+    "codemirror": "^6.0.2",
+    "dompurify": "^3.4.18",
+    "marked": "^18.2.0"
+  }
+}

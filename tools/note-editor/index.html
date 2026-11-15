@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Metrobot · Notes & AI text</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <section id="login" class="login" hidden>
+    <p class="eyebrow">Metrobot / Private workspace</p>
+    <h1>Note workshop</h1>
+    <p>Open your private access link, or paste its access key.</p>
+    <form id="login-form"><label for="access-key">Access key</label><input id="access-key" type="password" required autocomplete="off"><button>Open notes</button></form>
+    <p id="login-error" role="alert"></p>
+  </section>
+  <div id="workspace" hidden>
+    <header class="masthead"><div><span class="brand">Metrobot</span><span class="slash">/</span> Notes & AI text</div><span class="local-label">LOCAL DRAFTS ONLY</span></header>
+    <div class="workspace">
+      <aside>
+        <div class="collection"><h1>Workspace</h1><span id="count"></span></div>
+        <label for="collection-filter" class="sr-only">Document category</label><select id="collection-filter"><option value="all">All notes & AI text</option value="notes">Saved notes</option><option value="prompts">AI prompts & rules</option><option value="skills">Skills & guides</option><option value="runtime">Context & templates</option><option value="tools">Tool result sources</option><option value="map">AGENTS.md / input map</option></select>
+        <label for="search" class="sr-only">Filter documents</label><input id="search" type="search" placeholder="Find a document…" autocomplete="off">
+        <nav id="notes" aria-label="Notes and AI text"></nav>
+        <footer><p id="sync-summary"></p><a href="/api/export" download="metrobot-notes-and-ai-text.json">Download working copy</a><p>Nothing is sent to the VPS.<br>Tell the assistant when you’re finished.</p></footer>
+      </aside>
+      <main>
+        <section class="note-heading"><div><p id="note-kind" class="eyebrow">Editing note</p><h2 id="note-name"></h2></div><div class="save-area"><span id="save-status" role="status" aria-live="polite"></span><button id="save" disabled>Save draft <kbd>Ctrl S</kbd></button></div></section>
+        <div id="description-panel" class="description"><label for="description">Routing description <span>Blank keeps this note out of AI routing</span></label><input id="description" type="text" autocomplete="off"><p id="description-count"></p></div>
+        <section id="document-meta" hidden><p id="document-scope"></p><code id="document-source"></code><p id="document-deployment"></p></section>
+        <div id="notice" role="alert" hidden></div>
+        <div class="panes">
+          <section class="source-pane"><header class="pane-heading"><h3 id="source-heading">Markdown source</h3><span id="length"></span></header><div id="editor" aria-label="Note Markdown source"></div></section>
+          <section class="preview-pane"><header class="pane-heading"><h3 id="document-preview-heading" hidden>Markdown preview</h3><div id="preview-tabs" class="tabs" role="group" aria-label="Preview format"><button id="discord-tab" aria-pressed="true">Discord layout</button><button id="readable-tab" aria-pressed="false">Readable</button></div><button id="refresh" class="quiet" title="Refresh preview and reshuffle random groups">Reshuffle</button></header><div id="preview-error" role="status" hidden></div><div class="preview-scroll"><div id="message-author" class="message-author"><span class="avatar">M</span><strong>Metrobot</strong><span class="bot-label">APP</span><span class="preview-label">Preview</span></div><div id="preview"></div><p id="preview-footnote" class="preview-footnote">Uses the bot’s Markdown directive parser and validation. Discord typography and media may differ.</p></div></section>
+        </div>
+        <details id="syntax-help" class="syntax"><summary>Note markup reference</summary><div><p>Use top-level backtick fences named <code>components-v2</code>, <code>faq</code>, or <code>random</code>. Only one rich block (Components V2 or FAQ) is allowed. Markdown before and after the block is preserved.</p><p>Components: <code>text</code> with <code>content</code>; <code>separator</code>; <code>section</code> with <code>content</code> and HTTPS <code>thumbnail</code>; <code>gallery</code> with <code>urls</code>; <code>buttons</code> with <code>label</code> / HTTPS <code>url</code> pairs.</p><pre>```components-v2
+{"components":[
+  {"type":"text","content":"# Project links"},
+  {"type":"separator"},
+  {"type":"buttons","buttons":[
+    {"label":"Releases","url":"https://github.com/MetrolistGroup/Metrolist/releases"}
+  ]}
+]}
+```</pre><p>FAQ fences contain an optional <code># Title</code> and <code>## Questions</code> followed by answers. Random fences contain a JSON array of Markdown strings. Save with Ctrl+S (⌘S on macOS). Saves affect only the local working copy.</p><a href="/reference" target="_blank" rel="noopener">Read the complete markup reference</a></div></details>
+      </main>
+    </div>
+  </div>
+</body>
+</html>
