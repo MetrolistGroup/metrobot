@@ -127,12 +127,13 @@ func TestGarminClipUsesWordBoundary(t *testing.T) {
 	}
 }
 
-func TestHandleGarminAILongGeneratedSupportReplyIsClipped(t *testing.T) {
+func TestHandleGarminAIDetailedGeneratedSupportReplyIsClipped(t *testing.T) {
 	b, client, delivery := newSupportDecisionTestBot(t)
 	b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: strings.Repeat("a supported answer. ", 200)}}, nil
 	})
 	m := supportTestMessage(100)
+	m.Content = "explain the installation steps in detail"
 	b.handleGarminAI(client, m, []cmd.GarminAIMessage{garminAIUserMessage(m, m.Content)})
 	delivery.mu.Lock()
 	bodies := append([]string(nil), delivery.bodies...)

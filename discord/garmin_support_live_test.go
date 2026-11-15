@@ -24,6 +24,19 @@ func TestSupportUpdateMessageLive(t *testing.T) {
 		[]string{"metrolist doesn't have an in-app update checker", "metrolist has no in-app updater", "metrolist doesn't have update notifications"}, "")
 }
 
+func TestSupportImmersiveArtworkBrevityLive(t *testing.T) {
+	_, body := testSupportMessageLive(t, []cmd.GarminAIMessage{{Role: "user", Content: "Garmin is there a way to fix the bug to when I set the album art cover to full screen and turn on immersive view, it doesn't show the album art cover in full screen and just shows up normally?"}}, nil, []string{"commit ", "issue #"}, "")
+	var reply struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal([]byte(body), &reply); err != nil {
+		t.Fatal(err)
+	}
+	if words := len(strings.Fields(reply.Content)); words == 0 || words > supportAnswerMaxWords {
+		t.Fatalf("support reply contains %d words, want 1-%d; inspect the private report", words, supportAnswerMaxWords)
+	}
+}
+
 func TestSupportSlowDownloadMessageLive(t *testing.T) {
 	testSupportMessageLive(t, []cmd.GarminAIMessage{{Role: "user", Content: "why is metrolist download speeds so slow"}},
 		[]string{"nightly", "back", "unstable"}, nil,
@@ -114,13 +127,24 @@ func testSupportMessageLive(t *testing.T, messages []cmd.GarminAIMessage, want, 
 	}
 	model := cmd.NewOpenRouterClient(config.Keys, config.Model)
 	var tools []string
+	var rounds []map[string]any
 	b.garminAI = garminAITestFunc(func(ctx context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		var results []map[string]string
+		for _, message := range request.Messages {
+			if message.Role == "tool" {
+				results = append(results, map[string]string{"call_id": message.ToolCallID, "result": message.Content})
+			}
+		}
 		completion, err := model.Complete(ctx, request)
+		round := map[string]any{"tool_results": results, "api_error": err != nil}
 		if completion != nil {
+			round["draft"] = completion.Message.Content
+			round["tool_calls"] = completion.Message.ToolCalls
 			for _, call := range completion.Message.ToolCalls {
 				tools = append(tools, call.Function.Name)
 			}
 		}
+		rounds = append(rounds, round)
 		return completion, err
 	})
 	decisions := cmd.NewDecisionsClient(config.Keys, config.DecisionModel)
@@ -182,7 +206,7 @@ func testSupportMessageLive(t *testing.T, messages []cmd.GarminAIMessage, want, 
 		deliveries[i] = json.RawMessage(payload)
 	}
 	sent.mu.Unlock()
-	report, err := json.MarshalIndent(map[string]any{"deliveries": deliveries, "checks": checks, "tools": tools, "sources": sources}, "", "  ")
+	report, err := json.MarshalIndent(map[string]any{"deliveries": deliveries, "checks": checks, "tools": tools, "sources": sources, "rounds": rounds}, "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}
