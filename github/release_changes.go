@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -106,13 +107,23 @@ func (c *AssistantClient) ChangesSinceRelease(ctx context.Context, ref, query st
 	var comparison githubComparison
 	comparePath := basePath + "/compare/" + url.PathEscape(stable.Tag) + "..." + head
 	// GitHub includes changed-file patches on page one even though we only return commits.
+	unrelated := false
 	if err := c.getLimit(ctx, comparePath+"?per_page=100&page=1", &comparison, 2<<20); err != nil {
-		return "", err
-	}
-	if !validGitHubSHA(comparison.Base.SHA) || comparison.Total < len(comparison.Commits) || comparison.Total < 0 {
+		// Main was rewritten after a release (v14.0.0 predates the squashed history), so GitHub finds no merge base.
+		if !strings.Contains(err.Error(), "No common ancestor") || stable.Published == nil {
+			return "", err
+		}
+		if comparison, err = c.commitsSince(ctx, basePath, head, *stable.Published); err != nil {
+			return "", err
+		}
+		unrelated = true
+	} else if !validGitHubSHA(comparison.Base.SHA) || comparison.Total < len(comparison.Commits) || comparison.Total < 0 {
 		return "", fmt.Errorf("invalid release comparison")
 	}
 	pages := max(1, (comparison.Total+99)/100)
+	if unrelated {
+		pages = 1
+	}
 	// shortcut: scan three newest pages; add a cursor if older fixes fall outside this window.
 	firstPage := max(1, pages-2)
 	commits := comparison.Commits
@@ -175,6 +186,33 @@ func (c *AssistantClient) ChangesSinceRelease(ctx context.Context, ref, query st
 			return "", fmt.Errorf("release metadata exceeds the tool budget")
 		}
 	}
+}
+
+// commitsSince lists the target's commits after the release date, oldest first, for histories without a merge base.
+func (c *AssistantClient) commitsSince(ctx context.Context, basePath, head string, since time.Time) (githubComparison, error) {
+	var commits []githubCommit
+	for page := 1; page <= 3; page++ {
+		var batch []githubCommit
+		path := fmt.Sprintf("%s/commits?sha=%s&since=%s&per_page=100&page=%d", basePath, head, url.QueryEscape(since.UTC().Format(time.RFC3339)), page)
+		if err := c.getLimit(ctx, path, &batch, 2<<20); err != nil {
+			return githubComparison{}, err
+		}
+		commits = append(commits, batch...)
+		if len(batch) < 100 {
+			break
+		}
+	}
+	slices.Reverse(commits)
+	total := len(commits)
+	if total == 300 {
+		total++ // at least one more commit exists beyond the scanned window
+	}
+	return githubComparison{
+		URL:     "https://github.com/" + strings.TrimPrefix(basePath, "/repos/") + "/commits/" + head,
+		Status:  "unrelated_history",
+		Total:   total,
+		Commits: commits,
+	}, nil
 }
 
 // ProjectCommit exposes code evidence only from the configured public project.

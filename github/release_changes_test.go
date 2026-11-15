@@ -282,3 +282,50 @@ func TestProjectCommitValidationAndPatchBounds(t *testing.T) {
 		t.Fatalf("escaped patches broke the tool budget: %v", err)
 	}
 }
+
+func TestChangesSinceReleaseHandlesUnrelatedHistory(t *testing.T) {
+	head := strings.Repeat("c", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/repos/owner/repo":
+			fmt.Fprint(w, `{"private":false,"default_branch":"main"}`)
+		case r.URL.Path == "/repos/owner/repo/releases/latest":
+			fmt.Fprint(w, `{"tag_name":"v14.0.0","published_at":"2026-11-14T12:21:13Z"}`)
+		case r.URL.Path == "/repos/owner/repo/git/ref/heads/main":
+			fmt.Fprintf(w, `{"object":{"sha":%q}}`, head)
+		case strings.Contains(r.URL.Path, "/compare/"):
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"message":"No common ancestor between v14.0.0 and `+head+`."}`)
+		case r.URL.Path == "/repos/owner/repo/commits":
+			if r.URL.Query().Get("sha") != head || r.URL.Query().Get("since") != "2026-11-14T12:21:13Z" {
+				t.Errorf("commits were not pinned: %s", r.URL.String())
+			}
+			// GitHub lists newest first.
+			fmt.Fprintf(w, `[{"sha":%q,"commit":{"message":"fix(downloads): skip freeing an unallocated encoder"}},{"sha":%q,"commit":{"message":"ci: publish nightly"}}]`, strings.Repeat("e", 40), strings.Repeat("d", 40))
+		default:
+			t.Errorf("unexpected endpoint %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client := NewAssistantClient("", "owner", "repo")
+	client.apiBase, client.httpClient = server.URL, server.Client()
+	output, err := client.ChangesSinceRelease(context.Background(), "main", "downloads")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Status  string `json:"status"`
+		Total   int    `json:"total_commits"`
+		Partial bool   `json:"history_truncated"`
+		Commits []struct {
+			SHA string `json:"sha"`
+		} `json:"commits"`
+	}
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "unrelated_history" || result.Total != 2 || result.Partial || len(result.Commits) != 1 || result.Commits[0].SHA != strings.Repeat("e", 40) {
+		t.Fatalf("unexpected result: %s", output)
+	}
+}
