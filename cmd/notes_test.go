@@ -117,3 +117,17 @@ func TestRenameNotePreservesContentAndDescription(t *testing.T) {
 		t.Fatalf("renamed note list = %q, %v", list, err)
 	}
 }
+
+func TestInlineNoteName(t *testing.T) {
+	for content, want := range map[string]string{
+		"hey, this problem was fixed in !!nightly, check it out!": "nightly",
+		"!!nightly":   "nightly",
+		"wow!! nice":  "",
+		"great!!nice": "",
+		"no note":     "",
+	} {
+		if got := InlineNoteName(content); got != want {
+			t.Errorf("InlineNoteName(%q) = %q, want %q", content, got, want)
+		}
+	}
+}

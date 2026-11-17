@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/util"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"go.uber.org/zap"
@@ -40,6 +41,13 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		}
 		sendPublicNoteReply(b.API, msg.Chat.ID, msg.MessageID, text, false, b.Logger)
 		return
+	}
+
+	if noteName := cmd.InlineNoteName(content); noteName != "" {
+		if text, err := b.Notes.GetNote(noteName); err == nil {
+			sendPublicNoteReply(b.API, msg.Chat.ID, msg.MessageID, text, false, b.Logger)
+			return
+		}
 	}
 
 	matches := chatModPattern.FindStringSubmatch(content)

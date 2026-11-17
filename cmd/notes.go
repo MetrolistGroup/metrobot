@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -15,6 +16,16 @@ type NotesHandler struct {
 }
 
 const noteShortDescriptionMaxLength = 160
+
+var inlineNotePattern = regexp.MustCompile(`(?:^|\s)!!([\p{L}\p{N}_-]+)`)
+
+// InlineNoteName returns the first note named inline as !!name, like "fixed in !!nightly, check it out".
+func InlineNoteName(content string) string {
+	if m := inlineNotePattern.FindStringSubmatch(content); m != nil {
+		return m[1]
+	}
+	return ""
+}
 
 func (h *NotesHandler) ListNotes() (string, error) {
 	names, err := h.DB.ListNotes()

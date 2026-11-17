@@ -196,6 +196,12 @@ func (b *Bot) onMessageCreate(s *bot.Client, m *discord.Message) {
 		go b.handleGarminAI(s, m, b.garminAITriggeredConversation(m, prompt))
 		return
 	}
+	if noteName := cmd.InlineNoteName(content); noteName != "" {
+		if note, err := b.Notes.GetNoteDocument(noteName); err == nil {
+			b.sendNoteReply(s, m.ChannelID.String(), m.ID.String(), noteName, note.Render())
+			return
+		}
+	}
 	// A direct reply to the bot, or any message from someone in an active support session, is explicit in app-support:
 	// the chat model answers at once instead of the router.
 	if m.ChannelID.String() == garminAppSupportID && !strings.ContainsAny(content[:min(1, len(content))], ".!/") &&
