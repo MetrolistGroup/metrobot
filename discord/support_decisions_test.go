@@ -45,6 +45,16 @@ func (d *supportTestDelivery) count() int {
 	return len(d.bodies)
 }
 
+// onlyFallback: explicit calls get exactly the honest fallback; automatic routing stays silent.
+func (d *supportTestDelivery) onlyFallback(explicit bool) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !explicit {
+		return len(d.bodies) == 0
+	}
+	return len(d.bodies) == 1 && strings.Contains(d.bodies[0], garminSupportFallback)
+}
+
 func newSupportDecisionTestBot(t *testing.T) (*Bot, *bot.Client, *supportTestDelivery) {
 	t.Helper()
 	database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))

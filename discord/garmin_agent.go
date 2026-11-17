@@ -111,6 +111,7 @@ Do not run a public search for casual chat or channel-history summaries. Never s
 	if !appSupport {
 		systemPrompt += "\n\n" + cmd.GarminEmbedInstructions
 	}
+	systemPrompt += "\n\n" + cmd.GarminComponentsInstructions
 	conversation := append([]cmd.GarminAIMessage(nil), copyGarminAIMessages(messages)...)
 	boundGarminEmojiImages(conversation)
 	if s == nil || s.Rest == nil {
@@ -529,7 +530,11 @@ Do not run a public search for casual chat or channel-history summaries. Never s
 			}
 			result.Conversation = conversation
 			if appSupport {
-				grounded, hint, err := b.supportAnswerGrounded(ctx, m, messages, conversation, answer, &noteReference)
+				checked := answer
+				if layout, ok := garminLayoutReply(answer); ok {
+					checked = layout.Text // The checker judges what users read, including button and media URLs.
+				}
+				grounded, hint, err := b.supportAnswerGrounded(ctx, m, messages, conversation, checked, &noteReference)
 				if err != nil {
 					return nil, err
 				}

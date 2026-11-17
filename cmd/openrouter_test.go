@@ -33,8 +33,8 @@ func TestOpenRouterClientUsesCapableRouteByDefault(t *testing.T) {
 	if request.Model != "z-ai/glm-5.3-flash:floor" || len(request.Models) != 0 {
 		t.Errorf("model route = (%q, %v), want %q", request.Model, request.Models, openRouterDefaultModel)
 	}
-	if request.Reasoning == nil || request.Reasoning.Enabled != nil || request.Reasoning.Effort != "low" || request.Reasoning.MaxTokens != 0 || request.Reasoning.Exclude || request.MaxTokens != 768 {
-		t.Errorf("reasoning = %#v with %d output tokens, want low reasoning and 768 output", request.Reasoning, request.MaxTokens)
+	if request.Reasoning == nil || request.Reasoning.Enabled != nil || request.Reasoning.Effort != "low" || request.Reasoning.MaxTokens != 0 || request.Reasoning.Exclude || request.MaxTokens != GarminChatOutputTokens {
+		t.Errorf("reasoning = %#v with %d output tokens, want low reasoning and the chat output cap", request.Reasoning, request.MaxTokens)
 	}
 	if request.SessionID != "" {
 		t.Errorf("unrelated conversations were grouped into session %q", request.SessionID)

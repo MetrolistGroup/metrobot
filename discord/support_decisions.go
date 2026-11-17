@@ -22,8 +22,9 @@ const (
 	supportAnswerMin = 0.80
 	supportRouteMin  = 0.85
 	supportMarginMin = 0.20
-	// 0.95 refused routine answers (download links, account questions); unsafe labeled drafts score far lower.
-	supportGroundedMin = 0.80
+	// Applies only when the checker names no defect; 0.80 rejected 63 defect-free drafts in a week of production logs.
+	// Unsafe labeled drafts score far lower and also name a defect.
+	supportGroundedMin = 0.50
 )
 
 type supportRequestState struct {
@@ -226,8 +227,12 @@ func (b *Bot) handleGarminSupportDecision(s *bot.Client, m *discord.Message, mes
 }
 
 func supportDecisionAction(shouldAnswer, top, margin float64, route, note string, agentAvailable bool) string {
-	if !agentAvailable || shouldAnswer < supportAnswerMin || route == "none" {
+	if !agentAvailable || shouldAnswer < supportAnswerMin {
 		return "none"
+	}
+	// A confident help request routed to none goes to the agent, which can still choose do_not_respond.
+	if route == "none" {
+		return "agent"
 	}
 	if note != "" && top >= supportRouteMin && margin >= supportMarginMin {
 		return "note"

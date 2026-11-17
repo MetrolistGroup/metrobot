@@ -9,7 +9,7 @@ import (
 	"github.com/MetrolistGroup/metrobot/cmd"
 )
 
-func TestRejectedSupportQuestionStaysSilentAndSurvivesFollowup(t *testing.T) {
+func TestRejectedSupportQuestionSurvivesFollowup(t *testing.T) {
 	for _, automatic := range []bool{false, true} {
 		name := "explicit"
 		if automatic {
@@ -70,10 +70,10 @@ func TestRejectedSupportQuestionStaysSilentAndSurvivesFollowup(t *testing.T) {
 			b.onMessageCreate(client, m)
 			wait(m.ID.String())
 			retained := b.garminAIUserContexts[garminAIUserContextKey(m)]
-			if sent.count() != 0 || !retained.unanswered || !retained.ambientUntil.IsZero() || len(retained.messages) != 1 || retained.replyID != "" {
-				t.Fatal("rejected answer sent a reply, lost the question or enabled ambient replies")
+			if !sent.onlyFallback(!automatic) || !retained.unanswered || !retained.ambientUntil.IsZero() || len(retained.messages) != 1 || retained.replyID != "" {
+				t.Fatal("rejected answer sent the wrong reply, lost the question or enabled ambient replies")
 			}
-			beforeRetry := modelCalls
+			beforeRetry, delivered := modelCalls, sent.count()
 			messages := b.garminAITriggeredConversation(m, question)
 			if len(messages) != 1 {
 				t.Fatal("same-event retry duplicated the question")
@@ -83,7 +83,7 @@ func TestRejectedSupportQuestionStaysSilentAndSurvivesFollowup(t *testing.T) {
 			} else {
 				b.handleGarminAI(client, m, messages)
 			}
-			if modelCalls != beforeRetry || sent.count() != 0 {
+			if modelCalls != beforeRetry || sent.count() != delivered {
 				t.Fatal("duplicate event repeated a failed request")
 			}
 			accept = true
@@ -95,7 +95,7 @@ func TestRejectedSupportQuestionStaysSilentAndSurvivesFollowup(t *testing.T) {
 			b.garminAILastUsed[m.Author.ID.String()] = time.Now().Add(-garminAICooldown)
 			b.onMessageCreate(client, followup)
 			wait(followup.ID.String())
-			if sent.count() != 1 || b.garminAIUserContexts[garminAIUserContextKey(m)].unanswered {
+			if sent.count() != delivered+1 || b.garminAIUserContexts[garminAIUserContextKey(m)].unanswered {
 				t.Fatal("follow-up did not deliver and retain the accepted answer")
 			}
 			b.forgetDeletedGarminContexts(m.ChannelID.String(), m.ID.String())

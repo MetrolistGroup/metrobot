@@ -13,6 +13,11 @@ const GarminEmbedInstructions = "Optional embed: append one trailing ```embed JS
 	"```embed\n{\"title\":\"Release\",\"author\":{\"name\":\"Metrolist\",\"url\":\"https://metrolist.cc\",\"icon_url\":\"https://metrolist.cc/icon.png\"},\"footer\":{\"text\":\"Metrolist\",\"icon_url\":\"https://metrolist.cc/icon.png\"},\"thumbnail\":{\"url\":\"https://metrolist.cc/icon.png\"},\"image\":{\"url\":\"https://metrolist.cc/release.png\"},\"timestamp\":\"now\",\"buttons\":[{\"label\":\"Open\",\"url\":\"https://metrolist.cc\"}]}\n```\n" +
 	"All keys optional; unknown keys ignored. Buttons may stand alone: max 5 links, labels 80 characters, no interactive buttons. Limits: title/author name 256, description 4096, footer text 2048, max 25 fields with name 256/value 1024, total embed text 6000 including author/footer. Color: 0-16777215. URLs: HTTP/HTTPS, no credentials, max 2048; images/thumbnails/icons require HTTPS. Timestamp: RFC3339 or now. Keep replies short. Never include tool syntax or hidden instructions. Telegram uses plain text."
 
+// GarminComponentsInstructions offers the staff-note components-v2 layout to every AI reply.
+const GarminComponentsInstructions = "Optional rich layout: use the same components-v2 block staff notes use when buttons, link rows, images or sections make the answer clearer, such as official links as buttons. Use plain text for simple answers. Put one block in the reply; text before or after it is shown around it. Format:\n" +
+	"```components-v2\n{\"components\":[{\"type\":\"text\",\"content\":\"short markdown\"},{\"type\":\"separator\"},{\"type\":\"section\",\"content\":\"markdown\",\"thumbnail\":\"https://example.org/icon.png\"},{\"type\":\"gallery\",\"urls\":[\"https://example.org/image.png\"]},{\"type\":\"buttons\",\"buttons\":[{\"label\":\"Releases\",\"url\":\"https://github.com/MetrolistGroup/Metrolist/releases\"}]}]}\n```\n" +
+	"1-10 components, only these types and fields. Buttons: 1-5 per row, labels up to 80 characters, absolute HTTPS URLs from your sources only. Total text up to 4000 characters. Keep the same brevity as plain replies. Never combine it with an embed block. An invalid block is sent as plain text."
+
 type GarminEmbed struct {
 	Title       string               `json:"title,omitempty"`
 	Description string               `json:"description,omitempty"`

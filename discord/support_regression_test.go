@@ -206,7 +206,7 @@ func TestSupportChecksFullLongNoteSnapshot(t *testing.T) {
 	}
 }
 
-func TestExplicitSupportEvidenceErrorStaysSilentWithoutRewrite(t *testing.T) {
+func TestExplicitSupportEvidenceErrorSendsFallbackWithoutRewrite(t *testing.T) {
 	b, client, sent := newSupportDecisionTestBot(t)
 	calls := 0
 	b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
@@ -218,7 +218,7 @@ func TestExplicitSupportEvidenceErrorStaysSilentWithoutRewrite(t *testing.T) {
 	})
 	m := supportTestMessage(20)
 	b.handleGarminAI(client, m, []cmd.GarminAIMessage{{Role: "user", Content: m.Content}})
-	if calls != 1 || sent.count() != 0 {
+	if calls != 1 || !sent.onlyFallback(true) {
 		t.Fatalf("API failure generated %d calls and %d sends", calls, sent.count())
 	}
 	retained := b.garminAIUserContexts[garminAIUserContextKey(m)]

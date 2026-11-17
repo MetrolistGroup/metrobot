@@ -89,16 +89,26 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 	if requestCtx.Err() != nil || !b.garminMessageVisible(m.ChannelID.String(), m.ID.String()) {
 		return
 	}
-	// A failed attempt is handled silently; retain pending questions, never a failure reply.
+	// Failed attempts keep pending questions. Explicit app-support calls get an honest reply instead of silence.
 	supportCompleted = true
+	explicitSupport := supportMode && !ambient
 	if err != nil {
 		b.Logger.Error("Metrobot AI request failed", zap.String("user", m.Author.ID.String()), zap.String("channel_id", m.ChannelID.String()), zap.String("message_id", m.ID.String()), zap.Error(err))
-		return
 	}
-	if ctx.Err() != nil || result == nil {
+	if err != nil || ctx.Err() != nil || result == nil || (explicitSupport && result.Silent && result.Unverified) {
+		if explicitSupport {
+			b.sendGarminSupportFallback(s, m)
+		}
 		return
 	}
 	if result.Silent {
+		if explicitSupport && !result.Unverified {
+			// Deliberate silence or a reaction means the asker is done; the confirmed-fix check replaces the router's.
+			b.endSupportSession(m)
+			learnCtx, cancelLearn := context.WithTimeout(requestCtx, cmd.DecisionsTimeout)
+			b.recordConfirmedSupportFix(learnCtx, m, messages)
+			cancelLearn()
+		}
 		if !result.Unverified && !result.Interacted {
 			b.clearGarminAIUnansweredContext(m)
 		}
@@ -118,11 +128,21 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 		return
 	}
 	if m.ChannelID.String() == garminAppSupportID {
-		if !result.VerbatimNote {
+		if _, layout := garminLayoutReply(result.Answer); !result.VerbatimNote && !layout {
 			result.Answer = truncateGarminAIResponse(result.Answer)
 		}
 		conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: result.Answer, Timestamp: time.Now().UTC()})
 		supportCompleted = b.sendGarminAppSupportReplyAndRememberIfVisible(s, m, result.Answer, conversation, result.NoteName) != nil
+		return
+	}
+	if layout, ok := garminLayoutReply(result.Answer); ok {
+		// Component replies are validated whole; text clipping or usage prefixes would corrupt them.
+		conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: layout.Text, Timestamp: time.Now().UTC()})
+		if ambient {
+			b.sendGarminAmbientReply(s, m, result.Answer, conversation, ambientToken)
+		} else {
+			b.sendGarminReplyAndRememberIfVisible(s, m, result.Answer, conversation)
+		}
 		return
 	}
 	answer, embed := cmd.ParseGarminReply(result.Answer)
@@ -180,4 +200,14 @@ func (b *Bot) waitForGarminAICooldown(userID string) bool {
 		}
 	}
 	return false
+}
+
+// garminSupportFallback replaces silence when an explicit app-support call has no checked answer.
+const garminSupportFallback = "i couldn't find a reliable answer for that. share your Metrolist version, platform and the exact error text, and staff can take a look."
+
+// It is not stored as an answer, so the pending question still carries into the user's follow-up.
+func (b *Bot) sendGarminSupportFallback(s *bot.Client, m *discord.Message) {
+	if b.sendGarminReplyIfVisible(s, m, garminSupportFallback) != nil {
+		b.refreshSupportSession(m)
+	}
 }

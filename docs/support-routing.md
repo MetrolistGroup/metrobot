@@ -8,7 +8,7 @@ Set `openrouter_api_keys`, use a dedicated Decider for initial support triage an
 {"openrouter_model": "z-ai/glm-5.3-flash:floor", "openrouter_decision_model": "perplexity/pplx-decider-flash-v1.2"}
 ```
 
-Decider first determines whether a message needs support and supplies the matching note, if any. Only accepted requests reach the chat model. Generated drafts are checked before delivery; a failed request stays silent. Ordinary chat uses GLM directly.
+Decider first determines whether a message needs support and supplies the matching note, if any. Only accepted requests reach the chat model. Generated drafts are checked before delivery. A failed automatic request stays silent; a failed explicit request gets a short honest reply. Ordinary chat uses GLM directly.
 
 Optional Qwen decisions use `openrouter_decision_model: "qwen/qwen3.7-flash"`; the chat model stays independent. In that mode, Qwen judgments use chat completions with a validated tool schema, not the Decider-only API. Routing has reasoning disabled; evidence checks request a 512-token reasoning budget and return a concrete finding for rejected drafts. Routing choice weights are normalized before applying the existing thresholds; model scores are not calibrated accuracy estimates. Qwen evidence checking makes one defect decision: `none` maps to acceptance, any named defect to rejection. Its logged grounding value is therefore 1 or 0, not a confidence estimate. This avoids a contradictory second score rejecting an answer while naming no defect; Decider retains its probability gate. Invalid, missing or truncated verdicts fail closed after at most one retry. Qwen endpoints reject `tool_choice=required`, so both Qwen decision paths validate returned calls rather than requiring that unsupported parameter.
 
@@ -18,15 +18,17 @@ An empty decision model uses legacy chat triage **without an independent answer 
 
 Explicit Discord chat accepts case-insensitive `garmin <prompt>` with any prompt, without brackets or a required comma. `garmin, <prompt>`, conversational aliases, bot mentions and direct replies remain supported. Telegram has no AI chat handler.
 
-Automatic routing handles clear help requests in the configured guild's app-support channel. It ignores bots, webhooks, commands, chatter, thanks, staff coordination, human-directed replies and requests requiring staff action. Replies to this bot and retained, same-user follow-ups can continue a question without using Discord's Reply button.
+Automatic routing handles clear help requests in the configured guild's app-support channel. It ignores bots, webhooks, commands, chatter, thanks, staff coordination, human-directed replies and requests requiring staff action. Direct replies to this bot are explicit requests, like the call word: they skip the router and go to the support agent, which can still choose silence.
+
+Every delivered app-support reply, including the fallback reply, opens a support session for that asker. For three minutes after the asker's latest message, their messages go straight to the chat model as explicit requests, without the router. Each message extends the window. Messages that mention or reply to someone else, commands and other users' messages still use the router. The session ends when the window passes or when the model deliberately stays silent or reacts, for example after "that worked, thanks"; that ending also runs the confirmed-fix check. Sessions live in memory, are capped at 1,024 entries and clear on restart. Retained, same-user follow-ups can still continue a question without using Discord's Reply button.
 
 Decisions asks two independent questions: whether the message needs an answer, and which eligible note or agent should handle it.
 
 | Decision | Requirement |
 | --- | --- |
-| Answer automatically | Request probability ≥ 0.80, positive route and available answering model |
+| Answer automatically | Request probability ≥ 0.80 and available answering model. A `none` route at that probability still goes to the agent, which can choose silence. |
 | Preload a selected note | Note probability ≥ 0.85 and lead over the next option ≥ 0.20 |
-| Send a generated answer | Grounding probability ≥ 0.80 and no named defect |
+| Send a generated answer | No named defect and grounding probability ≥ 0.50 |
 | Offer More from this note | Independent note-use probability ≥ 0.95 |
 
 A selected note is not permission to dump its full body. With Decider configured, the chat model generates the response from the retrieved reference. In Qwen-only decision mode, even a tentative top-ranked note is loaded as reference material instead of discarding it when its normalized routing weight misses the threshold. This does not authorize a reply: after `get_note` the separate applicability selector must choose one complete authored section at the same 0.85/0.20 thresholds. The runtime sends that section verbatim, including its heading, preamble and warnings, rather than asking Qwen to paraphrase it. Markdown code examples do not create sections. Unmatched, uncertain, multi-section or live-data questions continue through the agent and evidence checker. A Qwen draft judged to use a note must match an authored section (or the whole retrieved note) exactly: the checker cannot approve added claims by calling them a faithful paraphrase. Complex note synthesis can therefore abstain instead of inventing an answer. Only delivered answers enter assistant history; rejected drafts do not.
@@ -45,7 +47,7 @@ Exact note sections need a positive applicability selection, but no free-form ge
 
 ### Unhandled questions
 
-Failed AI replies are silent in every channel, for both automatic and explicit requests. Provider/checker/tool errors, timeouts, exhausted verification retries, empty responses, missing required sources, unavailable configuration and capacity/rate limits never produce error notices or fallback notes. Failed Discord delivery is logged, not retried as an unreferenced message or another format. Bounded provider retries and evidence-driven rewrites can still recover before a successful checked answer is delivered; failed tool execution stops the attempt.
+Failed automatic app-support replies and failed replies in other channels are silent. An explicit app-support request (call word, mention or reply to the bot) that ends with a provider/checker/tool error, timeout, exhausted verification retries, an empty response or missing required sources gets one fixed reply asking for the app version, platform and exact error text, and pointing to staff. It contains no generated claims and is not stored as an answer, so the pending question carries into the follow-up. Intentional `do_not_respond` silence still sends nothing. Failed Discord delivery is logged, not retried as an unreferenced message or another format. Bounded provider retries and evidence-driven rewrites can still recover before a successful checked answer is delivered; failed tool execution stops the attempt.
 
 Accepted support requests retain their pending user question without storing rejected drafts or failure messages, so a later follow-up can continue. Completed failed attempts are deduplicated, and no failure activates ambient replies. Intentional silence, staff-only requests, cancellation/deletion guards and permissions still apply. A router outage cannot classify a new message as a support request. Explicit "hi", "hello" and "hey" greetings still bypass the model.
 
@@ -86,20 +88,20 @@ A matching inspected change can support a backed-up, in-place nightly trial with
 
 ## Short replies and embeds
 
-The default chat model is `z-ai/glm-5.3-flash:floor`, with low reasoning effort and explicit 768-token chat, support and OCR output caps. Fallback chat-model triage has a 128-token output cap. GLM requires reasoning, so tool follow-ups, final-answer retries and OCR also use low effort rather than the rejected `reasoning.enabled=false` setting. Other models still honor explicit reasoning-free requests. The `:floor` route sorts eligible providers by price. The Decider uses its structured Decisions API, not chat completion token settings. Optional Qwen decisions retain their separate explicit budgets. Static instructions and the short project reference precede dynamic Discord context and shared memory. The full package/feature reference and setup guides load on demand. Later tool calls reference an earlier identical large result instead of sending another copy; the checker retains original evidence.
+The default chat model is `z-ai/glm-5.3-flash:floor`, with low reasoning effort. Chat and support output caps are 4,096 tokens: brevity comes from the prompts, and the cap only stops runaway output while leaving room for GLM reasoning. OCR keeps its 768-token cap. Fallback chat-model triage has a 128-token output cap. GLM requires reasoning, so tool follow-ups, final-answer retries and OCR also use low effort rather than the rejected `reasoning.enabled=false` setting. Other models still honor explicit reasoning-free requests. The `:floor` route sorts eligible providers by price. The Decider uses its structured Decisions API, not chat completion token settings. Optional Qwen decisions retain their separate explicit budgets. Static instructions and the short project reference precede dynamic Discord context and shared memory. The full package/feature reference and setup guides load on demand. Later tool calls reference an earlier identical large result instead of sending another copy; the checker retains original evidence.
 
 `TestGarminPromptBudget` counts prompt bytes with empty shared memory. It estimates tokens at four bytes per token; provider tokenizers and cache billing vary.
 
 | Text input | Before | After |
 | --- | ---: | ---: |
 | Chat prompt bytes | 16,566 | 7,406 |
-| Support prompt bytes | 14,078 | 7,995 |
+| Support prompt bytes | 14,078 | 8,711 |
 | Chat generation, estimated tokens | 5,342 | 2,332 |
-| Support generation, estimated tokens | 4,720 | 2,479 |
+| Support generation, estimated tokens | 4,720 | 2,658 |
 
 The generation examples include 160 bytes per retained message, with the old 30-message window and new 12-message window. They exclude tool schemas, retrieved evidence, runtime context, images and routing/checker calls. Direct chat still needs one generation call. Generated support still needs its applicability/routing and evidence checks; call cost depends on the actual note, research and retry path. Positively selected verbatim sections need no generation or second evidence check. The full package/feature reference is absent from the always-sent prefix and remains available through `load_skill`.
 
-Ordinary generated support replies target 20–30 words in 1–2 short sentences: a direct answer with one or two useful next steps, or one necessary question. Use everyday English, without feature lectures, research recaps, repeated symptoms or diagnostic questionnaires. Omit commit hashes, issue numbers and implementation details unless requested. Replies over 60 whitespace-separated words trigger the existing single rewrite before any paid evidence check; a still-oversized rewrite stays silent rather than being chopped mid-warning. Explicit detail requests and authored/verbatim note delivery retain their full scope. Keep requested links, platform conditions and safety warnings. Other replies ask for plain, short answers. Essays, full code dumps and huge lists get a brief refusal or a summary offer. Casual profanity is allowed; slurs and harassment are not. Generated Discord AI replies reuse the 1900-byte clipper, preserve UTF-8 and prefer a nearby word boundary. They stay in one message. Verbatim support-note attachments and private note access retain their existing behavior.
+Ordinary generated support replies target 20–30 words in 1–2 short sentences: a direct answer with one or two useful next steps, or one necessary question. Use everyday English, without feature lectures, research recaps, repeated symptoms or diagnostic questionnaires. Omit commit hashes, issue numbers and implementation details unless requested. Length is a prompt instruction only; no word-count gate rejects a longer draft. Explicit detail requests and authored/verbatim note delivery retain their full scope. Keep requested links, platform conditions and safety warnings. Other replies ask for plain, short answers. Essays, full code dumps and huge lists get a brief refusal or a summary offer. Casual profanity is allowed; slurs and harassment are not. Generated Discord AI replies reuse the 1900-byte clipper, preserve UTF-8 and prefer a nearby word boundary. They stay in one message. Verbatim support-note attachments and private note access retain their existing behavior.
 
 For an embed, the model can append one trailing block:
 
@@ -109,6 +111,8 @@ here is the release.
 {"title":"Release","description":"Brief details","url":"https://metrolist.cc","fields":[{"name":"Status","value":"Available","inline":true}],"color":5793266}
 ```
 ````
+
+Any AI reply, including app-support, can also use the staff-note `components-v2` layout (text, separator, section, gallery and link buttons; see [note markup](notes.md#components-v2)). Text around the block is shown around it. The block is validated with the note parser, is never clipped, and falls back to its readable text if invalid or rejected by Discord. FAQ blocks stay text because selectors need a saved note. In app-support the evidence checker reads the readable version, so button and media URLs must come from the evidence. A layout answer that uses a note keeps the More from this note button inside its container.
 
 The parser accepts only title, description, URL, fields and color. It validates Discord's per-field and total limits using UTF-16 lengths, checks HTTP/HTTPS URLs and 24-bit colors, and falls back to text for invalid embeds. Malformed JSON stays plain text and is subject to reply clipping. The bot disables mentions and stores the delivered embed text in conversation history. Telegram's public reply helper renders the same format as plain text. Telegram has no AI chat handler.
 

@@ -3,9 +3,13 @@ package discord
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
+	"github.com/disgoorg/disgo/discord"
 )
 
 func TestSupportAgentBoundsLongConversationsWithoutExtraModelCall(t *testing.T) {
@@ -45,7 +49,8 @@ func TestSupportDecisionActionDefersUncertainMatches(t *testing.T) {
 		{"close alternatives", .95, .85, .10, "n0", "nightly", true, "agent"},
 		{"unmatched request", .90, .60, .20, "agent", "", true, "agent"},
 		{"low request probability", .79, .99, .98, "n0", "nightly", true, "none"},
-		{"explicit silence", .99, .99, .98, "none", "", true, "none"},
+		{"confident request routed to none", .99, .99, .98, "none", "", true, "agent"},
+		{"uncertain request routed to none", .79, .99, .98, "none", "", true, "none"},
 		{"no agent available", .99, .60, .20, "agent", "", false, "none"},
 		{"confident note still needs agent", .99, .99, .98, "n0", "nightly", false, "none"},
 	} {
@@ -55,5 +60,34 @@ func TestSupportDecisionActionDefersUncertainMatches(t *testing.T) {
 				t.Fatalf("action=%s want=%s", got, tc.want)
 			}
 		})
+	}
+}
+
+// A reply to the bot is explicit, so the router cannot drop it.
+func TestAppSupportReplyToBotSkipsRouter(t *testing.T) {
+	b, client, sent := newSupportDecisionTestBot(t)
+	client.Caches.SetSelfUser(discord.OAuth2User{User: discord.User{ID: 900}})
+	var routed atomic.Bool
+	b.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+		if _, routing := request.Questions["route"]; routing {
+			routed.Store(true)
+			return supportTestDecision(request, "none", 0, 0), nil
+		}
+		return supportTestDecision(request, "agent", .99, .99), nil
+	})
+	b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "which Metrolist version are you on?"}}, nil
+	})
+	m := supportTestMessage(20)
+	m.Content = "that didn't work"
+	m.ReferencedMessage = &discord.Message{ID: snowflakeID("19"), ChannelID: m.ChannelID, Author: discord.User{ID: 900}}
+	b.onMessageCreate(client, m)
+	for deadline := time.Now().Add(2 * time.Second); sent.count() == 0 && time.Now().Before(deadline); {
+		time.Sleep(time.Millisecond)
+	}
+	sent.mu.Lock()
+	defer sent.mu.Unlock()
+	if routed.Load() || len(sent.bodies) != 1 || !strings.Contains(sent.bodies[0], "which Metrolist version") {
+		t.Fatalf("routed=%v deliveries=%d", routed.Load(), len(sent.bodies))
 	}
 }

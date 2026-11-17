@@ -39,7 +39,7 @@ func TestExplicitGreetingSkipsSupportAndOldQuestions(t *testing.T) {
 	}
 }
 
-func TestSupportFailuresStaySilentAndKeepPendingQuestion(t *testing.T) {
+func TestSupportFailuresKeepPendingQuestion(t *testing.T) {
 	for _, automatic := range []bool{false, true} {
 		for _, failure := range []string{"provider", "timeout", "empty", "nil", "evidence", "checker-error"} {
 			t.Run(map[bool]string{false: "explicit", true: "automatic"}[automatic]+"/"+failure, func(t *testing.T) {
@@ -82,8 +82,8 @@ func TestSupportFailuresStaySilentAndKeepPendingQuestion(t *testing.T) {
 					b.handleGarminAI(client, m, messages)
 				}
 				retained := b.garminAIUserContexts[garminAIUserContextKey(m)]
-				if sent.count() != 0 || calls == 0 || !retained.unanswered || !retained.ambientUntil.IsZero() || len(retained.messages) != 1 || retained.replyID != "" {
-					t.Fatalf("failure sent a reply or lost pending context: calls=%d deliveries=%d context=%+v", calls, sent.count(), retained)
+				if !sent.onlyFallback(!automatic) || calls == 0 || !retained.unanswered || !retained.ambientUntil.IsZero() || len(retained.messages) != 1 || retained.replyID != "" {
+					t.Fatalf("failure sent the wrong reply or lost pending context: calls=%d deliveries=%d context=%+v", calls, sent.count(), retained)
 				}
 			})
 		}

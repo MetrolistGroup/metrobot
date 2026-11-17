@@ -12,86 +12,13 @@ import (
 	"github.com/disgoorg/disgo/discord"
 )
 
-func TestSupportAnswerBrevity(t *testing.T) {
-	for _, test := range []struct {
-		name, prompt, answer string
-		channel              string
-		want                 bool
-	}{
-		{name: "short support", prompt: "fullscreen artwork is broken", answer: "which Metrolist version are you using?", want: true},
-		{name: "word limit", prompt: "fullscreen artwork is broken", answer: strings.Repeat("word ", 60), want: true},
-		{name: "verbose support", prompt: "fullscreen artwork is broken", answer: strings.Repeat("word ", 61)},
-		{name: "requested detail", prompt: "explain the setup in detail", answer: strings.Repeat("word ", 61), want: true},
-		{name: "other channel", prompt: "fullscreen artwork is broken", answer: strings.Repeat("word ", 61), channel: garminChatThreadID, want: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			b := &Bot{}
-			message := supportTestMessage(20)
-			message.Content = test.prompt
-			if test.channel != "" {
-				message.ChannelID = snowflakeID(test.channel)
-			}
-			messages := []cmd.GarminAIMessage{{Role: "user", Content: test.prompt}}
-			accepted, hint, err := b.supportAnswerGrounded(context.Background(), message, messages, messages, test.answer, nil)
-			if err != nil || accepted != test.want {
-				t.Fatalf("accepted=%v hint=%q err=%v", accepted, hint, err)
-			}
-			if !test.want && (!strings.Contains(hint, "60 words") || !strings.Contains(hint, "safety warnings")) {
-				t.Fatalf("rewrite lost the length budget or safety requirements: %q", hint)
-			}
-		})
-	}
-}
-
-func TestSupportAgentRewritesVerboseDraftWithoutTruncating(t *testing.T) {
-	for _, staysVerbose := range []bool{false, true} {
-		t.Run(map[bool]string{false: "short rewrite", true: "still verbose"}[staysVerbose], func(t *testing.T) {
-			const question = "when I set the album art cover to full screen and turn on immersive view, it just shows normally. is there a fix?"
-			const short = "i don't have a confirmed fix for that. which Metrolist version and phone are you using?"
-			long := "I couldn't find an existing report of that combination. " + strings.Repeat("unasked explanation ", 40)
-			calls, checks := 0, 0
-			b := &Bot{garminDecisions: supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
-				checks++
-				if len(strings.Fields(request.State.(map[string]any)["proposed_answer"].(string))) > 60 {
-					t.Fatal("verbose draft reached the paid evidence checker")
-				}
-				return supportTestDecision(request, "agent", .99, .99), nil
-			})}
-			b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-				calls++
-				if calls == 1 {
-					return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: long}}, nil
-				}
-				hinted := false
-				for _, message := range request.Messages {
-					hinted = hinted || message.Role == "system" && strings.Contains(message.Content, "60 words")
-					if strings.Contains(message.Content, long) {
-						t.Fatal("undelivered verbose draft anchored the rewrite")
-					}
-				}
-				if !hinted {
-					t.Fatal("rewrite did not receive the brevity requirement")
-				}
-				answer := short
-				if staysVerbose {
-					answer = long
-				}
-				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: answer}}, nil
-			})
-			message := supportTestMessage(20)
-			message.Content = question
-			result, err := b.runGarminAI(context.Background(), nil, message, []cmd.GarminAIMessage{{Role: "user", Content: question}})
-			if err != nil || calls != 2 {
-				t.Fatalf("result=%+v calls=%d err=%v", result, calls, err)
-			}
-			if staysVerbose {
-				if !result.Silent || !result.Unverified || result.Answer != "" || checks != 0 {
-					t.Fatalf("repeatedly verbose draft was delivered or truncated: %+v checks=%d", result, checks)
-				}
-			} else if result.Silent || result.Answer != short || checks != 1 {
-				t.Fatalf("short rewrite was lost: %+v checks=%d", result, checks)
-			}
-		})
+// Brevity is a prompt instruction; a long draft must not be silently rejected for its length.
+func TestSupportAnswerHasNoWordGate(t *testing.T) {
+	message := supportTestMessage(20)
+	messages := []cmd.GarminAIMessage{{Role: "user", Content: "fullscreen artwork is broken"}}
+	accepted, hint, err := (&Bot{}).supportAnswerGrounded(context.Background(), message, messages, messages, strings.Repeat("word ", 200), nil)
+	if err != nil || !accepted {
+		t.Fatalf("accepted=%v hint=%q err=%v", accepted, hint, err)
 	}
 }
 

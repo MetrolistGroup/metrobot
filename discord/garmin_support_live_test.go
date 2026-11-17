@@ -32,8 +32,8 @@ func TestSupportImmersiveArtworkBrevityLive(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &reply); err != nil {
 		t.Fatal(err)
 	}
-	if words := len(strings.Fields(reply.Content)); words == 0 || words > supportAnswerMaxWords {
-		t.Fatalf("support reply contains %d words, want 1-%d; inspect the private report", words, supportAnswerMaxWords)
+	if words := len(strings.Fields(reply.Content)); words == 0 || words > 60 {
+		t.Fatalf("support reply contains %d words, want 1-60; inspect the private report", words)
 	}
 }
 

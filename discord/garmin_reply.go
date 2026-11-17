@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
+	"github.com/MetrolistGroup/metrobot/internal/notefmt"
 	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/discord"
 	"go.uber.org/zap"
@@ -68,7 +69,49 @@ func leadingGarminSentences(answer string, limit int) string {
 	return answer
 }
 
+// garminLayoutReply accepts a reply built from a note components-v2 block. FAQ selectors need a saved note, so they stay text.
+func garminLayoutReply(content string) (notefmt.Rendered, bool) {
+	if !strings.Contains(content, "```components-v2") {
+		return notefmt.Rendered{}, false
+	}
+	note, err := notefmt.Parse(content)
+	if err != nil {
+		return notefmt.Rendered{}, false
+	}
+	rendered := note.Render()
+	if rendered.Layout == nil || rendered.FAQ != nil {
+		return notefmt.Rendered{}, false
+	}
+	if _, ok := noteComponents(rendered, "", "", -1); !ok {
+		return notefmt.Rendered{}, false
+	}
+	return rendered, true
+}
+
+func (b *Bot) sendGarminLayoutReply(s *bot.Client, m *discord.Message, layout notefmt.Rendered, extra ...discord.ContainerSubComponent) (*discord.Message, error) {
+	components, _ := noteComponents(layout, "", "", -1)
+	container := components[0].(discord.ContainerComponent)
+	container.Components = append(container.Components, extra...)
+	return s.Rest.CreateMessage(m.ChannelID, discord.MessageCreate{
+		Flags:            discord.MessageFlagIsComponentsV2,
+		Components:       []discord.LayoutComponent{container},
+		MessageReference: &discord.MessageReference{MessageID: snowflakePtr(m.ID.String())},
+		AllowedMentions:  &discord.AllowedMentions{},
+	})
+}
+
 func (b *Bot) sendGarminReply(s *bot.Client, m *discord.Message, content string) *discord.Message {
+	if layout, ok := garminLayoutReply(content); ok {
+		reply, err := b.sendGarminLayoutReply(s, m, layout)
+		if err == nil {
+			return reply
+		}
+		if !noteRequestRejected(err) {
+			b.Logger.Error("failed to send Garmin AI reply", zap.Error(err))
+			return nil
+		}
+		content = layout.Text // Discord refused the layout; send the readable version.
+	}
 	content, embed := cmd.ParseGarminReply(content)
 	var embeds []discord.Embed
 	if embed != nil && embed.HasEmbedContent() {

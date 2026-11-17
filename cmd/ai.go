@@ -31,8 +31,9 @@ type GarminAI interface {
 }
 
 const (
-	GarminChatOutputTokens    = 768
-	GarminSupportOutputTokens = 768
+	// Brevity comes from the prompts; these caps only stop runaway output and leave room for GLM reasoning.
+	GarminChatOutputTokens    = 4096
+	GarminSupportOutputTokens = 4096
 	GarminTriageOutputTokens  = 128
 	GarminOCROutputTokens     = 768
 )

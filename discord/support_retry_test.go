@@ -129,7 +129,7 @@ func TestIntentionalSupportSilenceClearsPendingQuestion(t *testing.T) {
 	}
 }
 
-func TestExplicitNonHelpOutageStaysSilent(t *testing.T) {
+func TestExplicitOutageSendsFallbackAndKeepsQuestion(t *testing.T) {
 	b, client, sent := newSupportDecisionTestBot(t)
 	b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		return nil, errors.New("upstream unavailable")
@@ -138,8 +138,8 @@ func TestExplicitNonHelpOutageStaysSilent(t *testing.T) {
 	m.Content = "garmin, thanks"
 	b.handleGarminAI(client, m, []cmd.GarminAIMessage{{Role: "user", Content: "thanks"}})
 	retained := b.garminAIUserContexts[garminAIUserContextKey(m)].messages
-	if sent.count() != 0 || len(retained) != 1 {
-		t.Fatal("explicit outage sent a reply or lost the question")
+	if !sent.onlyFallback(true) || len(retained) != 1 {
+		t.Fatal("explicit outage sent the wrong reply or lost the question")
 	}
 }
 

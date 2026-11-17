@@ -15,7 +15,7 @@ import (
 // Support must not inherit the casual persona, prompt overrides, or shared memory.
 const garminAppSupportSystemPrompt = `You are Metrobot in official Metrolist app-support. Answer the newest request using relevant prior attempts, not unrelated earlier topics. A greeting does not retry an old question; "answer" can refer to a retained unanswered question.
 
-- Answer ordinary questions in 1-2 short sentences, targeting 20-30 words. The delivery limit is 60 words unless the user asks for detail. Use plain everyday English: answer directly, give one or two useful next steps or one necessary question, then stop. Skip feature explanations, research recaps and long diagnostic checklists unless asked. Omit commit hashes, issue numbers and implementation details unless requested. Do not repeat symptoms or ask the user to enable a setting they already enabled. Keep requested links, platform conditions and safety warnings.
+- Answer ordinary questions in 1-2 short sentences, targeting 20-30 words. Use plain everyday English: answer directly, give one or two useful next steps or one necessary question, then stop. Skip feature explanations, research recaps and long diagnostic checklists unless asked. Omit commit hashes, issue numbers and implementation details unless requested. Do not repeat symptoms or ask the user to enable a setting they already enabled. Keep requested links, platform conditions and safety warnings.
 - Read matching notes before guides; list_notes gives the current names and descriptions. get_note with name=download covers installation, platforms and packages; playback covers first checks; logs covers diagnostic collection; nightly covers nightly installation; rpc covers Discord; uploads covers uploaded music. Never assume a removed note is available. Use load_support_guide for missing setup details. Metrolist v14 is the public KMP rewrite with no donor/tester/source gate.
 - Previous assistant replies are not evidence. User messages establish symptoms/attempts; app facts need the supplied project reference, notes/guides or official results. Never invent menus, versions, diagnoses, fixes or staff/payment arrangements. Extract relevant facts, not whole FAQs. Answer yes/no first; include requested links yourself. Do not announce internal snapshots, tools or checks.
 - Give useful sourced guidance before one blocking clarification. Do not repeat known details or failed steps. Distinguish local audio from YouTube Music uploads. Unread attachments are unknown; ask for exact error text. Unknown problems need one reproducible example, app/OS version and the relevant symptom, not speculative research.
@@ -103,6 +103,7 @@ func (b *Bot) sendGarminAppSupportReplyAndRememberIfVisible(s *bot.Client, m *di
 	}
 	reply, delivered := b.sendGarminAppSupportReply(s, m, content, noteName)
 	if reply != nil {
+		b.refreshSupportSession(m)
 		conversation = copyGarminAIMessages(conversation)
 		if len(conversation) > 0 && conversation[len(conversation)-1].Role == "assistant" {
 			conversation[len(conversation)-1].Content = delivered
@@ -113,6 +114,22 @@ func (b *Bot) sendGarminAppSupportReplyAndRememberIfVisible(s *bot.Client, m *di
 }
 
 func (b *Bot) sendGarminAppSupportReply(s *bot.Client, m *discord.Message, content, noteName string) (*discord.Message, string) {
+	if layout, ok := garminLayoutReply(content); ok && noteName != "" {
+		reply, err := b.sendGarminLayoutReply(s, m, layout, discord.ActionRowComponent{Components: []discord.InteractiveComponent{discord.ButtonComponent{
+			Label: "More from this note", Style: discord.ButtonStyleSecondary, CustomID: noteMoreCustomID(noteName),
+		}}})
+		if err == nil {
+			return reply, layout.Text
+		}
+		if !noteRequestRejected(err) {
+			b.Logger.Error("failed to send support answer", zap.Error(err))
+			return nil, ""
+		}
+		content = layout.Text
+	} else if ok {
+		reply := b.sendGarminReply(s, m, content)
+		return reply, layout.Text
+	}
 	if noteName != "" {
 		message := discord.MessageCreate{
 			Flags:            discord.MessageFlagIsComponentsV2,

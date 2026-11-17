@@ -196,6 +196,18 @@ func (b *Bot) onMessageCreate(s *bot.Client, m *discord.Message) {
 		go b.handleGarminAI(s, m, b.garminAITriggeredConversation(m, prompt))
 		return
 	}
+	// A direct reply to the bot, or any message from someone in an active support session, is explicit in app-support:
+	// the chat model answers at once instead of the router.
+	if m.ChannelID.String() == garminAppSupportID && !strings.ContainsAny(content[:min(1, len(content))], ".!/") &&
+		(garminReplyToBot(s, m) && b.garminMessageVisible(m.ChannelID.String(), m.ReferencedMessage.ID.String()) ||
+			m.MessageReference == nil && m.ReferencedMessage == nil && !garminAIAmbientTargetsOtherUser(s, m) && b.continueSupportSession(m)) {
+		b.cancelGarminAIAmbient(m)
+		if b.autoWarnGarminAbuse(s, m, content) {
+			return
+		}
+		go b.handleGarminAI(s, m, b.garminAITriggeredConversation(m, content))
+		return
+	}
 	if m.ChannelID.String() != garminAppSupportID {
 		if messages, continuation := b.garminAIContinuation(m, content); continuation {
 			b.cancelGarminAIAmbient(m)
