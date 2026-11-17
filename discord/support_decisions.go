@@ -262,9 +262,11 @@ func (b *Bot) runSupportDecisionAgent(s *bot.Client, m *discord.Message, message
 	requestCtx = context.WithValue(requestCtx, automaticSupportContextKey{}, true)
 	requestCtx = context.WithValue(requestCtx, supportSelectedNoteContextKey{}, selectedNote)
 	messages = copyGarminAIMessages(messages)
-	for i := range messages {
+	// Older images are not re-read; the current message's screenshots are transcribed for the checker.
+	for i := range messages[:max(0, len(messages)-1)] {
 		messages[i].Images = nil
 	}
+	messages = b.transcribeSupportImages(requestCtx, s, messages)
 	messages = boundGarminAIConversation(messages)
 	messages = b.rememberGarminAIUnansweredContext(m, messages)
 	ctx, cancelAgent := context.WithTimeout(requestCtx, garminSupportTimeout)

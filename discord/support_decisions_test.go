@@ -646,10 +646,17 @@ func TestSupportDecisionAgentHandoffRestrictsManualNotes(t *testing.T) {
 		if request.SystemPrompt == garminAppSupportTriagePrompt {
 			t.Error("legacy triage used")
 		}
-		for _, message := range request.Messages {
+		if request.SystemPrompt == supportImageTranscribePrompt {
+			return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "SCREENSHOT_TEXT"}}, nil
+		}
+		// Only the current message's screenshot is read; older attachments stay unfetched.
+		for _, message := range request.Messages[:len(request.Messages)-1] {
 			if len(message.Images) > 0 {
-				t.Error("automatic handoff fetched attachments")
+				t.Error("automatic handoff fetched older attachments")
 			}
+		}
+		if !strings.Contains(request.Messages[len(request.Messages)-1].Content, "SCREENSHOT_TEXT") {
+			t.Error("screenshot text did not reach the agent")
 		}
 		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "Verified support answer"}}, nil
 	})
@@ -657,8 +664,12 @@ func TestSupportDecisionAgentHandoffRestrictsManualNotes(t *testing.T) {
 		return supportTestDecision(request, "agent", .99, .99), nil
 	})
 	m := supportTestMessage(20)
-	b.handleGarminAutomaticAppSupport(client, m, []cmd.GarminAIMessage{{Role: "user", Content: m.Content, Images: []string{"https://private.example"}}})
-	if aiCalls != 1 || sent.count() != 1 {
+	b.handleGarminAutomaticAppSupport(client, m, []cmd.GarminAIMessage{
+		{Role: "user", Content: "older question", Images: []string{"https://older.example"}},
+		{Role: "assistant", Content: "older answer"},
+		{Role: "user", Content: m.Content, Images: []string{"https://current.example"}},
+	})
+	if aiCalls != 2 || sent.count() != 1 {
 		t.Fatalf("agent calls=%d sends=%d", aiCalls, sent.count())
 	}
 	ctx := context.WithValue(context.Background(), automaticSupportContextKey{}, true)

@@ -60,10 +60,16 @@ func newOpenRouterClient(keys []string, model, endpoint string, httpClient *http
 			}
 			if baseModel == "z-ai/glm-5.3-flash" {
 				// GLM rejects reasoning.enabled=false, including tool follow-ups and OCR.
-				request.Reasoning = &chatReasoning{Effort: "low"}
+				effort := "low"
+				if request.ReasoningEffort != "" {
+					effort = request.ReasoningEffort
+				}
+				request.Reasoning = &chatReasoning{Effort: effort}
 			} else if request.DisableReasoning {
 				disabled := false
 				request.Reasoning = &chatReasoning{Enabled: &disabled}
+			} else if request.ReasoningEffort != "" {
+				request.Reasoning = &chatReasoning{Effort: request.ReasoningEffort}
 			}
 			// session_id is routing/trace grouping, not history; let OpenRouter derive it per conversation.
 			if openRouterExplicitCacheModel(model) && len(request.Messages) > 0 {

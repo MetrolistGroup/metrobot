@@ -76,6 +76,9 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 	if requestCtx.Err() != nil {
 		return
 	}
+	if supportMode {
+		messages = b.transcribeSupportImages(requestCtx, s, messages)
+	}
 	if supportMode && !ambient {
 		messages = b.rememberGarminAIUnansweredContext(m, messages)
 	}
@@ -203,7 +206,7 @@ func (b *Bot) waitForGarminAICooldown(userID string) bool {
 }
 
 // garminSupportFallback replaces silence when an explicit app-support call has no checked answer.
-const garminSupportFallback = "i couldn't find a reliable answer for that. share your Metrolist version, platform and the exact error text, and staff can take a look."
+const garminSupportFallback = "i don't have a verified answer for this yet, so staff will need to take a look."
 
 // It is not stored as an answer, so the pending question still carries into the user's follow-up.
 func (b *Bot) sendGarminSupportFallback(s *bot.Client, m *discord.Message) {

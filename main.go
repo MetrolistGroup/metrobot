@@ -93,6 +93,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer logger.Sync()
+	zap.ReplaceGlobals(logger) // cmd logs per-call usage through zap.L()
 
 	logger.Info("starting metrolist bot")
 

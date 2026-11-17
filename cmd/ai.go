@@ -41,11 +41,13 @@ const (
 type GarminAIRequest struct {
 	MaxOutputTokens  int
 	DisableReasoning bool
-	SystemPrompt     string
-	Context          string
-	Messages         []GarminAIMessage
-	Tools            []GarminAITool
-	ToolChoice       string
+	// ReasoningEffort overrides the default effort when reasoning stays on; GLM always reasons.
+	ReasoningEffort string
+	SystemPrompt    string
+	Context         string
+	Messages        []GarminAIMessage
+	Tools           []GarminAITool
+	ToolChoice      string
 }
 
 type GarminAIMessage struct {
@@ -223,6 +225,7 @@ type chatCompletionClient struct {
 
 type chatCompletionRequest struct {
 	DisableReasoning bool                     `json:"-"`
+	ReasoningEffort  string                   `json:"-"`
 	Model            string                   `json:"model,omitempty"`
 	Models           []string                 `json:"models,omitempty"`
 	SessionID        string                   `json:"session_id,omitempty"`
@@ -342,6 +345,7 @@ func (c *chatCompletionClient) Complete(ctx context.Context, input GarminAIReque
 	}
 	request := chatCompletionRequest{
 		DisableReasoning: input.DisableReasoning,
+		ReasoningEffort:  input.ReasoningEffort,
 		Model:            c.model,
 		Messages:         make([]chatMessage, 1, messageCapacity),
 		MaxTokens:        input.MaxOutputTokens,

@@ -312,3 +312,33 @@ func TestOpenRouterExplicitOutputBudgetsKeepGLMLowReasoning(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenRouterReasoningEffortOverride(t *testing.T) {
+	var request chatCompletionRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		request = chatCompletionRequest{}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer server.Close()
+	for _, tc := range []struct {
+		model   string
+		disable bool
+		want    string
+	}{
+		{"", true, "medium"}, // GLM cannot disable reasoning, so the effort still applies
+		{"openai/gpt-5.4-mini-test", false, "medium"},
+		{"openai/gpt-5.4-mini-test", true, ""}, // other models honor disabling
+	} {
+		client := newOpenRouterClient([]string{"key"}, tc.model, server.URL, server.Client())
+		if _, err := client.Complete(context.Background(), GarminAIRequest{DisableReasoning: tc.disable, ReasoningEffort: "medium", Messages: testGarminMessages("hi")}); err != nil {
+			t.Fatal(err)
+		}
+		if request.Reasoning == nil || request.Reasoning.Effort != tc.want {
+			t.Fatalf("model %q disable=%v reasoning=%+v, want effort %q", tc.model, tc.disable, request.Reasoning, tc.want)
+		}
+	}
+}

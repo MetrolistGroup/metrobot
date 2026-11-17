@@ -404,13 +404,15 @@ Do not run a public search for casual chat or channel-history summaries. Never s
 		started := time.Now()
 		disableReasoning := finalOnly || result.ToolCalls > 0
 		boundGarminEmojiImages(conversation)
-		outputTokens := cmd.GarminChatOutputTokens
+		outputTokens, effort := cmd.GarminChatOutputTokens, ""
 		if appSupport {
-			outputTokens = cmd.GarminSupportOutputTokens
+			// Low effort averaged ~33 reasoning tokens per support call and gave generic answers.
+			outputTokens, effort = cmd.GarminSupportOutputTokens, "medium"
 		}
 		completion, err := b.garminAI.Complete(ctx, cmd.GarminAIRequest{
 			MaxOutputTokens:  outputTokens,
 			DisableReasoning: disableReasoning,
+			ReasoningEffort:  effort,
 			SystemPrompt:     systemPrompt,
 			Context:          requestContext,
 			Messages:         compactGarminToolResults(conversation, systemPrompt),
