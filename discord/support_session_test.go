@@ -2,12 +2,14 @@ package discord
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
+	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/snowflake/v2"
 )
 
@@ -74,5 +76,61 @@ func TestSupportSessionSkipsRouterUntilResolvedOrIdle(t *testing.T) {
 	send(26, asker, "one more thing")
 	if routed.Load() != 3 {
 		t.Fatal("expired session skipped the router")
+	}
+}
+
+func TestSupportStaysOutOnceHumansTakeOver(t *testing.T) {
+	b, client, sent := newSupportDecisionTestBot(t)
+	client.Caches.SetSelfUser(discord.OAuth2User{User: discord.User{ID: 900}})
+	var calls atomic.Int32
+	b.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+		calls.Add(1)
+		return supportTestDecision(request, "agent", .99, .99), nil
+	})
+	b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		calls.Add(1)
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "which Metrolist version are you on?"}}, nil
+	})
+	asker, staff := snowflake.ID(42), snowflake.ID(43)
+	send := func(id int, author snowflake.ID, content string, replyTo snowflake.ID) {
+		t.Helper()
+		m := supportTestMessage(id)
+		m.Author.ID, m.Content = author, content
+		if replyTo != 0 {
+			m.ReferencedMessage = &discord.Message{ID: snowflakeID("19"), ChannelID: m.ChannelID, Author: discord.User{ID: replyTo}}
+		}
+		b.garminAILastUsed[author.String()] = time.Now().Add(-garminAICooldown)
+		b.onMessageCreate(client, m)
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	b.refreshSupportSession(supportTestMessage(20)) // asker is mid-session with the bot
+	send(21, staff, "what version?", asker)
+	send(22, asker, "so you know how to fix this??", 0)
+	send(23, staff, "not you!", 900)
+	send(24, staff, "aah", 0)
+	if calls.Load() != 0 || sent.count() != 0 {
+		t.Fatalf("bot joined a staff conversation: calls=%d sent=%d", calls.Load(), sent.count())
+	}
+
+	b.supportMu.Lock()
+	b.supportHandoffs = nil
+	b.supportMu.Unlock()
+	send(25, asker, "bro stop spamming just go to sleep", 900)
+	if calls.Load() != 0 || sent.count() != 0 {
+		t.Fatal("stop request got a reply")
+	}
+}
+
+func TestUnaddressedSupportFollowupSkipsFallback(t *testing.T) {
+	b, client, sent := newSupportDecisionTestBot(t)
+	b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		return nil, errors.New("unavailable")
+	})
+	m := supportTestMessage(20)
+	m.Content = "okiw"
+	b.handleGarminSupportFollowup(client, m, []cmd.GarminAIMessage{{Role: "user", Content: m.Content}})
+	if sent.count() != 0 {
+		t.Fatal("unaddressed follow-up got the fallback")
 	}
 }

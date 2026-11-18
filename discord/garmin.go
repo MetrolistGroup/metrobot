@@ -27,7 +27,17 @@ func (b *Bot) handleGarminAI(s *bot.Client, m *discord.Message, messages []cmd.G
 	b.handleGarminAIWithMode(s, m, messages, false, 0)
 }
 
+// handleGarminSupportFollowup answers an unaddressed app-support follow-up, staying silent instead of sending the fallback.
+func (b *Bot) handleGarminSupportFollowup(s *bot.Client, m *discord.Message, messages []cmd.GarminAIMessage) {
+	b.cancelGarminAIAmbient(m)
+	b.runGarminAIReply(s, m, messages, false, 0, false)
+}
+
 func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages []cmd.GarminAIMessage, ambient bool, ambientToken uint64) {
+	b.runGarminAIReply(s, m, messages, ambient, ambientToken, true)
+}
+
+func (b *Bot) runGarminAIReply(s *bot.Client, m *discord.Message, messages []cmd.GarminAIMessage, ambient bool, ambientToken uint64, fallback bool) {
 	supportCompleted := false
 	if !b.garminMessageVisible(m.ChannelID.String(), m.ID.String()) {
 		return
@@ -99,7 +109,7 @@ func (b *Bot) handleGarminAIWithMode(s *bot.Client, m *discord.Message, messages
 		b.Logger.Error("Metrobot AI request failed", zap.String("user", m.Author.ID.String()), zap.String("channel_id", m.ChannelID.String()), zap.String("message_id", m.ID.String()), zap.Error(err))
 	}
 	if err != nil || ctx.Err() != nil || result == nil || (explicitSupport && result.Silent && result.Unverified) {
-		if explicitSupport {
+		if explicitSupport && fallback {
 			b.sendGarminSupportFallback(s, m)
 		}
 		return

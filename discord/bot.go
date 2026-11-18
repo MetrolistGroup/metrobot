@@ -75,6 +75,7 @@ type Bot struct {
 	supportSlots          chan struct{}
 	supportSeen           map[string]supportRequestState
 	supportSessions       map[string]time.Time
+	supportHandoffs       map[string]time.Time
 	garminDeletedMessages map[string]time.Time
 }
 

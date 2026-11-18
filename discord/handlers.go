@@ -204,14 +204,22 @@ func (b *Bot) onMessageCreate(s *bot.Client, m *discord.Message) {
 	}
 	// A direct reply to the bot, or any message from someone in an active support session, is explicit in app-support:
 	// the chat model answers at once instead of the router.
-	if m.ChannelID.String() == garminAppSupportID && !strings.ContainsAny(content[:min(1, len(content))], ".!/") &&
+	if m.ChannelID.String() == garminAppSupportID {
+		botID := ""
+		if s != nil && s.Caches != nil && s.ID() != 0 {
+			botID = s.ID().String()
+		}
+		b.noteSupportHandoff(m, botID)
+	}
+	supportHandedOff := m.ChannelID.String() == garminAppSupportID && b.supportHandedOff(m)
+	if m.ChannelID.String() == garminAppSupportID && !supportHandedOff && !strings.ContainsAny(content[:min(1, len(content))], ".!/") &&
 		(garminReplyToBot(s, m) && b.garminMessageVisible(m.ChannelID.String(), m.ReferencedMessage.ID.String()) ||
 			m.MessageReference == nil && m.ReferencedMessage == nil && !garminAIAmbientTargetsOtherUser(s, m) && b.continueSupportSession(m)) {
 		b.cancelGarminAIAmbient(m)
 		if b.autoWarnGarminAbuse(s, m, content) {
 			return
 		}
-		go b.handleGarminAI(s, m, b.garminAITriggeredConversation(m, content))
+		go b.handleGarminSupportFollowup(s, m, b.garminAITriggeredConversation(m, content))
 		return
 	}
 	if m.ChannelID.String() != garminAppSupportID {
@@ -247,6 +255,9 @@ func (b *Bot) onMessageCreate(s *bot.Client, m *discord.Message) {
 	matches := chatModPattern.FindStringSubmatch(content)
 	if matches == nil {
 		if m.ChannelID.String() == garminAppSupportID {
+			if supportHandedOff {
+				return
+			}
 			messages := b.garminAITriggeredConversation(m, content)
 			go b.handleGarminAutomaticAppSupport(s, m, messages)
 			return
