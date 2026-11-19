@@ -2,6 +2,7 @@ package discord
 
 import (
 	"testing"
+	"time"
 
 	"github.com/MetrolistGroup/metrobot/db"
 )
@@ -86,5 +87,20 @@ func TestWolframLocal(t *testing.T) {
 	}
 	if _, ok := wolframLocal("population of france"); ok {
 		t.Error("non-math query answered locally")
+	}
+}
+
+func TestCooldownCheckDoesNotArm(t *testing.T) {
+	b := &Bot{}
+	// A rejected spin only calls onCooldown (never setCooldown), so checking must never arm a cooldown —
+	// otherwise a bet cancelled for no money would still block the next spin for 60s.
+	for range 3 {
+		if _, on := b.onCooldown("slots", "broke"); on {
+			t.Fatal("checking the cooldown armed it")
+		}
+	}
+	b.setCooldown("slots", "spent", time.Minute)
+	if _, on := b.onCooldown("slots", "spent"); !on {
+		t.Fatal("setCooldown did not arm a cooldown")
 	}
 }

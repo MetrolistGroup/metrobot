@@ -64,19 +64,24 @@ func (b *Bot) kudosText(s *bot.Client, m *discord.Message, content string) {
 	b.kudosReply(s, m, discord.MessageCreate{Content: content})
 }
 
-// takeCooldown records a per-user game cooldown and reports the remaining wait if one is still active.
-func (b *Bot) takeCooldown(game, userID string, d time.Duration) (time.Duration, bool) {
+// onCooldown reports the remaining wait if a per-user game cooldown is still active, without arming one.
+func (b *Bot) onCooldown(game, userID string) (time.Duration, bool) {
+	b.cooldownMu.Lock()
+	defer b.cooldownMu.Unlock()
+	if until, ok := b.cooldowns[game+":"+userID]; ok && time.Now().Before(until) {
+		return time.Until(until).Round(time.Second), true
+	}
+	return 0, false
+}
+
+// setCooldown arms a per-user game cooldown. It is only called once a bet has actually been placed.
+func (b *Bot) setCooldown(game, userID string, d time.Duration) {
 	b.cooldownMu.Lock()
 	defer b.cooldownMu.Unlock()
 	if b.cooldowns == nil {
 		b.cooldowns = make(map[string]time.Time)
 	}
-	key := game + ":" + userID
-	if until := b.cooldowns[key]; time.Now().Before(until) {
-		return time.Until(until).Round(time.Second), false
-	}
-	b.cooldowns[key] = time.Now().Add(d)
-	return 0, true
+	b.cooldowns[game+":"+userID] = time.Now().Add(d)
 }
 
 func (b *Bot) handleDaily(s *bot.Client, m *discord.Message, userID string) {
@@ -218,7 +223,7 @@ func slotWinnings(row [3]int, bet int64) int64 {
 }
 
 func (b *Bot) handleSlots(s *bot.Client, m *discord.Message, userID, arg string) {
-	if wait, ok := b.takeCooldown("slots", userID, slotsCooldown); !ok {
+	if wait, on := b.onCooldown("slots", userID); on {
 		b.kudosText(s, m, fmt.Sprintf("🕙 You can spin again in %s.", wait))
 		return
 	}
@@ -226,6 +231,7 @@ func (b *Bot) handleSlots(s *bot.Client, m *discord.Message, userID, arg string)
 	if !ok {
 		return
 	}
+	b.setCooldown("slots", userID, slotsCooldown)
 	var grid [3][3]int
 	for row := range grid {
 		for col := range grid[row] {
@@ -235,13 +241,18 @@ func (b *Bot) handleSlots(s *bot.Client, m *discord.Message, userID, arg string)
 	winnings := slotWinnings(grid[1], bet)
 	balance, failure := b.payKudos(userID, winnings)
 	display := fmt.Sprintf("⏸%s⏸\n▶%s◀\n⏸%s⏸", slotRow(grid[0]), slotRow(grid[1]), slotRow(grid[2]))
-	var outcome string
+	outcome, accent := fmt.Sprintf("💣 You lost **%d** kudos.", bet), 0x232323
 	if winnings > 0 {
-		outcome = fmt.Sprintf("💎 You won **%d** kudos!", winnings)
-	} else {
-		outcome = fmt.Sprintf("💣 You lost **%d** kudos.", bet)
+		outcome, accent = fmt.Sprintf("💎 You won **%d** kudos!", winnings), 0x5dadec
 	}
-	b.kudosText(s, m, fmt.Sprintf("%s\n%s Balance: **%d**.%s", display, outcome, balance, failure))
+	body := fmt.Sprintf("### 🎰 Slots\n%s\n%s Balance: **%d**.%s", display, outcome, balance, failure)
+	b.kudosReply(s, m, discord.MessageCreate{
+		Flags: discord.MessageFlagIsComponentsV2,
+		Components: []discord.LayoutComponent{discord.ContainerComponent{
+			AccentColor: accent,
+			Components:  []discord.ContainerSubComponent{discord.TextDisplayComponent{Content: body}},
+		}},
+	})
 }
 
 func slotRow(row [3]int) string {
@@ -382,7 +393,7 @@ func (b *Bot) handleBlackjack(s *bot.Client, m *discord.Message, userID, arg str
 		b.kudosText(s, m, "Finish your current hand first.")
 		return
 	}
-	if wait, ok := b.takeCooldown("bj", userID, blackjackCooldown); !ok {
+	if wait, on := b.onCooldown("bj", userID); on {
 		b.blackjackMu.Unlock()
 		b.kudosText(s, m, fmt.Sprintf("🕙 You can play again in %s.", wait))
 		return
@@ -397,6 +408,7 @@ func (b *Bot) handleBlackjack(s *bot.Client, m *discord.Message, userID, arg str
 		delete(b.blackjackGames, userID)
 		return
 	}
+	b.setCooldown("bj", userID, blackjackCooldown)
 	g := newBlackjackGame(userID, bet, rand.Perm(52))
 	b.blackjackGames[userID] = g
 	if isBlackjack(g.player) || isBlackjack(g.dealer) {
