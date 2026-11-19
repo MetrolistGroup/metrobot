@@ -53,3 +53,36 @@ func TestCompareCachedSourcesAndRows(t *testing.T) {
 		}
 	}
 }
+
+func TestCompareVerdict(t *testing.T) {
+	for _, tt := range []struct {
+		section, name, first, second string
+		winner                       int
+	}{
+		{"Battery", "Type", "Li-Ion 5060 mAh", "Li-Po 4500 mAh", 1},
+		{"Body", "Weight", "221 g (7.80 oz)", "187 g (6.60 oz)", 2},
+		{"CPU", "Process", "3 nanometers", "4 nanometers", 1},
+		{"GeekBench 6", "Photo processing", "98.7 images/sec", "120 images/sec", 2},
+		{"AnTuTu 11", "CPU", "1112833", "998,000", 1},
+		{"Primary details", "Place in the ranking", "1333", "120", 2},
+		{"Our Tests", "Loudspeaker", "-25.5 LUFS (Very good)", "-23 LUFS", 2},
+		{"Memory", "Max size", "24 GB", "16 GB", 1},
+		{"Display", "Size", "6.8 inches", "6.1 inches", 0},
+		{"Platform", "OS", "Android 14", "iOS 18", 0},
+		{"Platform", "Chipset", "Google Tensor G4 (4 nm)", "Apple A18 (3 nm)", 0},
+		{"Primary details", "Release date", "30 April 2020", "2 May 2021", 0},
+		{"Memory specs", "Supported memory types", "DDR4-2666", "DDR5-5600", 0},
+		{"Detailed specifications", "L3 cache", "12 MB (shared)", "512 KB", 0},
+		{"Connectivity", "Wi-Fi", "7", "7", 3},
+	} {
+		if got, _ := compareVerdict(tt.section, tt.name, tt.first, tt.second); got != tt.winner {
+			t.Errorf("%s · %s: %q vs %q = %d, want %d", tt.section, tt.name, tt.first, tt.second, got, tt.winner)
+		}
+	}
+	if _, lead := compareVerdict("CPU", "Cores", "12", "15"); lead != 25 {
+		t.Errorf("lead = %v, want 25", lead)
+	}
+	if _, lead := compareVerdict("Comms", "USB", "USB Type-C 3.2", "USB Type-C 3.0"); lead != 0 {
+		t.Errorf("version lead = %v, want 0", lead)
+	}
+}

@@ -3,6 +3,8 @@ package discord
 import (
 	"context"
 	"fmt"
+	"math"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -103,6 +105,60 @@ func (b *Bot) handleCompareComponent(s *bot.Client, i *events.ComponentInteracti
 
 type compareRow struct {
 	section, name, first, second string
+	winner                       int     // 0 no verdict, 1 A, 2 B, 3 identical
+	lead                         float64 // winner's percentage lead, 0 when not meaningful
+}
+
+// The first standalone number in a value and the unit glued to it, e.g. "5060 mAh", "3 nanometers", "-25.5 LUFS".
+var compareNumber = regexp.MustCompile(`(?:^|[\s(~:=/])(-?\d+(?:,\d{3})*(?:\.\d+)?)\s*([a-zA-Zµ%]*)`)
+
+var (
+	compareWords       = regexp.MustCompile(`[^a-z0-9]+`)
+	compareLowerBetter = []string{"weight", "process", "lithography", "tdp", "power consumption", "place in the ranking", "sar"}
+	// Numbers in these are dates, model names, versions of different products or matters of taste.
+	compareNoVerdict = []string{"platform", "dimensions", "announced", "release date", "status", "model", "models", "model number", "colors", "bands", "technology", "name", "architecture", "graphics card", "popularity", "samples", "phones tested", "socket", "sim", "build", "bus", "protection", "price", "temperature", "number of cpus", "internal"}
+)
+
+func compareValue(value string) (float64, string, bool) {
+	match := compareNumber.FindStringSubmatch(value)
+	if match == nil {
+		return 0, "", false
+	}
+	number, err := strconv.ParseFloat(strings.ReplaceAll(match[1], ",", ""), 64)
+	return number, strings.ToLower(match[2]), err == nil
+}
+
+// compareVerdict picks the better side of one spec row: 0 no verdict, 1 A, 2 B, 3 identical, plus the winner's lead in percent when meaningful.
+// shortcut: units must match exactly (512 KB vs 1 MB gets no verdict); normalize sizes if that shows up often.
+func compareVerdict(section, name, first, second string) (int, float64) {
+	if first == "" || second == "" {
+		return 0, 0
+	}
+	if strings.EqualFold(first, second) {
+		return 3, 0
+	}
+	words := " " + strings.TrimSpace(compareWords.ReplaceAllString(strings.ToLower(section+" "+name), " ")) + " "
+	has := func(phrases []string) bool {
+		return slices.ContainsFunc(phrases, func(phrase string) bool { return strings.Contains(words, " "+phrase+" ") })
+	}
+	lower := has(compareLowerBetter)
+	if strings.EqualFold(name, "size") || (!lower && has(compareNoVerdict)) {
+		return 0, 0
+	}
+	a, unitA, okA := compareValue(first)
+	b, unitB, okB := compareValue(second)
+	if !okA || !okB || unitA != unitB || a == b {
+		return 0, 0
+	}
+	winner := 2
+	if (a > b) != lower {
+		winner = 1
+	}
+	// Versions (USB 3.2, Wi-Fi 7) have no meaningful percentage.
+	if a <= 0 || b <= 0 || (unitA == "" && math.Max(a, b) < 10) {
+		return winner, 0
+	}
+	return winner, (math.Max(a, b)/math.Min(a, b) - 1) * 100
 }
 
 func compareRows(first, second hardwareDevice) []compareRow {
@@ -127,6 +183,9 @@ func compareRows(first, second hardwareDevice) []compareRow {
 			}
 		}
 	}
+	for n := range rows {
+		rows[n].winner, rows[n].lead = compareVerdict(rows[n].section, rows[n].name, rows[n].first, rows[n].second)
+	}
 	return rows
 }
 
@@ -148,15 +207,19 @@ func compareComponents(source string, first, second hardwareDevice, active strin
 	}
 	var shown []compareRow
 	if index == 0 {
-		seen := make(map[string]bool)
-		for _, row := range rows {
+		// Overview: the widest gap in each section, so the page answers "which is better at what".
+		best := make(map[string]int)
+		for n, row := range rows {
 			section := strings.ToLower(row.section)
-			if row.first != "" && row.second != "" && !seen[section] {
-				shown = append(shown, row)
-				seen[section] = true
+			if row.winner == 1 || row.winner == 2 {
+				if current, ok := best[section]; !ok || row.lead > rows[current].lead {
+					best[section] = n
+				}
 			}
-			if len(shown) == 12 {
-				break
+		}
+		for n, row := range rows {
+			if best[strings.ToLower(row.section)] == n && (row.winner == 1 || row.winner == 2) && len(shown) < 12 {
+				shown = append(shown, row)
 			}
 		}
 		if len(shown) == 0 {
@@ -171,6 +234,10 @@ func compareComponents(source string, first, second hardwareDevice, active strin
 	}
 	var lines []string
 	for _, row := range shown {
+		if row.winner == 3 {
+			lines = append(lines, fmt.Sprintf("**%s · %s**\nBoth: %s", row.section, row.name, row.first))
+			continue
+		}
 		left, right := row.first, row.second
 		if left == "" {
 			left = "—"
@@ -178,7 +245,27 @@ func compareComponents(source string, first, second hardwareDevice, active strin
 		if right == "" {
 			right = "—"
 		}
+		lead := ""
+		if row.lead >= 1 {
+			lead = fmt.Sprintf(" (+%.0f%%)", row.lead)
+		}
+		switch row.winner {
+		case 1:
+			left = "**" + left + "**" + lead
+		case 2:
+			right = "**" + right + "**" + lead
+		}
 		lines = append(lines, fmt.Sprintf("**%s · %s**\nA: %s\nB: %s", row.section, row.name, left, right))
+	}
+	tally := [4]int{}
+	for _, row := range rows {
+		tally[row.winner]++
+	}
+	specs := func(n int) string {
+		if n == 1 {
+			return "**1** spec"
+		}
+		return fmt.Sprintf("**%d** specs", n)
 	}
 	body := "*No comparable specifications are available.*"
 	if len(lines) > 0 {
@@ -186,7 +273,7 @@ func compareComponents(source string, first, second hardwareDevice, active strin
 	}
 	components := []discord.ContainerSubComponent{
 		discord.TextDisplayComponent{Content: "# " + truncateRunes(first.Name+" vs "+second.Name, 170) + "\n-# Comparison from " + compareSource(source)},
-		discord.TextDisplayComponent{Content: "A: " + truncateRunes(first.Name, 150) + "\nB: " + truncateRunes(second.Name, 150)},
+		discord.TextDisplayComponent{Content: fmt.Sprintf("A: %s · better in %s\nB: %s · better in %s\n-# %d identical, %d without a clear winner", truncateRunes(first.Name, 150), specs(tally[1]), truncateRunes(second.Name, 150), specs(tally[2]), tally[3], tally[0])},
 		discord.SeparatorComponent{}, discord.TextDisplayComponent{Content: body},
 	}
 	customID := "cmp:" + source + ":" + first.Slug + ":" + second.Slug
