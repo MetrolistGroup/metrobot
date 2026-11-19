@@ -42,3 +42,30 @@ func TestKudosDailySpendAndLeaderboard(t *testing.T) {
 		t.Fatalf("rank = %d %v", rank, err)
 	}
 }
+
+func TestStarLeaderboard(t *testing.T) {
+	database, err := Open(filepath.Join(t.TempDir(), "bot.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := database.AddBoardEntry("starboard", "m1", "c", "g", "a", "", 5, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.AddBoardEntry("sobboard", "m2", "c", "g", "a", "", 3, 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.AddBoardEntry("starboard", "m3", "c", "g", "b", "", 10, 3); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := database.StarLeaderboard(10)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("entries = %#v %v", entries, err)
+	}
+	if entries[0].UserID != "b" || entries[0].Stars != 10 || entries[0].Posts != 1 {
+		t.Fatalf("top = %#v", entries[0])
+	}
+	if entries[1].UserID != "a" || entries[1].Stars != 8 || entries[1].Posts != 2 {
+		t.Fatalf("second = %#v", entries[1])
+	}
+}

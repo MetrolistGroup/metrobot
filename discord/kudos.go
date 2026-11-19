@@ -37,6 +37,8 @@ func (b *Bot) handleSigmaCommand(s *bot.Client, m *discord.Message, content stri
 		b.handleDaily(s, m, userID)
 	case "lb":
 		b.handleKudosLeaderboard(s, m, userID)
+	case "starlb", "stars":
+		b.handleStarLeaderboard(s, m)
 	case "slots":
 		b.handleSlots(s, m, userID, args)
 	case "bj":
@@ -93,6 +95,28 @@ func (b *Bot) handleKudosLeaderboard(s *bot.Client, m *discord.Message, userID s
 	rank, rankErr := b.DB.KudosRank(userID)
 	if balanceErr == nil && rankErr == nil && rank > 0 {
 		fmt.Fprintf(&out, "-# You: #%d · %d kudos", rank, balance)
+	}
+	b.kudosText(s, m, out.String())
+}
+
+func (b *Bot) handleStarLeaderboard(s *bot.Client, m *discord.Message) {
+	entries, err := b.DB.StarLeaderboard(10)
+	if err != nil {
+		b.Logger.Error("failed to load star leaderboard", zap.Error(err))
+		b.kudosText(s, m, "The starboard is down, try again in a bit.")
+		return
+	}
+	var out strings.Builder
+	out.WriteString("**Star leaderboard** (starboard + sobboard)\n")
+	if len(entries) == 0 {
+		out.WriteString("No starred messages yet.\n")
+	}
+	for index, entry := range entries {
+		fmt.Fprintf(&out, "%d. <@%s> \u00b7 %d \u2b50 across %d post", index+1, entry.UserID, entry.Stars, entry.Posts)
+		if entry.Posts != 1 {
+			out.WriteByte('s')
+		}
+		out.WriteByte('\n')
 	}
 	b.kudosText(s, m, out.String())
 }

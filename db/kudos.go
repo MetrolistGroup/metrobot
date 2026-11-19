@@ -82,3 +82,31 @@ func (d *DB) KudosRank(userID string) (int, error) {
 	}
 	return rank, err
 }
+
+type StarEntry struct {
+	UserID string
+	Stars  int64
+	Posts  int64
+}
+
+// StarLeaderboard ranks authors by total stars across the starboard and sobboard combined.
+func (d *DB) StarLeaderboard(limit int) ([]StarEntry, error) {
+	rows, err := d.conn.Query(`SELECT author_id, SUM(star_count) AS stars, COUNT(*) AS posts FROM (
+			SELECT author_id, star_count FROM starboard
+			UNION ALL
+			SELECT author_id, star_count FROM sobboard
+		) GROUP BY author_id HAVING stars > 0 ORDER BY stars DESC, posts DESC, author_id LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var entries []StarEntry
+	for rows.Next() {
+		var entry StarEntry
+		if err := rows.Scan(&entry.UserID, &entry.Stars, &entry.Posts); err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+	return entries, rows.Err()
+}
