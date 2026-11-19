@@ -78,20 +78,15 @@ func (h *WarnHandler) Warnings(banner PlatformBanner, targetID string) (string, 
 		return "", fmt.Errorf("getting warnings: %w", err)
 	}
 
-	threshold, err := h.DB.GetWarnThreshold(platform, targetID)
-	if err != nil {
-		return "", fmt.Errorf("getting warn threshold: %w", err)
-	}
-
 	if len(warnings) == 0 {
-		return fmt.Sprintf("%s has no warnings. (0/%d)", formatUserRef(banner, targetID), threshold), nil
+		return fmt.Sprintf("%s has no warnings.", formatUserRef(banner, targetID)), nil
 	}
 
 	var sb strings.Builder
 	if banner.Platform() == PlatformTelegram {
 		sb.WriteString(fmt.Sprintf("<b>Warnings for %s:</b>\n", formatUserRef(banner, targetID)))
 	} else {
-		sb.WriteString(fmt.Sprintf("**Warnings for %s:**\n", formatUserRef(banner, targetID)))
+		sb.WriteString(fmt.Sprintf("### Warnings for %s\n", formatUserRef(banner, targetID)))
 	}
 
 	for i, w := range warnings {
@@ -103,7 +98,9 @@ func (h *WarnHandler) Warnings(banner PlatformBanner, targetID string) (string, 
 		sb.WriteString(fmt.Sprintf("[%d] %s - by %s - %s\n", i+1, formatUserText(banner, reason), formatUserRef(banner, w.WarnedBy), ts))
 	}
 
-	sb.WriteString(fmt.Sprintf("\nWarnings: %d/%d", len(warnings), threshold))
+	// Mirrors Warn's escalation: the next warn is number len+1.
+	next := time.Hour + time.Duration(len(warnings))*20*time.Minute
+	sb.WriteString(fmt.Sprintf("\nTotal: %d. The next warning times out for %s.", len(warnings), util.FormatDuration(next)))
 
 	return sb.String(), nil
 }

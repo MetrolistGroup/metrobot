@@ -70,12 +70,6 @@ func (d *DB) migrate() error {
 			warned_by   TEXT NOT NULL,
 			timestamp   INTEGER NOT NULL
 		)`,
-		`CREATE TABLE IF NOT EXISTS user_warn_thresholds (
-			platform       TEXT NOT NULL,
-			user_id        TEXT NOT NULL,
-			extra_warns    INTEGER NOT NULL DEFAULT 0,
-			PRIMARY KEY (platform, user_id)
-		)`,
 		`CREATE TABLE IF NOT EXISTS mod_actions (
 			id             INTEGER PRIMARY KEY AUTOINCREMENT,
 			platform       TEXT NOT NULL,
@@ -433,34 +427,6 @@ func (d *DB) GetWarningCount(platform, userID string) (int, error) {
 	var count int
 	err := d.conn.QueryRow("SELECT COUNT(*) FROM warnings WHERE platform = ? AND user_id = ?", platform, userID).Scan(&count)
 	return count, err
-}
-
-// --- Warn Thresholds ---
-
-func (d *DB) GetWarnThreshold(platform, userID string) (int, error) {
-	const defaultThreshold = 3
-	var extra int
-	err := d.conn.QueryRow(
-		"SELECT extra_warns FROM user_warn_thresholds WHERE platform = ? AND user_id = ?",
-		platform, userID,
-	).Scan(&extra)
-	if errors.Is(err, sql.ErrNoRows) {
-		return defaultThreshold, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	return defaultThreshold + extra, nil
-}
-
-func (d *DB) IncrementWarnThreshold(platform, userID string) error {
-	_, err := d.conn.Exec(
-		`INSERT INTO user_warn_thresholds (platform, user_id, extra_warns)
-		 VALUES (?, ?, 3)
-		 ON CONFLICT(platform, user_id) DO UPDATE SET extra_warns = extra_warns + 3`,
-		platform, userID,
-	)
-	return err
 }
 
 // --- Mod Actions ---

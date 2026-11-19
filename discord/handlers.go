@@ -847,7 +847,16 @@ func (b *Bot) handleWarnings(s *bot.Client, i *events.ApplicationCommandInteract
 		respondEphemeral(s, i, "Error fetching warnings.")
 		return
 	}
-	respondPublic(s, i, resp)
+	if err := s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{
+		Type: discord.InteractionResponseTypeCreateMessage,
+		Data: discord.MessageCreate{
+			Flags:           discord.MessageFlagIsComponentsV2,
+			Components:      []discord.LayoutComponent{discord.ContainerComponent{Components: []discord.ContainerSubComponent{discord.TextDisplayComponent{Content: truncateRunes(resp, 4000)}}}},
+			AllowedMentions: &discord.AllowedMentions{},
+		},
+	}); err != nil {
+		b.Logger.Error("failed to send warnings", zap.Error(err))
+	}
 }
 
 func (b *Bot) handleUnwarn(s *bot.Client, i *events.ApplicationCommandInteractionCreate, opts map[string]discord.SlashCommandOption, callerID string) {
