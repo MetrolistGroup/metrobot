@@ -160,6 +160,9 @@ func main() {
 	// Restore timed moderation after both bots are started so expiry can call the platform APIs.
 	restoreTimedBans(database, discordBot, telegramBot, logger, timerManager)
 	restoreTimedMutes(database, discordBot, telegramBot, logger, timerManager)
+	if err := discordBot.RestoreReminders(); err != nil {
+		logger.Error("failed to restore reminders", zap.Error(err))
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

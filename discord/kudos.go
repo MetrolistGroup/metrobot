@@ -44,6 +44,8 @@ func (b *Bot) handleSigmaCommand(s *bot.Client, m *discord.Message, content stri
 		b.handleSlots(s, m, userID, args)
 	case "bj":
 		b.handleBlackjack(s, m, userID, args)
+	case "rmme":
+		b.handleRemind(s, m, args)
 	default:
 		return false
 	}

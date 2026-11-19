@@ -145,6 +145,13 @@ func (d *DB) migrate() error {
 			last_daily INTEGER NOT NULL DEFAULT 0,
 			streak     INTEGER NOT NULL DEFAULT 0
 		)`,
+		`CREATE TABLE IF NOT EXISTS reminders (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id    TEXT NOT NULL,
+			channel_id TEXT NOT NULL,
+			due_at     INTEGER NOT NULL,
+			content    TEXT NOT NULL
+		)`,
 		`DROP TABLE IF EXISTS garmin_memory_consent`,
 		`DROP TABLE IF EXISTS garmin_user_memory`,
 	}

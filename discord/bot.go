@@ -66,6 +66,8 @@ type Bot struct {
 	blackjackGames       map[string]*blackjackGame
 	cooldownMu           sync.Mutex
 	cooldowns            map[string]time.Time
+	reminderMu           sync.Mutex
+	reminderTimers       map[int64]*time.Timer
 	wolframKey           atomic.Uint64
 	TimedBanRestorer     func()
 	ready                chan struct{}
@@ -116,6 +118,7 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		garminAIRequests:     make(map[string]map[string]context.CancelFunc),
 		garminAIAmbientBusy:  make(map[string]uint64),
 		messageLogCache:      make(map[string][]cachedLogMessage),
+		reminderTimers:       make(map[int64]*time.Timer),
 		ready:                make(chan struct{}),
 		lifecycle:            lifecycle,
 		cancelLifecycle:      cancelLifecycle,
@@ -201,6 +204,13 @@ func (b *Bot) Stop() {
 	b.stopOnce.Do(func() {
 		b.Logger.Info("shutting down discord bot")
 		b.cancelLifecycle()
+		// Stopped timers leave their rows in the database; they are restored on the next start.
+		b.reminderMu.Lock()
+		for _, timer := range b.reminderTimers {
+			timer.Stop()
+		}
+		b.reminderTimers = nil
+		b.reminderMu.Unlock()
 		b.garminAIMu.Lock()
 		for _, requests := range b.garminAIRequests {
 			for _, cancel := range requests {
