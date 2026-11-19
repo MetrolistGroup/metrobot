@@ -62,6 +62,8 @@ type Bot struct {
 	messageLogCache      map[string][]cachedLogMessage
 	webhookMu            sync.Mutex
 	nukeBusy             atomic.Bool
+	blackjackMu          sync.Mutex
+	blackjackGames       map[string]*blackjackGame
 	TimedBanRestorer     func()
 	ready                chan struct{}
 	readyOnce            sync.Once

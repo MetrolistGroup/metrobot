@@ -17,6 +17,7 @@ type Config struct {
 	OpenRouterModel         string   `json:"openrouter_model"`
 	OpenRouterDecisionModel string   `json:"openrouter_decision_model"`
 	FirecrawlAPIKeys        []string `json:"firecrawl_api_keys"`
+	WolframAppID            string   `json:"wolfram_app_id"`
 	GarminMemoryFile        string   `json:"garmin_memory_file"`
 
 	DiscordGuildID string `json:"discord_guild_id"`

@@ -145,6 +145,11 @@ func (d *DB) migrate() error {
 			body       BLOB NOT NULL,
 			fetched_at INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS kudos (
+			user_id    TEXT PRIMARY KEY,
+			balance    INTEGER NOT NULL DEFAULT 0 CHECK (balance >= 0),
+			last_daily INTEGER NOT NULL DEFAULT 0
+		)`,
 		`DROP TABLE IF EXISTS garmin_memory_consent`,
 		`DROP TABLE IF EXISTS garmin_user_memory`,
 	}
