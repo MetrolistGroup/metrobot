@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	dailyKudosAmount         = 250
-	dailyKudosCooldown       = 24 * time.Hour
+	defaultBet               = 10
+	slotsCooldown            = 60 * time.Second
+	blackjackCooldown        = 12 * time.Second
 	blackjackIdle            = 5 * time.Minute
 	blackjackComponentPrefix = "bj:"
 )
@@ -63,16 +64,31 @@ func (b *Bot) kudosText(s *bot.Client, m *discord.Message, content string) {
 	b.kudosReply(s, m, discord.MessageCreate{Content: content})
 }
 
+// takeCooldown records a per-user game cooldown and reports the remaining wait if one is still active.
+func (b *Bot) takeCooldown(game, userID string, d time.Duration) (time.Duration, bool) {
+	b.cooldownMu.Lock()
+	defer b.cooldownMu.Unlock()
+	if b.cooldowns == nil {
+		b.cooldowns = make(map[string]time.Time)
+	}
+	key := game + ":" + userID
+	if until := b.cooldowns[key]; time.Now().Before(until) {
+		return time.Until(until).Round(time.Second), false
+	}
+	b.cooldowns[key] = time.Now().Add(d)
+	return 0, true
+}
+
 func (b *Bot) handleDaily(s *bot.Client, m *discord.Message, userID string) {
-	balance, next, ok, err := b.DB.ClaimDaily(userID, dailyKudosAmount, dailyKudosCooldown, time.Now())
+	amount, streak, balance, next, ok, err := b.DB.ClaimDaily(userID, rand.Int64N(1000), time.Now())
 	switch {
 	case err != nil:
 		b.Logger.Error("failed to claim daily kudos", zap.Error(err))
 		b.kudosText(s, m, "The kudos bank is down, try again in a bit.")
 	case !ok:
-		b.kudosText(s, m, fmt.Sprintf("Already claimed. Your next daily is <t:%d:R>. Balance: **%d** kudos.", next.Unix(), balance))
+		b.kudosText(s, m, fmt.Sprintf("🕙 Your next daily is <t:%d:R>. Balance: **%d** kudos.", next.Unix(), balance))
 	default:
-		b.kudosText(s, m, fmt.Sprintf("+%d kudos! Balance: **%d**. Next daily <t:%d:R>.", dailyKudosAmount, balance, next.Unix()))
+		b.kudosText(s, m, fmt.Sprintf("🎉 You got **%d** kudos for a %d/10 streak. Balance: **%d**. Next daily <t:%d:R>.", amount, min(int(streak), 10), balance, next.Unix()))
 	}
 }
 
@@ -112,7 +128,7 @@ func (b *Bot) handleStarLeaderboard(s *bot.Client, m *discord.Message) {
 		out.WriteString("No starred messages yet.\n")
 	}
 	for index, entry := range entries {
-		fmt.Fprintf(&out, "%d. <@%s> \u00b7 %d \u2b50 across %d post", index+1, entry.UserID, entry.Stars, entry.Posts)
+		fmt.Fprintf(&out, "%d. <@%s> · %d ⭐ across %d post", index+1, entry.UserID, entry.Stars, entry.Posts)
 		if entry.Posts != 1 {
 			out.WriteByte('s')
 		}
@@ -121,10 +137,12 @@ func (b *Bot) handleStarLeaderboard(s *bot.Client, m *discord.Message) {
 	b.kudosText(s, m, out.String())
 }
 
-// placeBet parses a bet ("100" or "all") and deducts it; false means the user was already told why not.
-func (b *Bot) placeBet(s *bot.Client, m *discord.Message, userID, arg, game string) (int64, bool) {
-	var bet int64
-	if arg = strings.ToLower(arg); arg == "all" || arg == "max" {
+// parseBet reads a bet ("100", "all"/"max", or empty) and deducts it. Like Sigma, a missing or unparseable
+// amount falls back to defaultBet. ok=false means the user was already told why the bet could not be placed.
+func (b *Bot) parseBet(s *bot.Client, m *discord.Message, userID, arg string) (int64, bool) {
+	var bet int64 = defaultBet
+	switch arg = strings.ToLower(arg); {
+	case arg == "all" || arg == "max":
 		balance, err := b.DB.Kudos(userID)
 		if err != nil {
 			b.Logger.Error("failed to read kudos", zap.Error(err))
@@ -136,11 +154,10 @@ func (b *Bot) placeBet(s *bot.Client, m *discord.Message, userID, arg, game stri
 			return 0, false
 		}
 		bet = balance
-	} else if parsed, err := strconv.ParseInt(arg, 10, 64); err == nil && parsed > 0 {
-		bet = parsed
-	} else {
-		b.kudosText(s, m, fmt.Sprintf("Usage: `>>%s <bet|all>`", game))
-		return 0, false
+	case arg != "":
+		if parsed, err := strconv.ParseInt(arg, 10, 64); err == nil && parsed > 0 {
+			bet = parsed
+		}
 	}
 	_, ok, err := b.DB.SpendKudos(userID, bet)
 	if err != nil {
@@ -150,12 +167,19 @@ func (b *Bot) placeBet(s *bot.Client, m *discord.Message, userID, arg, game stri
 	}
 	if !ok {
 		balance, _ := b.DB.Kudos(userID)
-		b.kudosText(s, m, fmt.Sprintf("You only have **%d** kudos. Grab more with `>>daily`.", balance))
+		b.kudosText(s, m, fmt.Sprintf("💸 You don't have **%d** kudos (balance: %d). Grab more with `>>daily`.", bet, balance))
 	}
 	return bet, ok
 }
 
 func (b *Bot) payKudos(userID string, amount int64) (int64, string) {
+	if amount <= 0 {
+		balance, err := b.DB.Kudos(userID)
+		if err != nil {
+			return 0, " Balance lookup failed, ping an admin."
+		}
+		return balance, ""
+	}
 	balance, err := b.DB.AddKudos(userID, amount)
 	if err != nil {
 		b.Logger.Error("failed to pay kudos", zap.String("user", userID), zap.Int64("amount", amount), zap.Error(err))
@@ -165,59 +189,63 @@ func (b *Bot) payKudos(userID string, amount int64) (int64, string) {
 }
 
 // --- Slots ---
+// Sigma gives every symbol an equal chance; the rarity only scales the reward. Three of a kind pays
+// bet*rarity*len² *0.95, a pair pays bet*rarity*(len/2) *0.9 (on the middle row), and the stake is lost first.
 
 var slotSymbols = []struct {
 	face   string
-	weight int
-	triple int64
-}{{"🍒", 6, 4}, {"🍋", 5, 6}, {"🔔", 4, 10}, {"⭐", 3, 20}, {"💎", 2, 50}}
-
-func spinSlots(roll func(int) int) [3]int {
-	total := 0
-	for _, symbol := range slotSymbols {
-		total += symbol.weight
-	}
-	var reels [3]int
-	for reel := range reels {
-		n := roll(total)
-		for n >= slotSymbols[reels[reel]].weight {
-			n -= slotSymbols[reels[reel]].weight
-			reels[reel]++
-		}
-	}
-	return reels
+	reward float64
+}{
+	{"🍆", 0.525}, {"🍒", 0.55}, {"⚓", 0.575}, {"🏵", 0.6}, {"💖", 0.625},
+	{"🏮", 0.65}, {"🍥", 0.675}, {"💵", 0.7}, {"💳", 0.725}, {"🎁", 0.75},
+	{"🐬", 0.775}, {"🐦", 0.8}, {"🌟", 0.825}, {"🦊", 0.85}, {"🦋", 0.875},
+	{"🐍", 0.9}, {"🍬", 0.925}, {"💎", 0.95}, {"🔰", 0.975}, {"⚜", 1.0},
 }
 
-// slotPayout returns what goes back to the player, stake included: a pair refunds, three of a kind multiplies.
-func slotPayout(reels [3]int, bet int64) int64 {
-	switch a, b, c := reels[0], reels[1], reels[2]; {
+// slotWinnings returns the winnings (stake already spent) for the deciding middle row.
+func slotWinnings(row [3]int, bet int64) int64 {
+	three := float64(len(slotSymbols) * len(slotSymbols))
+	two := float64(len(slotSymbols) / 2)
+	switch a, b, c := row[0], row[1], row[2]; {
 	case a == b && b == c:
-		return bet * slotSymbols[a].triple
-	case a == b || b == c || a == c:
-		return bet
+		return int64(float64(bet) * slotSymbols[a].reward * three * 0.95)
+	case a == b || a == c:
+		return int64(float64(bet) * slotSymbols[a].reward * two * 0.9)
+	case b == c:
+		return int64(float64(bet) * slotSymbols[b].reward * two * 0.9)
 	}
 	return 0
 }
 
 func (b *Bot) handleSlots(s *bot.Client, m *discord.Message, userID, arg string) {
-	bet, ok := b.placeBet(s, m, userID, arg, "slots")
+	if wait, ok := b.takeCooldown("slots", userID, slotsCooldown); !ok {
+		b.kudosText(s, m, fmt.Sprintf("🕙 You can spin again in %s.", wait))
+		return
+	}
+	bet, ok := b.parseBet(s, m, userID, arg)
 	if !ok {
 		return
 	}
-	reels := spinSlots(rand.IntN)
-	payout := slotPayout(reels, bet)
-	balance, failure := b.payKudos(userID, payout)
-	var outcome string
-	switch {
-	case payout > bet:
-		outcome = fmt.Sprintf("Three %s! You win **%d** kudos.", slotSymbols[reels[0]].face, payout-bet)
-	case payout == bet:
-		outcome = "A pair, you get your bet back."
-	default:
-		outcome = fmt.Sprintf("No luck, you lost **%d** kudos.", bet)
+	var grid [3][3]int
+	for row := range grid {
+		for col := range grid[row] {
+			grid[row][col] = rand.IntN(len(slotSymbols))
+		}
 	}
-	b.kudosText(s, m, fmt.Sprintf("**[ %s | %s | %s ]**\n%s Balance: **%d**.%s",
-		slotSymbols[reels[0]].face, slotSymbols[reels[1]].face, slotSymbols[reels[2]].face, outcome, balance, failure))
+	winnings := slotWinnings(grid[1], bet)
+	balance, failure := b.payKudos(userID, winnings)
+	display := fmt.Sprintf("⏸%s⏸\n▶%s◀\n⏸%s⏸", slotRow(grid[0]), slotRow(grid[1]), slotRow(grid[2]))
+	var outcome string
+	if winnings > 0 {
+		outcome = fmt.Sprintf("💎 You won **%d** kudos!", winnings)
+	} else {
+		outcome = fmt.Sprintf("💣 You lost **%d** kudos.", bet)
+	}
+	b.kudosText(s, m, fmt.Sprintf("%s\n%s Balance: **%d**.%s", display, outcome, balance, failure))
+}
+
+func slotRow(row [3]int) string {
+	return slotSymbols[row[0]].face + slotSymbols[row[1]].face + slotSymbols[row[2]].face
 }
 
 // --- Blackjack ---
@@ -244,8 +272,9 @@ func (g *blackjackGame) draw() int {
 	return card
 }
 
-func handValue(cards []int) int {
-	total, aces := 0, 0
+// handValue counts the best hand total; soft reports whether an ace is still counted as 11.
+func handValue(cards []int) (total int, soft bool) {
+	aces := 0
 	for _, card := range cards {
 		rank := card%13 + 1
 		switch {
@@ -262,10 +291,18 @@ func handValue(cards []int) int {
 		total -= 10
 		aces--
 	}
-	return total
+	return total, aces > 0
 }
 
-func isBlackjack(cards []int) bool { return len(cards) == 2 && handValue(cards) == 21 }
+func handTotal(cards []int) int { total, _ := handValue(cards); return total }
+
+func isBlackjack(cards []int) bool { return len(cards) == 2 && handTotal(cards) == 21 }
+
+// dealerShouldHit draws to 17 and hits a soft 17, matching Sigma's dealer.
+func dealerShouldHit(cards []int) bool {
+	total, soft := handValue(cards)
+	return total < 17 || (total == 17 && soft)
+}
 
 func formatCards(cards []int) string {
 	parts := make([]string, len(cards))
@@ -275,35 +312,36 @@ func formatCards(cards []int) string {
 	return strings.Join(parts, " ")
 }
 
-// blackjackPayout settles finished hands; the stake is included in the payout.
+// blackjackPayout settles a finished hand; the returned amount includes the stake that parseBet already took,
+// so 0 is a loss, bet is a push, 2*bet is an even-money win and bet + bet*6/5 is a natural blackjack (Sigma's 6:5).
 func blackjackPayout(player, dealer []int, bet int64) (int64, string) {
-	p, d := handValue(player), handValue(dealer)
+	p, d := handTotal(player), handTotal(dealer)
 	switch {
 	case p > 21:
-		return 0, "Bust, you lose."
+		return 0, "💣 Bust, you lose."
 	case isBlackjack(player) && isBlackjack(dealer):
-		return bet, "Both blackjack, push."
+		return bet, "🔵 Both blackjack, push."
 	case isBlackjack(player):
-		return bet + bet*3/2, "Blackjack!"
+		return bet + bet*6/5, "🎉 Blackjack! Paid 6:5."
 	case isBlackjack(dealer):
-		return 0, "Dealer blackjack, you lose."
+		return 0, "💣 Dealer blackjack, you lose."
 	case d > 21:
-		return 2 * bet, "Dealer busts, you win!"
+		return 2 * bet, "🎉 Dealer busts, you win!"
 	case p > d:
-		return 2 * bet, "You win!"
+		return 2 * bet, "🎉 You beat the dealer!"
 	case p == d:
-		return bet, "Push."
+		return bet, "🔵 Push, you broke even."
 	}
-	return 0, "Dealer wins."
+	return 0, "💣 The dealer won."
 }
 
 func (g *blackjackGame) render(done bool, footer string) string {
 	dealer := formatCards(g.dealer[:1]) + " ??"
 	if done {
-		dealer = fmt.Sprintf("%s (%d)", formatCards(g.dealer), handValue(g.dealer))
+		dealer = fmt.Sprintf("%s (%d)", formatCards(g.dealer), handTotal(g.dealer))
 	}
 	return fmt.Sprintf("**Blackjack** · <@%s> bet %d kudos\nDealer: %s\nYou: %s (%d)%s",
-		g.userID, g.bet, dealer, formatCards(g.player), handValue(g.player), footer)
+		g.userID, g.bet, dealer, formatCards(g.player), handTotal(g.player), footer)
 }
 
 // finishBlackjack plays the dealer, pays out and forgets the game. Callers hold blackjackMu.
@@ -312,8 +350,8 @@ func (b *Bot) finishBlackjack(g *blackjackGame) string {
 	if g.timer != nil {
 		g.timer.Stop()
 	}
-	if handValue(g.player) <= 21 && !isBlackjack(g.player) {
-		for handValue(g.dealer) < 17 {
+	if handTotal(g.player) <= 21 && !isBlackjack(g.player) {
+		for dealerShouldHit(g.dealer) {
 			g.dealer = append(g.dealer, g.draw())
 		}
 	}
@@ -322,11 +360,15 @@ func (b *Bot) finishBlackjack(g *blackjackGame) string {
 	return g.render(true, fmt.Sprintf("\n**%s** Balance: **%d**.%s", outcome, balance, failure))
 }
 
-func blackjackButtons(userID string) []discord.LayoutComponent {
-	return []discord.LayoutComponent{discord.ActionRowComponent{Components: []discord.InteractiveComponent{
+func blackjackButtons(userID string, canDouble bool) []discord.LayoutComponent {
+	buttons := []discord.InteractiveComponent{
 		discord.ButtonComponent{Label: "Hit", Style: discord.ButtonStylePrimary, CustomID: blackjackComponentPrefix + "hit:" + userID},
 		discord.ButtonComponent{Label: "Stand", Style: discord.ButtonStyleSecondary, CustomID: blackjackComponentPrefix + "stand:" + userID},
-	}}}
+	}
+	if canDouble {
+		buttons = append(buttons, discord.ButtonComponent{Label: "Double Down", Style: discord.ButtonStyleSuccess, CustomID: blackjackComponentPrefix + "double:" + userID})
+	}
+	return []discord.LayoutComponent{discord.ActionRowComponent{Components: buttons}}
 }
 
 func (b *Bot) handleBlackjack(s *bot.Client, m *discord.Message, userID, arg string) {
@@ -340,11 +382,15 @@ func (b *Bot) handleBlackjack(s *bot.Client, m *discord.Message, userID, arg str
 		b.kudosText(s, m, "Finish your current hand first.")
 		return
 	}
-	seat := &blackjackGame{userID: userID}
-	b.blackjackGames[userID] = seat
+	if wait, ok := b.takeCooldown("bj", userID, blackjackCooldown); !ok {
+		b.blackjackMu.Unlock()
+		b.kudosText(s, m, fmt.Sprintf("🕙 You can play again in %s.", wait))
+		return
+	}
+	b.blackjackGames[userID] = &blackjackGame{userID: userID}
 	b.blackjackMu.Unlock()
 
-	bet, ok := b.placeBet(s, m, userID, arg, "bj")
+	bet, ok := b.parseBet(s, m, userID, arg)
 	b.blackjackMu.Lock()
 	defer b.blackjackMu.Unlock()
 	if !ok {
@@ -357,7 +403,7 @@ func (b *Bot) handleBlackjack(s *bot.Client, m *discord.Message, userID, arg str
 		b.kudosText(s, m, b.finishBlackjack(g))
 		return
 	}
-	msg, err := b.kudosReply(s, m, discord.MessageCreate{Content: g.render(false, ""), Components: blackjackButtons(userID)})
+	msg, err := b.kudosReply(s, m, discord.MessageCreate{Content: g.render(false, ""), Components: blackjackButtons(userID, true)})
 	if err != nil {
 		delete(b.blackjackGames, userID)
 		b.payKudos(userID, bet)
@@ -397,12 +443,29 @@ func (b *Bot) handleBlackjackComponent(s *bot.Client, i *events.ComponentInterac
 		respondEphemeral(s, i, "This hand is over.")
 		return true
 	}
-	if action == "hit" {
+	done := action == "stand"
+	switch action {
+	case "hit":
 		g.player = append(g.player, g.draw())
+		done = handTotal(g.player) >= 21
+	case "double":
+		if len(g.player) != 2 {
+			b.blackjackMu.Unlock()
+			respondEphemeral(s, i, "You can only double down on your first turn.")
+			return true
+		}
+		if _, ok, err := b.DB.SpendKudos(owner, g.bet); err != nil || !ok {
+			b.blackjackMu.Unlock()
+			respondEphemeral(s, i, "You don't have enough kudos to double down.")
+			return true
+		}
+		g.bet *= 2
+		g.player = append(g.player, g.draw())
+		done = true
 	}
 	update := discord.MessageUpdate{AllowedMentions: &discord.AllowedMentions{}}
 	var content string
-	if action == "stand" || handValue(g.player) >= 21 {
+	if done {
 		content = b.finishBlackjack(g)
 		update.Components = &[]discord.LayoutComponent{}
 	} else {

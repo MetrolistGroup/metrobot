@@ -11,23 +11,50 @@ type KudosEntry struct {
 	Balance int64
 }
 
-// ClaimDaily adds amount once per cooldown; ok is false with the next claim time while on cooldown.
-func (d *DB) ClaimDaily(userID string, amount int64, cooldown time.Duration, now time.Time) (balance int64, next time.Time, ok bool, err error) {
-	err = d.conn.QueryRow(`INSERT INTO kudos (user_id, balance, last_daily) VALUES (?, ?, ?)
-		ON CONFLICT(user_id) DO UPDATE SET balance = balance + excluded.balance, last_daily = excluded.last_daily
-		WHERE kudos.last_daily <= ?
-		RETURNING balance`, userID, amount, now.Unix(), now.Add(-cooldown).Unix()).Scan(&balance)
-	if err == nil {
-		return balance, now.Add(cooldown), true, nil
+// DailyCooldown mirrors Sigma's 22-hour daily window.
+const DailyCooldown = 79200 * time.Second
+
+// DailyAmount is Sigma's daily reward: base 5000 + randomPart (0..999), a streak bonus of 1600 per streak
+// capped at a streak of 10, plus the streak itself. A streak of 1 gets no bonus.
+func DailyAmount(streak, randomPart int64) int64 {
+	multi := streak
+	if multi > 10 {
+		multi = 10
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return 0, time.Time{}, false, err
+	amount := int64(5000) + randomPart
+	if multi != 1 {
+		amount += 1600 * multi
 	}
+	return amount + streak
+}
+
+// ClaimDaily bumps the streak and credits DailyAmount once per DailyCooldown, atomically.
+// While on cooldown it returns the current streak and the next claim time with ok=false.
+func (d *DB) ClaimDaily(userID string, randomPart int64, now time.Time) (amount, streak, balance int64, next time.Time, ok bool, err error) {
+	tx, err := d.conn.Begin()
+	if err != nil {
+		return 0, 0, 0, time.Time{}, false, err
+	}
+	defer tx.Rollback()
 	var last int64
-	if err := d.conn.QueryRow(`SELECT balance, last_daily FROM kudos WHERE user_id = ?`, userID).Scan(&balance, &last); err != nil {
-		return 0, time.Time{}, false, err
+	err = tx.QueryRow(`SELECT balance, last_daily, streak FROM kudos WHERE user_id = ?`, userID).Scan(&balance, &last, &streak)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, 0, 0, time.Time{}, false, err
 	}
-	return balance, time.Unix(last, 0).Add(cooldown), false, nil
+	if !errors.Is(err, sql.ErrNoRows) && now.Unix() <= last+int64(DailyCooldown.Seconds()) {
+		return 0, streak, balance, time.Unix(last, 0).Add(DailyCooldown), false, nil
+	}
+	streak++
+	amount = DailyAmount(streak, randomPart)
+	if err = tx.QueryRow(`INSERT INTO kudos (user_id, balance, last_daily, streak) VALUES (?, ?, ?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET balance = balance + excluded.balance, last_daily = excluded.last_daily, streak = excluded.streak
+		RETURNING balance`, userID, amount, now.Unix(), streak).Scan(&balance); err != nil {
+		return 0, 0, 0, time.Time{}, false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, 0, 0, time.Time{}, false, err
+	}
+	return amount, streak, balance, now.Add(DailyCooldown), true, nil
 }
 
 func (d *DB) Kudos(userID string) (int64, error) {

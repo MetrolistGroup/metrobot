@@ -1,9 +1,12 @@
 package discord
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/png"
 	"io"
 	"net/http"
 	"reflect"
@@ -83,7 +86,7 @@ func TestOCRTranslateMessageAction(t *testing.T) {
 					if _, ok := ctx.Deadline(); !ok || request.SystemPrompt != ocrTranslatePrompt || len(request.Tools) != 0 || request.Context != "" || len(request.Messages) != 1 || !request.DisableReasoning {
 						t.Errorf("OCR request leaked context/tools or lacks timeout: %#v", request)
 					}
-					if !reflect.DeepEqual(request.Messages[0].Images, []string{"https://cdn.discordapp.com/attachments/1/2/image.png"}) || request.Messages[0].Content != "selected message only" {
+					if len(request.Messages[0].Images) != 0 || request.Messages[0].Content != "selected message only" {
 						t.Errorf("OCR request used wrong input: %#v", request.Messages)
 					}
 					if mode == "provider error" {
@@ -110,8 +113,7 @@ func TestOCRTranslateMessageAction(t *testing.T) {
 				"id":"100","application_id":"123456789012345678","token":"token","type":2,
 				"guild_id":"300","channel":{"id":"200","type":0},"member":{"user":{"id":"500"}},
 				"data":{"name":"OCR Translate","type":3,"target_id":"50","resolved":{"messages":{"50":{
-					"id":"50","content":"selected message only","author":{"id":"400"},
-					"attachments":[{"id":"2","filename":"image.png","url":"https://cdn.discordapp.com/attachments/1/2/image.png"}]
+					"id":"50","content":"selected message only","author":{"id":"400"}
 				}}}}
 			}`)
 			b.onInteractionCreate(client, interaction)
@@ -143,5 +145,91 @@ func TestOCRImageSelection(t *testing.T) {
 	want := []string{"https://cdn.discordapp.com/a.png", "https://example.com/image.png"}
 	if got := ocrImageURLs(message); !reflect.DeepEqual(got, want) {
 		t.Fatalf("OCR images = %v, want %v", got, want)
+	}
+}
+
+// tinyPNG returns a small valid PNG so the overlay path can decode a downloaded image in tests.
+func tinyPNG(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 20, 20))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestOCRTranslateImageOverlay(t *testing.T) {
+	for _, mode := range []string{"overlay", "fallback"} {
+		t.Run(mode, func(t *testing.T) {
+			client := mustTestClient(t)
+			const imageURL = "https://cdn.discordapp.com/attachments/1/2/image.png"
+			var fileDelivered bool
+			var content string
+			client.Rest = testREST(&http.Client{Transport: garminRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+				switch {
+				case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "image.png"):
+					return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(tinyPNG(t))), Request: r}, nil
+				case r.Method == http.MethodPost:
+					return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`)), Request: r}, nil
+				case r.Method == http.MethodPatch:
+					var update discord.MessageUpdate
+					if err := r.ParseMultipartForm(1 << 20); err == nil && r.MultipartForm != nil {
+						defer r.MultipartForm.RemoveAll()
+						json.Unmarshal([]byte(r.FormValue("payload_json")), &update)
+						if _, _, err := r.FormFile("files[0]"); err == nil {
+							fileDelivered = true
+						}
+					} else {
+						json.NewDecoder(r.Body).Decode(&update)
+					}
+					content = value(update.Content)
+					return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`)), Request: r}, nil
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+					return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`)), Request: r}, nil
+				}
+			})})
+			b := &Bot{
+				Config: &config.Config{DiscordGuildID: "300"}, Logger: zap.NewNop(),
+				garminAILastUsed: make(map[string]time.Time), garminAISlots: make(chan struct{}, 1),
+				garminAI: garminAITestFunc(func(ctx context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+					switch request.SystemPrompt {
+					case ocrOverlayPrompt:
+						if !reflect.DeepEqual(request.Messages[0].Images, []string{imageURL}) {
+							t.Errorf("overlay request image = %#v", request.Messages[0].Images)
+						}
+						blocks := `{"blocks":[{"text":"hello","box":[0,0,1,0.4],"text_color":"#000000","bg_color":"#ffffff"}]}`
+						if mode == "fallback" {
+							blocks = `{"blocks":[]}`
+						}
+						return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: blocks}, FinishReason: "stop"}, nil
+					case ocrTranslatePrompt:
+						if mode != "fallback" {
+							t.Error("text path should not run when overlay succeeds")
+						}
+						return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "Original\nx\n\nEnglish\ny"}, FinishReason: "stop"}, nil
+					default:
+						t.Errorf("unexpected system prompt")
+						return nil, errors.New("bad prompt")
+					}
+				}),
+			}
+			interaction := testCommandInteraction(t, client, `{
+				"id":"100","application_id":"123456789012345678","token":"token","type":2,
+				"guild_id":"300","channel":{"id":"200","type":0},"member":{"user":{"id":"500"}},
+				"data":{"name":"OCR Translate","type":3,"target_id":"50","resolved":{"messages":{"50":{
+					"id":"50","content":"","author":{"id":"400"},
+					"attachments":[{"id":"2","filename":"image.png","url":"`+imageURL+`"}]
+				}}}}
+			}`)
+			b.onInteractionCreate(client, interaction)
+			if mode == "overlay" && (!fileDelivered || content != "Translated image text into English.") {
+				t.Fatalf("overlay: file=%v content=%q", fileDelivered, content)
+			}
+			if mode == "fallback" && (fileDelivered || !strings.Contains(content, "English")) {
+				t.Fatalf("fallback: file=%v content=%q", fileDelivered, content)
+			}
+		})
 	}
 }

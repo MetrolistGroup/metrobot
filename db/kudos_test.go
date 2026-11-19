@@ -13,22 +13,24 @@ func TestKudosDailySpendAndLeaderboard(t *testing.T) {
 	}
 	defer database.Close()
 	now := time.Unix(1_800_000_000, 0)
-	if balance, _, ok, err := database.ClaimDaily("a", 250, 24*time.Hour, now); err != nil || !ok || balance != 250 {
-		t.Fatalf("first claim = %d %v %v", balance, ok, err)
+	// Streak 1 gets no multiplier bonus: 5000 + randomPart + streak.
+	if amount, streak, balance, _, ok, err := database.ClaimDaily("a", 123, now); err != nil || !ok || streak != 1 || amount != 5124 || balance != 5124 {
+		t.Fatalf("first claim = %d %d %d %v %v", amount, streak, balance, ok, err)
 	}
-	if balance, next, ok, err := database.ClaimDaily("a", 250, 24*time.Hour, now.Add(time.Hour)); err != nil || ok || balance != 250 || !next.Equal(now.Add(24*time.Hour)) {
-		t.Fatalf("cooldown claim = %d %v %v %v", balance, next, ok, err)
+	if _, streak, balance, next, ok, err := database.ClaimDaily("a", 123, now.Add(time.Hour)); err != nil || ok || streak != 1 || balance != 5124 || !next.Equal(now.Add(DailyCooldown)) {
+		t.Fatalf("cooldown claim = %d %d %v %v %v", streak, balance, next, ok, err)
 	}
-	if balance, _, ok, err := database.ClaimDaily("a", 250, 24*time.Hour, now.Add(24*time.Hour)); err != nil || !ok || balance != 500 {
-		t.Fatalf("next day claim = %d %v %v", balance, ok, err)
+	// Streak 2 adds the 1600*streak bonus: 5000 + 0 + 3200 + 2 = 8202.
+	if amount, streak, balance, _, ok, err := database.ClaimDaily("a", 0, now.Add(DailyCooldown+time.Second)); err != nil || !ok || streak != 2 || amount != 8202 || balance != 13326 {
+		t.Fatalf("next day claim = %d %d %d %v %v", amount, streak, balance, ok, err)
 	}
-	if _, ok, err := database.SpendKudos("a", 501); err != nil || ok {
+	if _, ok, err := database.SpendKudos("a", 13327); err != nil || ok {
 		t.Fatalf("overspend allowed: %v %v", ok, err)
 	}
 	if _, ok, err := database.SpendKudos("nobody", 1); err != nil || ok {
 		t.Fatalf("spend without account: %v %v", ok, err)
 	}
-	if balance, ok, err := database.SpendKudos("a", 200); err != nil || !ok || balance != 300 {
+	if balance, ok, err := database.SpendKudos("a", 13026); err != nil || !ok || balance != 300 {
 		t.Fatalf("spend = %d %v %v", balance, ok, err)
 	}
 	if balance, err := database.AddKudos("b", 900); err != nil || balance != 900 {

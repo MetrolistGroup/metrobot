@@ -17,7 +17,7 @@ type Config struct {
 	OpenRouterModel         string   `json:"openrouter_model"`
 	OpenRouterDecisionModel string   `json:"openrouter_decision_model"`
 	FirecrawlAPIKeys        []string `json:"firecrawl_api_keys"`
-	WolframAppID            string   `json:"wolfram_app_id"`
+	WolframAppIDs           []string `json:"wolfram_app_ids"`
 	GarminMemoryFile        string   `json:"garmin_memory_file"`
 
 	DiscordGuildID string `json:"discord_guild_id"`
@@ -109,6 +109,11 @@ func (c *Config) validate() error {
 	for i, key := range c.FirecrawlAPIKeys {
 		if strings.TrimSpace(key) == "" {
 			return fmt.Errorf("firecrawl_api_keys[%d] is empty", i)
+		}
+	}
+	for i, key := range c.WolframAppIDs {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("wolfram_app_ids[%d] is empty", i)
 		}
 	}
 

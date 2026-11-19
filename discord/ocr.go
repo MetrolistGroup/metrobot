@@ -51,6 +51,19 @@ func (b *Bot) handleOCRTranslate(s *bot.Client, i *events.ApplicationCommandInte
 	}
 	ctx, cancel := context.WithTimeout(parent, garminAITimeout)
 	defer cancel()
+	// Google-Translate style: when there are images, translate the text back onto them in place.
+	if len(images) > 0 {
+		if files := b.renderOCROverlays(ctx, s.Rest.HTTPClient(), images); len(files) > 0 {
+			content := "Translated image text into English."
+			if _, err := s.Rest.UpdateInteractionResponse(i.ApplicationID(), i.Token(), discord.MessageUpdate{
+				Content: &content, Files: files, AllowedMentions: &discord.AllowedMentions{},
+			}); err != nil {
+				b.Logger.Warn("failed to send OCR overlay")
+			}
+			return
+		}
+		b.Logger.Debug("OCR overlay produced nothing; falling back to text translation")
+	}
 	messages := []cmd.GarminAIMessage{{Role: "user", Content: text, Images: images}}
 	// shortcut: GIF OCR uses one frame; add frame sampling when animated text is needed.
 	prepareGarminGIFs(ctx, s.Rest.HTTPClient(), messages, b.Logger)

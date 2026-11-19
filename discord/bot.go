@@ -64,6 +64,9 @@ type Bot struct {
 	nukeBusy             atomic.Bool
 	blackjackMu          sync.Mutex
 	blackjackGames       map[string]*blackjackGame
+	cooldownMu           sync.Mutex
+	cooldowns            map[string]time.Time
+	wolframKey           atomic.Uint64
 	TimedBanRestorer     func()
 	ready                chan struct{}
 	readyOnce            sync.Once

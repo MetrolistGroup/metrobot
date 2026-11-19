@@ -6,7 +6,7 @@
   "openrouter_model": "z-ai/glm-5.3-flash:floor",
   "openrouter_decision_model": "perplexity/pplx-decider-flash-v1.2",
   "firecrawl_api_keys": ["fc-example-1", "fc-example-2"],
-  "wolfram_app_id": "",
+  "wolfram_app_ids": ["", ""],
   "garmin_memory_file": "garmin-memory.md",
   "discord_guild_id": "123",
   "telegram_chat_id": -100,

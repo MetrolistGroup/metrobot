@@ -148,7 +148,8 @@ func (d *DB) migrate() error {
 		`CREATE TABLE IF NOT EXISTS kudos (
 			user_id    TEXT PRIMARY KEY,
 			balance    INTEGER NOT NULL DEFAULT 0 CHECK (balance >= 0),
-			last_daily INTEGER NOT NULL DEFAULT 0
+			last_daily INTEGER NOT NULL DEFAULT 0,
+			streak     INTEGER NOT NULL DEFAULT 0
 		)`,
 		`DROP TABLE IF EXISTS garmin_memory_consent`,
 		`DROP TABLE IF EXISTS garmin_user_memory`,
@@ -169,6 +170,15 @@ func (d *DB) migrate() error {
 		}
 	}
 
+	var hasKudosStreak int
+	if err := d.conn.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('kudos') WHERE name = 'streak'`).Scan(&hasKudosStreak); err != nil {
+		return fmt.Errorf("checking kudos schema: %w", err)
+	}
+	if hasKudosStreak == 0 {
+		if _, err := d.conn.Exec(`ALTER TABLE kudos ADD COLUMN streak INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("adding kudos streak: %w", err)
+		}
+	}
 	if err := d.migrateNoteMarkup(); err != nil {
 		return err
 	}
