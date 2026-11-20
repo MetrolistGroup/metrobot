@@ -22,6 +22,24 @@ const (
 	blackjackComponentPrefix = "bj:"
 )
 
+func (b *Bot) handleCompoundSigmaCommands(s *bot.Client, m *discord.Message, content string) bool {
+	handled := false
+	for {
+		_, rest, found := strings.Cut(content, "{{")
+		if !found {
+			return handled
+		}
+		command, rest, found := strings.Cut(rest, "}}")
+		if !found {
+			return handled
+		}
+		content = rest
+		if b.handleSigmaCommand(s, m, strings.TrimSpace(command)) {
+			handled = true
+		}
+	}
+}
+
 // handleSigmaCommand runs the `>>` fun commands carried over from the Sigma bot.
 func (b *Bot) handleSigmaCommand(s *bot.Client, m *discord.Message, content string) bool {
 	rest, found := strings.CutPrefix(content, ">>")

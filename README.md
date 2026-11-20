@@ -11,6 +11,8 @@ Metrolist's Discord and Telegram bot for moderation, logging, dehoisting and com
 
 Use `/help` for commands. `/actions` reads uploaded Android, Linux x64 and Windows x64 assets from the public `nightly` prerelease, with a backup and instability warning. The legacy `actions_workflow_file` and `actions_artifact_names` config keys remain accepted; startup logs that it ignores them.
 
+Discord `>>` commands also work inside `{{...}}` blocks in a message. For example, `im actually pretty tall {{>>wa 191cm to feet and inches}} so i am defo not 3ft tall` runs `>>wa 191cm to feet and inches` and replies to the original message. Multiple blocks run in message order.
+
 ## Run
 
 Use the Go version in `go.mod`. Copy `config.example.json` to `config.json`, fill in the required settings, then run:
