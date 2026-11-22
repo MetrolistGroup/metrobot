@@ -34,18 +34,14 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	content = b.garminProcessor.ProcessTrigger(content)
 
 	if noteName := extractTriggeredNoteName(content, b.API.Self.UserName); noteName != "" {
-		text, err := b.Notes.GetNote(noteName)
-		if err != nil {
+		if err := b.sendNote(msg.Chat.ID, msg.MessageID, noteName, false); err != nil {
 			b.Logger.Debug("note not found", zap.String("note", noteName), zap.Error(err))
-			return
 		}
-		sendPublicNoteReply(b.API, msg.Chat.ID, msg.MessageID, text, false, b.Logger)
 		return
 	}
 
 	if noteName := cmd.InlineNoteName(content); noteName != "" {
-		if text, err := b.Notes.GetNote(noteName); err == nil {
-			sendPublicNoteReply(b.API, msg.Chat.ID, msg.MessageID, text, false, b.Logger)
+		if err := b.sendNote(msg.Chat.ID, msg.MessageID, noteName, false); err == nil {
 			return
 		}
 	}
@@ -236,12 +232,9 @@ func (b *Bot) tgHandleNote(msg *tgbotapi.Message, args string, stay bool) {
 		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Usage: /note [name]", "", false, b.Logger)
 		return
 	}
-	text, err := b.Notes.GetNote(name)
-	if err != nil {
+	if err := b.sendNote(msg.Chat.ID, msg.MessageID, name, !stay); err != nil {
 		b.Logger.Error("note error", zap.Error(err))
-		return
 	}
-	sendEphemeralNoteReply(b.API, msg.Chat.ID, msg.MessageID, text, stay, b.Logger)
 }
 
 func (b *Bot) tgHandleAddNote(msg *tgbotapi.Message, args string, callerID string) {

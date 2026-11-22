@@ -45,7 +45,7 @@ Your app/build version, platform, exact error and steps to reproduce.
 ```
 ````
 
-Discord shows a question selector and one answer at a time. Telegram and AI receive the full readable FAQ.
+Discord shows a question selector and one answer at a time. Telegram shows one inline button per question and edits the message to the chosen answer. AI receives the full readable FAQ.
 
 New FAQs need 1–25 questions. Selector labels/previews are shortened to Discord's 100 UTF-16-unit option limit; displayed answers are not. Each page, including surrounding Markdown, must fit the combined 4,000 UTF-16-unit text limit. Oversized migrated FAQs use readable fallback delivery.
 
@@ -85,7 +85,7 @@ A complete message may contain at most 10 direct container children and 40 total
 
 Discord note commands, triggers, donor welcomes and support use the authored layout regardless of name. Rich notes suppress mentions; donor welcomes allow their intended recipient's ping. Plain slash notes retain their existing user-mention behavior, without role/everyone pings.
 
-Telegram and AI receive readable Markdown: shuffled entries, all FAQ answers, layout text and labeled media/button URLs. Separators become `---`.
+Telegram and AI receive readable Markdown: shuffled entries, all FAQ answers, layout text and labeled media/button URLs. Separators become `---`. Telegram also turns Components V2 `buttons` into URL buttons and FAQs into question buttons; oversized Telegram pages are sent as `note.md`.
 
 Long ordinary notes are sent in full as `note.md`: Discord's limit is 2,000 UTF-16 units; Telegram's is 4,096, also checked against serialized HTML. These delivery limits do not block saving a plain note.
 

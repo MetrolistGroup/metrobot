@@ -71,6 +71,11 @@ func (b *Bot) Start() error {
 	updates := b.API.GetUpdatesChan(u)
 	go func() {
 		for update := range updates {
+			if update.CallbackQuery != nil {
+				b.handleNoteCallback(update.CallbackQuery)
+				continue
+			}
+
 			if update.MyChatMember != nil {
 				b.handleChatMemberUpdate(update.MyChatMember)
 				continue
