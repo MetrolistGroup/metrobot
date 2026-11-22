@@ -17,6 +17,7 @@ import (
 var chatModPattern = regexp.MustCompile(`(?i)^!(ban|dban|tban|sban|mute|warn)\s*(.*)$`)
 var telegramBoldPattern = regexp.MustCompile(`\*\*([^*\n][^\n]*?)\*\*`)
 var telegramInlineCodePattern = regexp.MustCompile("`([^`\\n]+)`")
+var telegramMarkdownLinkPattern = regexp.MustCompile(`\[([^\]\n]+)\]\(<?(https?://[^>\s)]+)>?\)`)
 var telegramSuppressedURLPattern = regexp.MustCompile(`<https?://[^>\s]+>`)
 var telegramURLPattern = regexp.MustCompile(`https?://[^>\s]+`)
 
@@ -895,9 +896,13 @@ func formatTelegramNoteLine(line string) string {
 
 func formatTelegramInlineHTML(text string) string {
 	protected, codePlaceholders := protectTelegramCodeSpans(text)
+	protected, linkPlaceholders := protectTelegramMarkdownLinks(protected)
 	protected, suppressedURLPlaceholders := protectTelegramSuppressedURLs(protected)
 	protected = html.EscapeString(protected)
 	protected = telegramBoldPattern.ReplaceAllString(protected, "<b>$1</b>")
+	for placeholder, linkHTML := range linkPlaceholders {
+		protected = strings.ReplaceAll(protected, placeholder, linkHTML)
+	}
 	for placeholder, urlHTML := range suppressedURLPlaceholders {
 		protected = strings.ReplaceAll(protected, placeholder, urlHTML)
 	}
@@ -914,6 +919,22 @@ func protectTelegramCodeSpans(text string) (string, map[string]string) {
 	protected := telegramInlineCodePattern.ReplaceAllStringFunc(text, func(match string) string {
 		placeholder := fmt.Sprintf("METROBOTCODE%d", index)
 		placeholders[placeholder] = "<code>" + html.EscapeString(match[1:len(match)-1]) + "</code>"
+		index++
+		return placeholder
+	})
+
+	return protected, placeholders
+}
+
+// protectTelegramMarkdownLinks turns [label](url) and [label](<url>) into anchors.
+func protectTelegramMarkdownLinks(text string) (string, map[string]string) {
+	placeholders := make(map[string]string)
+	index := 0
+
+	protected := telegramMarkdownLinkPattern.ReplaceAllStringFunc(text, func(match string) string {
+		parts := telegramMarkdownLinkPattern.FindStringSubmatch(match)
+		placeholder := fmt.Sprintf("METROBOTLINK%d", index)
+		placeholders[placeholder] = `<a href="` + html.EscapeString(parts[2]) + `">` + html.EscapeString(parts[1]) + `</a>`
 		index++
 		return placeholder
 	})

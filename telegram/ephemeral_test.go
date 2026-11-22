@@ -209,3 +209,11 @@ func TestTelegramSendHelpersUploadFullReplyAndKeepCleanup(t *testing.T) {
 		})
 	}
 }
+
+func TestTelegramNoteMarkdownLinks(t *testing.T) {
+	got := formatTelegramNoteHTML("Get [Android](<https://example.com/a.apk>), [Linux](https://example.com/x?a=1&b=2).")
+	want := `Get <a href="https://example.com/a.apk">Android</a>, <a href="https://example.com/x?a=1&amp;b=2">Linux</a>.`
+	if got != want {
+		t.Fatalf("got %q\nwant %q", got, want)
+	}
+}
