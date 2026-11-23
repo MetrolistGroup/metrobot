@@ -1,26 +1,25 @@
 # Note markup
 
-Notes are Markdown. Directives in the body control behavior; names do not. Renaming a note preserves its behavior, and removing a directive disables it. New `donate` and `kmp` notes are ordinary notes unless their bodies contain directives.
+Notes store Markdown in `bot.db`. Directives inside a note body control behavior; note names do not. Renaming a note keeps its behavior, and removing a directive disables it. Users retrieve notes with `/note <name>`, `.name`, or inline `!!name` on Discord and Telegram.
 
-Create/edit commands validate markup before saving. Invalid markup cannot replace a note. Raw database reads return the stored body without rendering or shuffling. Legacy literal `\n` / `\r\n` separators are normalized outside JSON strings; JSON escapes stay intact.
+Admin commands validate markup and `short_desc` before saving. `short_desc` must be nonblank, single-line, and at most 160 characters. Invalid markup never replaces an existing note. Raw database reads return the stored text without shuffling or rendering. Legacy literal `\n` and `\r\n` sequences normalize into newlines outside JSON strings and non-`faq` code fences.
 
 ## Grammar
 
-Only top-level backtick fences with the exact info string `random`, `faq` or `components-v2` are directives.
+Top-level backtick fences with the exact info string `random`, `faq`, or `components-v2` act as directives.
 
-- Use at least three backticks. The closing fence needs at least as many, with no non-whitespace suffix.
-- Up to three leading spaces work. Directives must close.
-- Tilde fences, indented code, blockquotes, list contents, unknown fence languages and examples inside ordinary code fences remain literal Markdown.
-- Use a longer outer fence when an example contains backtick fences.
-- Multiple random groups are allowed. Each note may have only one rich block: FAQ or Components V2.
-- JSON must contain one valid value, valid UTF-8 and paired Unicode surrogate escapes. Unknown fields, unsupported types and empty blocks are rejected.
+- Open with at least three backticks and up to three leading spaces.
+- Close with at least as many backticks and no trailing non-whitespace text. Unclosed blocks fail validation.
+- Tilde fences, indented code blocks, blockquotes, lists, unknown fence info strings, and directives inside longer outer fences stay literal Markdown.
+- Multiple `random` blocks are allowed. Only one rich block, either `faq` or `components-v2`, is allowed per note.
+- JSON blocks must hold one nonempty JSON value with valid UTF-8, paired Unicode surrogates, and no unknown fields.
 
 ## Random groups
 
-Each retrieval shuffles whole entries, joins them with newlines and leaves surrounding Markdown fixed. Entries must be nonempty Markdown strings. They are not recursively evaluated as directives.
+Each retrieval shuffles all array entries, joins them with newlines, and keeps surrounding Markdown fixed. Entries must be nonempty Markdown strings and are not parsed recursively for directives.
 
 ````markdown
-Project links:
+Official links:
 ```random
 [
   "Source: https://github.com/MetrolistGroup/Metrolist",
@@ -31,7 +30,7 @@ Project links:
 
 ## FAQ
 
-Use an optional `#` title and introduction, then top-level `##` questions with nonempty answers. Headings inside code, quotes or lists do not create questions. Other heading levels and setext headings remain answer text. Without an introduction, the default header is `# FAQ`.
+An `faq` block allows an optional `#` title and intro followed by 1 to 25 top-level `##` questions with nonempty answers. Headings inside code, quotes, or lists, other heading levels, and setext headings stay ordinary answer text. When no header precedes the first `##` question, the default header is `# FAQ` above `Choose a question below`.
 
 ````markdown
 ```faq
@@ -41,27 +40,25 @@ Use an optional `#` title and introduction, then top-level `##` questions with n
 https://github.com/MetrolistGroup/Metrolist/releases
 
 ## What should a bug report include?
-Your app/build version, platform, exact error and steps to reproduce.
+Your app and build version, platform, exact error, and steps to reproduce.
 ```
 ````
 
-Discord shows a question selector and one answer at a time. Telegram shows one inline button per question and edits the message to the chosen answer. AI receives the full readable FAQ.
-
-New FAQs need 1–25 questions. Selector labels/previews are shortened to Discord's 100 UTF-16-unit option limit; displayed answers are not. Each page, including surrounding Markdown, must fit the combined 4,000 UTF-16-unit text limit. Oversized migrated FAQs use readable fallback delivery.
+Selector labels and option previews are trimmed to 100 UTF-16 units on Discord; full answers are untouched. Each FAQ page, including surrounding Markdown, must fit 4,000 UTF-16 units.
 
 ## Components V2
 
-The JSON object contains exactly `components`, an array of 1–10 supported components. The bot places them in a plain container; arbitrary Discord payloads, custom IDs, actions, JavaScript and colors are not accepted.
+A `components-v2` JSON object must contain only `components`, an array of 1 to 10 supported items wrapped in a Discord container. Custom IDs, colors, scripts, and arbitrary payloads are rejected.
 
 | Type | Required fields |
 | --- | --- |
 | `text` | Nonempty Markdown `content` |
-| `separator` | No other fields |
+| `separator` | None |
 | `section` | Nonempty `content` and HTTPS `thumbnail` |
-| `gallery` | `urls`: 1–10 HTTPS media URLs |
-| `buttons` | `buttons`: 1–5 objects with `label` and HTTPS `url` |
+| `gallery` | `urls` array of 1 to 10 HTTPS URLs |
+| `buttons` | `buttons` array of 1 to 5 objects with `label` and HTTPS `url` |
 
-Button labels need 1–80 UTF-16 units. URLs must be absolute HTTPS, without credentials or whitespace, and at most 512 UTF-16 units. Only the listed fields are accepted.
+Button labels require 1 to 80 UTF-16 units. URLs must be absolute HTTPS without credentials or whitespace and at most 512 UTF-16 units. A message may have at most 10 direct container children, 40 total components including nested children, and 4,000 UTF-16 text units including surrounding text and any donor-welcome prefix.
 
 ````markdown
 ```components-v2
@@ -69,7 +66,7 @@ Button labels need 1–80 UTF-16 units. URLs must be absolute HTTPS, without cre
   "components": [
     {"type": "text", "content": "# Metrolist"},
     {"type": "separator"},
-    {"type": "section", "content": "Official project links", "thumbnail": "https://github.com/MetrolistGroup.png"},
+    {"type": "section", "content": "Official links", "thumbnail": "https://github.com/MetrolistGroup.png"},
     {"type": "buttons", "buttons": [
       {"label": "Releases", "url": "https://github.com/MetrolistGroup/Metrolist/releases"},
       {"label": "Source", "url": "https://github.com/MetrolistGroup/Metrolist"}
@@ -79,39 +76,18 @@ Button labels need 1–80 UTF-16 units. URLs must be absolute HTTPS, without cre
 ```
 ````
 
-A complete message may contain at most 10 direct container children and 40 total components, including surrounding text and nested children. Combined displayed text must fit 4,000 UTF-16 units. A donor-welcome prefix counts toward delivery limits.
-
 ## Delivery
 
-Discord note commands, triggers, donor welcomes and support use the authored layout regardless of name. Rich notes suppress mentions; donor welcomes allow their intended recipient's ping. Plain slash notes retain their existing user-mention behavior, without role/everyone pings.
-
-Telegram and AI receive readable Markdown: shuffled entries, all FAQ answers, layout text and labeled media/button URLs. Separators become `---`. Telegram also turns Components V2 `buttons` into URL buttons and FAQs into question buttons; oversized Telegram pages are sent as `note.md`.
-
-Long ordinary notes are sent in full as `note.md`: Discord's limit is 2,000 UTF-16 units; Telegram's is 4,096, also checked against serialized HTML. These delivery limits do not block saving a plain note.
-
-If a rich layout exceeds a limit or Discord rejects it, delivery retries as readable text or a full Markdown attachment. Visibility, reply and mention restrictions are preserved. Nothing is truncated.
-
-Old `note:kmp:question` selectors remain usable while that note contains a FAQ. New selector IDs are bounded hashes. Deleting, renaming or removing a FAQ makes old selectors unavailable rather than restoring name-based behavior.
+- **Discord.** Note commands, triggers, donor welcomes, and support deliver the authored layout. Rich notes suppress all mentions, while donor welcomes allow only the new donor's ping. Plain `/note` commands allow user mentions without role or everyone pings. Plain notes over 2,000 UTF-16 units, or rejected rich layouts, fall back to readable text or a `note.md` file while keeping visibility and mention rules. Legacy `note:kmp:question` menus stay routed to the `kmp` FAQ while it has an `faq` block.
+- **Telegram.** Notes render headings, bold text, inline code, bullet lists, and `[label](url)` Markdown links as Telegram HTML. FAQs send inline question buttons that edit the message to the chosen answer, or reply with `note.md` if an edited page exceeds 4,096 UTF-16 units. Layouts with `buttons` attach URL button rows, and `separator` becomes `---`. Plain notes or layouts exceeding 4,096 UTF-16 units or 4,096 serialized HTML units are sent as `note.md`.
+- **AI callers.** Support and chat tools read rendered readable Markdown with shuffled random entries, all FAQ sections, and labeled layout URLs.
 
 ## Legacy migration
 
-The first database open records `note_markup_v1` in `migrations`, in the same transaction as these changes:
-
-- Existing `donate`: keep its first line fixed and wrap remaining nonempty entries in one random group, preserving rendered text and escaping.
-- Existing `kmp`: wrap its Markdown in a safely sized FAQ fence. Longer fences preserve directive examples inside a legacy FAQ.
-- Other legacy bodies, and ambiguous `donate`/`kmp` bodies containing top-level directives, stay literal through storage metadata. Valid JSON alone does not establish that a legacy example was authored markup.
-- Invalid UTF-8 bodies stay byte-for-byte intact until an admin repairs them.
-
-A successful validated edit activates markup on a literal legacy note. Put examples inside a longer ordinary fence if they must remain literal. Renaming alone does not activate markup.
-
-The marker is written even on an empty database. Restarts never repeat the migration, including after directives are removed or an old name is reused. Failure rolls back bodies, interpretation metadata and marker together. Preserve all of them when upgrading.
+On first open, `note_markup_v1` runs once inside a transaction, adds `markup_enabled`, and clears it on existing rows. If present and valid UTF-8 without top-level directives, `donate` keeps its intro line and wraps remaining lines in a `random` block, and `kmp` wraps its body in a `faq` fence. Ambiguous notes stay literal, and invalid UTF-8 bytes stay untouched until an admin edits them. Editing a legacy note through a validated command enables markup. The migration records its marker even on an empty database so restarts never repeat it.
 
 ## Metrolist v14 note migration
 
-After `note_markup_v1`, startup runs `metrolist_v14_notes_v1` once in a transaction. It compares exact stored content against the four earlier authored sets retained in `db/note_versions/pre_v14*.json`. A known legacy `kmp` FAQ wrapper also qualifies. A changed description, including a blank routing opt-out, counts as a staff edit. Only eligible rows receive the current content, description and active markup metadata. Failure rolls back the note changes and marker. The marker also records an empty database; this migration is not a seed.
+After `note_markup_v1`, `metrolist_v14_notes_v1` runs once in a transaction and compares stored notes against `db/note_versions/pre_v14*.json`, also matching `note_markup_v1`-wrapped `kmp`. Unchanged matches for the 15 notes in `docs/support-notes.json` receive the current body, `short_desc`, and active `markup_enabled` flag from `db/note_versions/v14.json`.
 
-For the last authored set before v14, it updates `discover`, `download`, `kmp`, `logs`, `nightly`, `playback`, `playbackkmp`, `repo`, `rpc`, `uploads`, `up`, `ver` and `whatsnightly`. It skips unchanged `appname` and `report` as already current. Older known sets can also receive current descriptions for those two notes. Notes from a schema without descriptions need manual review. All 15 names remain available; `playbackkmp` contains the same guidance as `playback`.
-
-For every name, it skips absent rows and preserves unknown/staff-edited rows. It logs the outcome for each note, including manual-review warnings for preserved staff edits. It does not overwrite a changed description, activate markup on a skipped note, or recreate a deleted/renamed note. Restarts do not revisit rows after the marker exists. Review the startup log to learn which rows actually changed on a particular installation.
-
-The migration does not change a live shared-memory file, a stored system-prompt override or staff-authored `testertour` content. Staff should review old product/access claims in those sources. Automatic donor welcomes now use `donorwelcome` when present and a public-app thank-you otherwise; they never load `testertour`. Existing `note:kmp:question` menus remain compatible with the current FAQ.
+Absent notes, already-current notes, and staff-edited notes are skipped and logged for manual review. The migration does not alter `garmin-memory.md`, `garmin_base_system_prompt`, or `testertour`. Donor welcomes now use `donorwelcome` when present or a public thank-you fallback, never `testertour`.
