@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/MetrolistGroup/metrobot/config"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -52,6 +53,7 @@ func garminHistoryTestSession(t *testing.T, handler func(*http.Request) (string,
 		Roles: []discord.Role{
 			{ID: snowflakeID("100000000000000012"), Name: "@everyone", Permissions: discord.PermissionViewChannel | discord.PermissionReadMessageHistory | discord.PermissionSendMessages},
 			{ID: snowflakeID("42"), Name: "they/them"},
+			{ID: snowflakeID(garminTestManagerRoleID), Name: "managers", Permissions: discord.PermissionManageGuild},
 		},
 	}, Members: []discord.Member{{User: discord.User{ID: snowflakeID("100000"), Username: "cached"}, Nick: ptr("Cached Nick"), RoleIDs: []snowflake.ID{snowflakeID("42")}}}})
 	session.Caches.AddChannel(testChannel(t, map[string]any{"id": garminHistoryTestChannel, "guild_id": "100000000000000012", "name": "chat"}))
@@ -130,7 +132,7 @@ func TestGarminHistoryPasses100MessagesToCompletion(t *testing.T) {
 		}
 		return transport.RoundTrip(request)
 	})
-	b := &Bot{garminFirecrawl: firecrawl.NewClient([]string{"fake"})}
+	b := &Bot{Config: testConfig(config.Config{}), garminFirecrawl: firecrawl.NewClient([]string{"fake"})}
 	calls := 0
 	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		calls++
@@ -219,7 +221,7 @@ func TestGarminHistoryBoundsResetFilteringAndPartialCoverage(t *testing.T) {
 				}
 				return mustJSON(messages), nil
 			})
-			b := &Bot{garminContextCutoffs: map[string]string{garminHistoryTestChannel: "995"}}
+			b := &Bot{Config: testConfig(config.Config{}), garminContextCutoffs: map[string]string{garminHistoryTestChannel: "995"}}
 			output, _, _ := b.executeGarminAITool(context.Background(), session, garminHistoryTestMessage(), garminHistoryTestCall("read_channel_history", mustJSON(map[string]any{"limit": test.limit, "query": test.query})).Message.ToolCalls[0])
 			var history struct {
 				Messages  []map[string]any `json:"messages"`
@@ -254,7 +256,7 @@ func TestGarminHistoryOversizeStaysBoundedValidJSON(t *testing.T) {
 	}
 	messages[0]["attachments"] = attachments
 	session := garminHistoryTestSession(t, func(*http.Request) (string, error) { return mustJSON(messages), nil })
-	output, _, _ := (&Bot{}).executeGarminAITool(context.Background(), session, garminHistoryTestMessage(), garminHistoryTestCall("read_channel_history", `{"limit":100}`).Message.ToolCalls[0])
+	output, _, _ := testBot().executeGarminAITool(context.Background(), session, garminHistoryTestMessage(), garminHistoryTestCall("read_channel_history", `{"limit":100}`).Message.ToolCalls[0])
 	output = garminAIToolResult("read_channel_history", output)
 	var history struct {
 		Messages []struct {
@@ -287,7 +289,7 @@ func TestGarminHistoryCancellationAndResetSuppressInflightResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	b := &Bot{DB: database}
+	b := &Bot{Config: testConfig(config.Config{}), DB: database}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	message := garminHistoryTestMessage()
@@ -304,7 +306,7 @@ func TestGarminHistoryCancellationAndResetSuppressInflightResult(t *testing.T) {
 		}
 		return mustJSON(garminHistoryTestMessages(1, "must not reach completion")), nil
 	})
-	visible, output, _, _ := b.executeGarminAIToolIfVisible(ctx, session, message, garminHistoryTestCall("read_channel_history", `{"limit":100}`).Message.ToolCalls[0])
+	visible, output, _, _, _ := b.executeGarminAIToolIfVisible(ctx, session, message, garminHistoryTestCall("read_channel_history", `{"limit":100}`).Message.ToolCalls[0])
 	if visible || output != "" {
 		t.Fatalf("reset history escaped suppression: visible=%v output=%s", visible, output)
 	}
@@ -324,7 +326,7 @@ func TestGarminDeferredHistoryRechecksCancellationVisibilityAndAccess(t *testing
 				t.Error("deferred history was fetched after cancellation, reset or permission revocation")
 				return "[]", nil
 			})
-			b := &Bot{garminFirecrawl: firecrawl.NewClient([]string{"fake"})}
+			b := &Bot{Config: testConfig(config.Config{}), garminFirecrawl: firecrawl.NewClient([]string{"fake"})}
 			message := garminHistoryTestMessage()
 			calls := 0
 			b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
@@ -382,7 +384,7 @@ func TestGarminHistoryErrorsRemainToolData(t *testing.T) {
 		{mustJSON(map[string]string{"query": strings.Repeat("x", 501)}), `[]`, "500 characters"},
 	} {
 		session := garminHistoryTestSession(t, func(*http.Request) (string, error) { return test.body, nil })
-		output, _, _ := (&Bot{}).executeGarminAITool(context.Background(), session, garminHistoryTestMessage(), garminHistoryTestCall("read_channel_history", test.args).Message.ToolCalls[0])
+		output, _, _ := testBot().executeGarminAITool(context.Background(), session, garminHistoryTestMessage(), garminHistoryTestCall("read_channel_history", test.args).Message.ToolCalls[0])
 		if !json.Valid([]byte(output)) || !strings.Contains(garminToolResultError(output), test.want) {
 			t.Fatalf("history failure = %s", output)
 		}
@@ -404,7 +406,7 @@ func TestGarminOptionalSearchAndHistoryChaining(t *testing.T) {
 			})
 			t.Cleanup(func() { http.DefaultTransport = original })
 			session := garminHistoryTestSession(t, func(*http.Request) (string, error) { return mustJSON(garminHistoryTestMessages(2, "discussion")), nil })
-			b := &Bot{garminFirecrawl: firecrawl.NewClient([]string{"fake"})}
+			b := &Bot{Config: testConfig(config.Config{}), garminFirecrawl: firecrawl.NewClient([]string{"fake"})}
 			calls := 0
 			historySeen := false
 			b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
@@ -456,7 +458,7 @@ func TestGarminOptionalSearchAndHistoryChaining(t *testing.T) {
 func TestGarminSearchAvailabilityDoesNotRequirePreflight(t *testing.T) {
 	for _, prompt := range []string{"hey", "summarize the latest 100 messages", "find where we left off", "the latest joke was funny", "i saw some news today", "that image was funny", "what unfamiliar subject is that?"} {
 		t.Run(prompt, func(t *testing.T) {
-			b := &Bot{garminFirecrawl: firecrawl.NewClient([]string{"fake"})}
+			b := &Bot{Config: testConfig(config.Config{}), garminFirecrawl: firecrawl.NewClient([]string{"fake"})}
 			session := garminHistoryTestSession(t, func(*http.Request) (string, error) {
 				t.Fatal("optional retrieval should not prefetch channel history")
 				return "[]", nil
@@ -478,7 +480,7 @@ func TestGarminSearchAvailabilityDoesNotRequirePreflight(t *testing.T) {
 
 func TestGarminAmbientHasOptionalRetrievalAndSupportDoesNot(t *testing.T) {
 	for _, support := range []bool{false, true} {
-		b := &Bot{garminFirecrawl: firecrawl.NewClient([]string{"fake"})}
+		b := &Bot{Config: testConfig(config.Config{}), garminFirecrawl: firecrawl.NewClient([]string{"fake"})}
 		message := garminHistoryTestMessage()
 		message.Content = "maybe never mind"
 		var session *bot.Client
@@ -519,7 +521,7 @@ func TestGarminAmbientHasOptionalRetrievalAndSupportDoesNot(t *testing.T) {
 }
 
 func TestGarminSupportRejectsUnadvertisedRetrieval(t *testing.T) {
-	b := &Bot{garminFirecrawl: firecrawl.NewClient(nil)}
+	b := &Bot{Config: testConfig(config.Config{}), garminFirecrawl: firecrawl.NewClient(nil)}
 	message := garminHistoryTestMessage()
 	message.ChannelID = snowflakeID(garminAppSupportID)
 	message.Content = "maybe never mind"
@@ -613,7 +615,7 @@ func TestGarminHistoryRequiresRequesterPermissions(t *testing.T) {
 			if got := garminCanReadChannelHistory(session, message); got != test.want {
 				t.Fatalf("requester history permission = %v, want %v", got, test.want)
 			}
-			b := &Bot{}
+			b := &Bot{Config: testConfig(config.Config{})}
 			calls := 0
 			b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 				calls++
@@ -663,7 +665,7 @@ func TestGarminHistoryRechecksPermissionAtExecution(t *testing.T) {
 					"permission_overwrites": []discord.PermissionOverwrite{discord.MemberPermissionOverwrite{UserID: message.Author.ID, Deny: discord.PermissionReadMessageHistory}},
 				}))
 			}
-			b := &Bot{}
+			b := &Bot{Config: testConfig(config.Config{})}
 			calls := 0
 			b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 				calls++
@@ -731,7 +733,7 @@ func TestGarminHistoryChecksLiveMembership(t *testing.T) {
 				}
 				return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
 			})
-			b := &Bot{}
+			b := &Bot{Config: testConfig(config.Config{})}
 			calls := 0
 			b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 				calls++
@@ -803,7 +805,7 @@ func TestGarminExplicitWebSearchPrecedesCommunityRetrieval(t *testing.T) {
 		messages[0]["channel_id"] = garminMinkyID
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(mustJSON(messages))), Request: request}, nil
 	})})
-	b := &Bot{garminFirecrawl: firecrawl.NewClient([]string{"fake"})}
+	b := &Bot{Config: testConfig(config.Config{}), garminFirecrawl: firecrawl.NewClient([]string{"fake"})}
 	calls := 0
 	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		calls++
@@ -931,7 +933,7 @@ func TestGarminHistorySummaryCannotBecomeNextTurnSearchText(t *testing.T) {
 			session := garminHistoryTestSession(t, func(*http.Request) (string, error) {
 				return mustJSON(garminHistoryTestMessages(1, privateText)), nil
 			})
-			b := &Bot{garminFirecrawl: firecrawl.NewClient([]string{"fake"})}
+			b := &Bot{Config: testConfig(config.Config{}), garminFirecrawl: firecrawl.NewClient([]string{"fake"})}
 			message := garminHistoryTestMessage()
 			original := []cmd.GarminAIMessage{garminAIUserMessage(message, "summarize the last 100 messages")}
 			historyCalls := 0
@@ -1132,7 +1134,7 @@ func TestGarminReplyTextCannotBecomeSearchQuery(t *testing.T) {
 		t.Fatal("reply-context search must not fetch channel history")
 		return "[]", nil
 	})
-	b := &Bot{garminFirecrawl: firecrawl.NewClient(nil)}
+	b := &Bot{Config: testConfig(config.Config{}), garminFirecrawl: firecrawl.NewClient(nil)}
 	calls := 0
 	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		calls++
@@ -1159,7 +1161,7 @@ func TestGarminRuntimeRetrievalGuidanceSurvivesCustomPrompt(t *testing.T) {
 	if err := database.SetGarminSystemPrompt("A custom base prompt"); err != nil {
 		t.Fatal(err)
 	}
-	b := &Bot{DB: database}
+	b := &Bot{Config: testConfig(config.Config{}), DB: database}
 	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		for _, required := range []string{"A custom base prompt", "read_channel_history", "timestamps", "participants, developments, decisions and unanswered questions", "untrusted data", "unfamiliar subjects", "Do not run a public search for casual chat", "private channel text", "External web search is disabled after channel-history retrieval"} {
 			if !strings.Contains(request.SystemPrompt, required) {

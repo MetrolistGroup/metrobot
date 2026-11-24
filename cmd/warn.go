@@ -7,11 +7,15 @@ import (
 
 	"github.com/MetrolistGroup/metrobot/db"
 	"github.com/MetrolistGroup/metrobot/util"
+	"go.uber.org/zap"
 )
 
 type WarnHandler struct {
 	DB          *db.DB
 	CaseHandler *CaseHandler
+	// Moderation owns stored mutes so warning timeouts share its target locks
+	// and expiry timers. Without it, Warn uses an unshared handler.
+	Moderation *ModerationHandler
 }
 
 // SetCaseHandler sets the case handler for warn actions
@@ -19,19 +23,17 @@ func (h *WarnHandler) SetCaseHandler(ch *CaseHandler) {
 	h.CaseHandler = ch
 }
 
-func (h *WarnHandler) Warn(banner PlatformBanner, callerID, targetID, reason string, cfg db.PermaAdminProvider) (string, []string, *db.Case, error) {
+func (h *WarnHandler) Warn(banner PlatformBanner, callerID, targetID, reason string) (string, []string, *db.Case, error) {
 	platform := banner.Platform()
 
-	if h.DB.IsAdmin(platform, targetID, cfg) {
-		return "I will not warn an admin.", nil, nil, nil
+	if err := banner.CanManageMember(callerID, targetID, "warn"); err != nil {
+		return "", nil, nil, err
 	}
 
 	_, err := h.DB.AddWarning(platform, targetID, reason, callerID)
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("adding warning: %w", err)
 	}
-
-	h.DB.LogModAction(platform, callerID, targetID, "warn", reason)
 
 	count, err := h.DB.GetWarningCount(platform, targetID)
 	if err != nil {
@@ -48,25 +50,26 @@ func (h *WarnHandler) Warn(banner PlatformBanner, callerID, targetID, reason str
 		reasonText, count,
 	))
 
-	// Create case
-	var c *db.Case
-	if h.CaseHandler != nil {
-		targetName, _ := banner.GetDisplayName(targetID)
-		moderatorName, _ := banner.GetDisplayName(callerID)
-		c, _ = h.CaseHandler.CreateCaseAndLog(banner.Platform(), "warn", targetID, callerID, reason, targetName, moderatorName)
-	}
+	c, note := recordModeration(h.DB, h.CaseHandler, banner, callerID, targetID, "warn", reason)
 
 	// Calculate escalating timeout: 1h + (count-1) * 20m
 	timeoutDuration := time.Hour + time.Duration(count-1)*20*time.Minute
-	timeoutExpiresAt := time.Now().Add(timeoutDuration).Unix()
-
-	if err := banner.Restrict(targetID, timeoutExpiresAt); err != nil {
-		h.DB.LogModAction(platform, "system", targetID, "timeout_failed", fmt.Sprintf("Failed to timeout user after warn #%d: %s", count, err))
+	moderation := h.Moderation
+	if moderation == nil {
+		moderation = &ModerationHandler{DB: h.DB}
 	}
 
-	h.DB.LogModAction(platform, "system", targetID, "timeout", fmt.Sprintf("Timeout for %s after warn #%d", util.FormatDuration(timeoutDuration), count))
+	autoAction := "timed out for " + util.FormatDuration(timeoutDuration)
+	if err := moderation.TimeoutAtLeast(banner, targetID, timeoutDuration, fmt.Sprintf("timeout after warn #%d", count)); err != nil {
+		autoAction = "the timeout failed"
+		if logErr := h.DB.LogModAction(platform, "system", targetID, "timeout_failed", fmt.Sprintf("Failed to timeout user after warn #%d: %s", count, err)); logErr != nil {
+			zap.L().Error("saving moderation log entry", zap.String("action", "timeout_failed"), zap.Error(logErr))
+		}
+	} else if logErr := h.DB.LogModAction(platform, "system", targetID, "timeout", fmt.Sprintf("Timeout for %s after warn #%d", util.FormatDuration(timeoutDuration), count)); logErr != nil {
+		zap.L().Error("saving moderation log entry", zap.String("action", "timeout"), zap.Error(logErr))
+	}
 
-	response := fmt.Sprintf("%s has been warned. Reason: %s (warning #%d). Auto-action: timed out for %s.", formatUserRef(banner, targetID), formatUserText(banner, reasonText), count, util.FormatDuration(timeoutDuration))
+	response := fmt.Sprintf("%s has been warned. Reason: %s (warning #%d). Auto-action: %s.%s", formatUserRef(banner, targetID), formatUserText(banner, reasonText), count, autoAction, note)
 
 	return response, nil, c, nil
 }
@@ -109,27 +112,18 @@ func (h *WarnHandler) Unwarn(platform, callerID, targetID string, index int, ban
 	if index < 1 {
 		return "", nil, fmt.Errorf("warning IDs start at 1")
 	}
+	if banner == nil {
+		return "", nil, fmt.Errorf("platform permissions are unavailable")
+	}
+	if err := banner.CanManageMember(callerID, targetID, "unwarn"); err != nil {
+		return "", nil, err
+	}
 
 	if err := h.DB.DeleteWarningByIndex(platform, targetID, index-1); err != nil {
 		return "", nil, fmt.Errorf("deleting warning: %w", err)
 	}
 
-	h.DB.LogModAction(platform, callerID, targetID, "unwarn", fmt.Sprintf("removed warning #%d", index))
-
-	// Create case
-	var c *db.Case
-	if h.CaseHandler != nil && banner != nil {
-		targetName, _ := banner.GetDisplayName(targetID)
-		moderatorName, _ := banner.GetDisplayName(callerID)
-		c, _ = h.CaseHandler.CreateCaseAndLog(platform, "unwarn", targetID, callerID, fmt.Sprintf("removed warning #%d", index), targetName, moderatorName)
-	}
-
-	var targetRef string
-	if banner != nil {
-		targetRef = formatUserRef(banner, targetID)
-	} else {
-		targetRef = "`@" + targetID + "`"
-	}
-
-	return fmt.Sprintf("Warning #%d removed from %s.", index, targetRef), c, nil
+	reason := fmt.Sprintf("removed warning #%d", index)
+	c, note := recordModeration(h.DB, h.CaseHandler, banner, callerID, targetID, "unwarn", reason)
+	return fmt.Sprintf("Warning #%d removed from %s.%s", index, formatUserRef(banner, targetID), note), c, nil
 }

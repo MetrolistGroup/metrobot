@@ -2,8 +2,9 @@ package discord
 
 import (
 	"bytes"
+	"cmp"
 	"context"
-	"net/url"
+	"fmt"
 	"strings"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
@@ -52,8 +53,14 @@ func (b *Bot) handleOCRTranslate(s *bot.Client, i *events.ApplicationCommandInte
 	ctx, cancel := context.WithTimeout(parent, garminAITimeout)
 	defer cancel()
 	// Google-Translate style: when there are images, translate the text back onto them in place.
+	// Images that fail in place get one text translation, so a partial result never hides them.
+	fallbackImages := images
+	var files []*discord.File
+	var omitted string
 	if len(images) > 0 {
-		if files := b.renderOCROverlays(ctx, s.Rest.HTTPClient(), images); len(files) > 0 {
+		var failed []int
+		files, failed = b.renderOCROverlays(ctx, s.Rest.HTTPClient(), images)
+		if len(files) > 0 && len(failed) == 0 {
 			content := "Translated image text into English."
 			if _, err := s.Rest.UpdateInteractionResponse(i.ApplicationID(), i.Token(), discord.MessageUpdate{
 				Content: &content, Files: files, AllowedMentions: &discord.AllowedMentions{},
@@ -62,9 +69,22 @@ func (b *Bot) handleOCRTranslate(s *bot.Client, i *events.ApplicationCommandInte
 			}
 			return
 		}
-		b.Logger.Debug("OCR overlay produced nothing; falling back to text translation")
+		if len(files) > 0 {
+			fallbackImages = nil
+			var numbers []string
+			for _, index := range failed {
+				fallbackImages = append(fallbackImages, images[index])
+				numbers = append(numbers, fmt.Sprint(index+1))
+			}
+			omitted = "Image " + strings.Join(numbers, ", ")
+			if len(numbers) > 1 {
+				omitted = "Images " + strings.Join(numbers, ", ")
+			}
+		} else {
+			b.Logger.Debug("OCR overlay produced nothing; falling back to text translation")
+		}
 	}
-	messages := []cmd.GarminAIMessage{{Role: "user", Content: text, Images: images}}
+	messages := []cmd.GarminAIMessage{{Role: "user", Content: text, Images: fallbackImages}}
 	// shortcut: GIF OCR uses one frame; add frame sampling when animated text is needed.
 	prepareGarminGIFs(ctx, s.Rest.HTTPClient(), messages, b.Logger)
 	completion, err := b.garminAI.Complete(ctx, cmd.GarminAIRequest{
@@ -75,7 +95,16 @@ func (b *Bot) handleOCRTranslate(s *bot.Client, i *events.ApplicationCommandInte
 	})
 	if err != nil || completion == nil || strings.TrimSpace(completion.Message.Content) == "" {
 		b.Logger.Warn("OCR translation failed")
-		_ = editDeferredResponse(s, i, "I couldn't read or translate that message. Try a clearer image.")
+		if len(files) == 0 {
+			_ = editDeferredResponse(s, i, "I couldn't read or translate that message. Try a clearer image.")
+			return
+		}
+		content := "Translated image text into English. " + omitted + " couldn't be read or translated."
+		if _, err := s.Rest.UpdateInteractionResponse(i.ApplicationID(), i.Token(), discord.MessageUpdate{
+			Content: &content, Files: files, AllowedMentions: &discord.AllowedMentions{},
+		}); err != nil {
+			b.Logger.Warn("failed to send OCR overlay")
+		}
 		return
 	}
 	result := strings.TrimSpace(completion.Message.Content)
@@ -83,11 +112,14 @@ func (b *Bot) handleOCRTranslate(s *bot.Client, i *events.ApplicationCommandInte
 	if completion.FinishReason == "length" {
 		result = "Partial result: the model hit its output limit. Try a smaller crop.\n\n" + result
 	}
-	update := discord.MessageUpdate{Content: &result, AllowedMentions: &discord.AllowedMentions{}}
+	if omitted != "" {
+		result = "Translated the other images in place. " + omitted + " couldn't be overlaid; the text translation follows.\n\n" + result
+	}
+	update := discord.MessageUpdate{Content: &result, Files: files, AllowedMentions: &discord.AllowedMentions{}}
 	if len(result) > garminAIMaxContent {
 		summary := "OCR and English translation attached."
 		update.Content = &summary
-		update.Files = []*discord.File{{Name: "translation.txt", Reader: bytes.NewReader([]byte(result))}}
+		update.Files = append(files, &discord.File{Name: "translation.txt", Reader: bytes.NewReader([]byte(result))})
 	}
 	if _, err := s.Rest.UpdateInteractionResponse(i.ApplicationID(), i.Token(), update); err != nil {
 		b.Logger.Warn("failed to send OCR translation")
@@ -97,16 +129,18 @@ func (b *Bot) handleOCRTranslate(s *bot.Client, i *events.ApplicationCommandInte
 func ocrImageURLs(message *discord.Message) []string {
 	images := garminAIImageURLs(message)
 	for _, embed := range message.Embeds {
-		if embed.Image != nil {
-			images = append(images, embed.Image.URL)
-		} else if (embed.Type == discord.EmbedTypeImage || embed.Type == discord.EmbedTypeGifV) && embed.Thumbnail != nil {
-			images = append(images, embed.Thumbnail.URL)
+		resource := embed.Image
+		if resource == nil && (embed.Type == discord.EmbedTypeImage || embed.Type == discord.EmbedTypeGifV) {
+			resource = embed.Thumbnail
+		}
+		if resource != nil {
+			// Discord's proxy copy keeps fetches on Discord hosts instead of the embed author's server.
+			images = append(images, cmp.Or(resource.ProxyURL, resource.URL))
 		}
 	}
 	var valid []string
 	for _, imageURL := range images {
-		parsed, err := url.Parse(imageURL)
-		if err == nil && parsed.Scheme == "https" && parsed.Host != "" && parsed.User == nil {
+		if discordMediaURL(imageURL) {
 			valid = append(valid, imageURL)
 		}
 	}

@@ -3,6 +3,7 @@ package discord
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -127,29 +128,38 @@ func TestGarminClipUsesWordBoundary(t *testing.T) {
 	}
 }
 
-func TestHandleGarminAIDetailedGeneratedSupportReplyIsClipped(t *testing.T) {
-	b, client, delivery := newSupportDecisionTestBot(t)
-	b.garminAI = garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: strings.Repeat("a supported answer. ", 200)}}, nil
-	})
-	m := supportTestMessage(100)
-	m.Content = "explain the installation steps in detail"
-	b.handleGarminAI(client, m, []cmd.GarminAIMessage{garminAIUserMessage(m, m.Content)})
-	delivery.mu.Lock()
-	bodies := append([]string(nil), delivery.bodies...)
-	delivery.mu.Unlock()
-	if len(bodies) != 1 {
-		t.Fatalf("sent %d support replies", len(bodies))
-	}
-	var payload discord.MessageCreate
-	if err := json.Unmarshal([]byte(bodies[0]), &payload); err != nil {
-		t.Fatal(err)
-	}
-	if len(payload.Content) > garminAIMaxContent || !strings.HasSuffix(payload.Content, "...") || len(payload.Files) != 0 {
-		t.Fatalf("long generated support reply = %#v", payload)
-	}
-	history, ok := b.garminAIHistory(m, "1001", false)
-	if !ok || history[len(history)-1].Content != payload.Content {
-		t.Fatalf("support history differs from delivered text: %#v", history)
+func TestVerifiedSupportAnswerIsDeliveredWholeOnBothPaths(t *testing.T) {
+	for _, automatic := range []bool{false, true} {
+		t.Run(fmt.Sprint("automatic=", automatic), func(t *testing.T) {
+			b, client, sent := newSupportDecisionTestBot(t)
+			answer := strings.Repeat("This is a supported installation step. ", 65) + "SAFETY_WARNING: back up first; reinstalling removes local data."
+			checked := false
+			b.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+				if state, ok := request.State.(map[string]any); ok {
+					proposed, _ := state["proposed_answer"].(string)
+					checked = checked || strings.Contains(proposed, "SAFETY_WARNING")
+				}
+				return supportTestDecision(request, "agent", .99, .99), nil
+			})
+			b.garminAI = supportTestNoteAnswer("nightly", answer)
+			m := supportTestMessage(100)
+			m.Content = "explain the installation steps in detail"
+			messages := []cmd.GarminAIMessage{garminAIUserMessage(m, m.Content)}
+			if automatic {
+				b.runSupportDecisionAgent(client, m, messages, "")
+			} else {
+				b.handleGarminAI(client, m, messages)
+			}
+			sent.mu.Lock()
+			bodies := append([]string(nil), sent.bodies...)
+			sent.mu.Unlock()
+			if !checked || len(bodies) != 1 || !strings.Contains(bodies[0], "SAFETY_WARNING") {
+				t.Fatalf("checked=%v bodies=%d: checked answer was not delivered whole", checked, len(bodies))
+			}
+			history, ok := b.garminAIHistory(m, "1001", false)
+			if !ok || !strings.Contains(history[len(history)-1].Content, "SAFETY_WARNING") {
+				t.Fatalf("support history lost the delivered warning: %#v", history)
+			}
+		})
 	}
 }

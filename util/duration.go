@@ -2,54 +2,65 @@ package util
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
-var durationPattern = regexp.MustCompile(`(?i)(\d+)\s*(y(?:r|ear)?s?|mo(?:n(?:th)?)?s?|d(?:ay)?s?|h(?:r|our)?s?|m(?:in(?:ute)?)?s?|s(?:ec(?:ond)?)?s?)`)
+// Plural "s" on minutes needs the full "min" spelling so "1ms" is rejected
+// instead of read as one minute.
+const durationUnit = `(y(?:r|ear)?s?|mo(?:n(?:th)?)?s?|d(?:ay)?s?|h(?:r|our)?s?|m(?:in(?:ute)?s?)?|s(?:ec(?:ond)?)?s?)`
+
+var (
+	durationPattern     = regexp.MustCompile(`(?i)(\d+)\s*` + durationUnit)
+	fullDurationPattern = regexp.MustCompile(`(?i)^(?:\d+\s*` + durationUnit + `\s*)+$`)
+)
 
 // ParseDuration parses a human-readable duration string into a time.Duration.
 // Supported units: y/yr/year, mo/mon/month, d/day, h/hr/hour, m/min/minute, s/sec/second.
-// Supports combinations like "1h2m", "4h36m", "1y2mon3d".
+// Supports combinations like "1h2m", "4h36m", "1y2mon3d". The whole input must
+// be positive whole-number parts; anything else, or a total that overflows,
+// is an error.
 func ParseDuration(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return 0, fmt.Errorf("empty duration string")
 	}
-
-	matches := durationPattern.FindAllStringSubmatch(s, -1)
-	if len(matches) == 0 {
+	if !fullDurationPattern.MatchString(s) {
 		return 0, fmt.Errorf("unrecognised duration format: %q", s)
 	}
 
 	var total time.Duration
-
-	for _, match := range matches {
-		value, err := strconv.Atoi(match[1])
+	for _, match := range durationPattern.FindAllStringSubmatch(s, -1) {
+		value, err := strconv.ParseInt(match[1], 10, 64)
 		if err != nil {
-			return 0, fmt.Errorf("invalid number %q in duration", match[1])
+			return 0, fmt.Errorf("duration %q is too long", s)
 		}
 
 		unit := strings.ToLower(match[2])
-
+		var size time.Duration
 		switch {
 		case strings.HasPrefix(unit, "y"):
-			total += time.Duration(value) * 365 * 24 * time.Hour
+			size = 365 * 24 * time.Hour
 		case strings.HasPrefix(unit, "mo"):
-			total += time.Duration(value) * 30 * 24 * time.Hour
+			size = 30 * 24 * time.Hour
 		case strings.HasPrefix(unit, "d"):
-			total += time.Duration(value) * 24 * time.Hour
+			size = 24 * time.Hour
 		case strings.HasPrefix(unit, "h"):
-			total += time.Duration(value) * time.Hour
+			size = time.Hour
 		case strings.HasPrefix(unit, "m"):
-			total += time.Duration(value) * time.Minute
+			size = time.Minute
 		case strings.HasPrefix(unit, "s"):
-			total += time.Duration(value) * time.Second
+			size = time.Second
 		default:
 			return 0, fmt.Errorf("unrecognised unit %q in duration", unit)
 		}
+		if value > int64(math.MaxInt64-total)/int64(size) {
+			return 0, fmt.Errorf("duration %q is too long", s)
+		}
+		total += time.Duration(value) * size
 	}
 
 	if total == 0 {

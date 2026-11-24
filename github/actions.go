@@ -139,6 +139,7 @@ type ReleaseInfo struct {
 	PublishedAt time.Time
 	Body        string
 	HTMLURL     string
+	Prerelease  bool
 	Assets      []ReleaseAsset
 }
 
@@ -157,6 +158,8 @@ type ReleasesClient struct {
 	mu               sync.Mutex
 	cached           []*ReleaseInfo
 	fetchedAt        time.Time
+	latest           *ReleaseInfo
+	latestFetchedAt  time.Time
 	nightly          *ReleaseInfo
 	nightlyFetchedAt time.Time
 }
@@ -215,21 +218,11 @@ func (r *ReleasesClient) FetchReleases(ctx context.Context) ([]*ReleaseInfo, err
 
 	infos := make([]*ReleaseInfo, 0, len(releases))
 	for _, rel := range releases {
-		info := &ReleaseInfo{
-			TagName:     rel.GetTagName(),
-			PublishedAt: rel.GetPublishedAt().Time,
-			Body:        rel.GetBody(),
-			HTMLURL:     rel.GetHTMLURL(),
+		// A token with push access also lists unpublished drafts.
+		if rel.GetDraft() {
+			continue
 		}
-		for _, asset := range rel.Assets {
-			info.Assets = append(info.Assets, ReleaseAsset{
-				Name:          asset.GetName(),
-				DownloadURL:   asset.GetBrowserDownloadURL(),
-				Size:          asset.GetSize(),
-				DownloadCount: asset.GetDownloadCount(),
-			})
-		}
-		infos = append(infos, info)
+		infos = append(infos, releaseInfo(rel))
 	}
 
 	r.mu.Lock()
@@ -238,6 +231,20 @@ func (r *ReleasesClient) FetchReleases(ctx context.Context) ([]*ReleaseInfo, err
 	r.mu.Unlock()
 
 	return infos, nil
+}
+
+func releaseInfo(release *github.RepositoryRelease) *ReleaseInfo {
+	info := &ReleaseInfo{
+		TagName: release.GetTagName(), PublishedAt: release.GetPublishedAt().Time,
+		Body: release.GetBody(), HTMLURL: release.GetHTMLURL(), Prerelease: release.GetPrerelease(),
+	}
+	for _, asset := range release.Assets {
+		info.Assets = append(info.Assets, ReleaseAsset{
+			Name: asset.GetName(), DownloadURL: asset.GetBrowserDownloadURL(),
+			Size: asset.GetSize(), DownloadCount: asset.GetDownloadCount(),
+		})
+	}
+	return info
 }
 
 func publicRepositoryClient(ctx context.Context, client *github.Client, owner, repo string) (*github.Client, error) {
@@ -310,16 +317,12 @@ func shortSHA(sha string) string {
 }
 
 func (r *ReleasesClient) GetRelease(ctx context.Context, tag string) (*ReleaseInfo, error) {
+	if tag == "latest" || tag == "" {
+		return r.getLatestRelease(ctx)
+	}
 	releases, err := r.FetchReleases(ctx)
 	if err != nil {
 		return nil, err
-	}
-
-	if tag == "latest" || tag == "" {
-		if len(releases) == 0 {
-			return nil, nil
-		}
-		return releases[0], nil
 	}
 
 	for _, rel := range releases {
@@ -328,6 +331,53 @@ func (r *ReleasesClient) GetRelease(ctx context.Context, tag string) (*ReleaseIn
 		}
 	}
 	return nil, nil
+}
+
+func (r *ReleasesClient) getLatestRelease(ctx context.Context) (*ReleaseInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	if !r.latestFetchedAt.IsZero() && time.Since(r.latestFetchedAt) < 5*time.Minute {
+		var result *ReleaseInfo
+		if r.latest != nil {
+			result = cloneReleases([]*ReleaseInfo{r.latest})[0]
+		}
+		r.mu.Unlock()
+		return result, nil
+	}
+	r.mu.Unlock()
+	client, err := publicRepositoryClient(ctx, r.client, r.owner, r.repo)
+	if err != nil {
+		return nil, err
+	}
+	release, _, err := client.Repositories.GetLatestRelease(ctx, r.owner, r.repo)
+	if isForbiddenGitHubError(err) {
+		client, err = newPublicGitHubClient()
+		if err != nil {
+			return nil, err
+		}
+		release, _, err = client.Repositories.GetLatestRelease(ctx, r.owner, r.repo)
+	}
+	var responseError *github.ErrorResponse
+	missing := errors.As(err, &responseError) && responseError.Response != nil && responseError.Response.StatusCode == http.StatusNotFound
+	if err != nil && !missing {
+		return nil, fmt.Errorf("fetching latest release: %w", err)
+	}
+	var info *ReleaseInfo
+	if !missing {
+		if release == nil || release.GetDraft() || release.GetPrerelease() || release.GetTagName() == "" {
+			return nil, fmt.Errorf("latest stable release could not be verified")
+		}
+		info = releaseInfo(release)
+	}
+	r.mu.Lock()
+	r.latest, r.latestFetchedAt = info, time.Now()
+	if info != nil {
+		info = cloneReleases([]*ReleaseInfo{info})[0]
+	}
+	r.mu.Unlock()
+	return info, nil
 }
 
 // GetNightly resolves the rolling tag directly even when it is outside the release listing.
@@ -364,7 +414,7 @@ func (r *ReleasesClient) GetNightly(ctx context.Context) (*ReleaseInfo, error) {
 	if release.GetDraft() || release.GetTagName() != "nightly" || !release.GetPrerelease() {
 		return nil, fmt.Errorf("nightly tag is not a published prerelease")
 	}
-	info := &ReleaseInfo{TagName: release.GetTagName(), PublishedAt: release.GetPublishedAt().Time, HTMLURL: release.GetHTMLURL()}
+	info := &ReleaseInfo{TagName: release.GetTagName(), PublishedAt: release.GetPublishedAt().Time, HTMLURL: release.GetHTMLURL(), Prerelease: true}
 	for _, asset := range release.Assets {
 		info.Assets = append(info.Assets, ReleaseAsset{Name: asset.GetName(), DownloadURL: asset.GetBrowserDownloadURL(), Size: asset.GetSize(), DownloadCount: asset.GetDownloadCount()})
 	}

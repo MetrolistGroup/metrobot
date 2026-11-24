@@ -101,7 +101,7 @@ func newSupportDecisionTestBot(t *testing.T) (*Bot, *bot.Client, *supportTestDel
 	client.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: client.Rest.HTTPClient().Transport, target: server.URL}
 	cacheTestGuild(client, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: 12}, Roles: []discord.Role{{ID: 12, Name: "@everyone"}}}})
 	client.Caches.AddChannel(testChannel(t, map[string]any{"id": garminAppSupportID, "guild_id": "12", "name": "app-support"}))
-	b := &Bot{Config: &config.Config{DiscordGuildID: "12"}, DB: database, Notes: notes, Logger: zap.NewNop(), garminProcessor: cmd.NewGarminProcessor(), garminAISlots: make(chan struct{}, 3), garminAILastUsed: make(map[string]time.Time), garminAI: supportTestNoteAnswer("nightly", "Use the relevant nightly instructions.")}
+	b := &Bot{Config: testConfig(config.Config{DiscordGuildID: "12"}), DB: database, Notes: notes, Logger: zap.NewNop(), garminProcessor: cmd.NewGarminProcessor(), garminAISlots: make(chan struct{}, 3), garminAILastUsed: make(map[string]time.Time), garminAI: supportTestNoteAnswer("nightly", "Use the relevant nightly instructions.")}
 	return b, client, delivery
 }
 

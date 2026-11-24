@@ -3,6 +3,7 @@ package discord
 import (
 	"context"
 	"errors"
+	"github.com/MetrolistGroup/metrobot/config"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 
 func TestSupportRetryReservesReferenceAndAnswerRounds(t *testing.T) {
 	calls, checks := 0, 0
-	b := &Bot{}
+	b := &Bot{Config: testConfig(config.Config{})}
 	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		calls++
 		if calls <= 3 {
@@ -165,7 +166,7 @@ func TestPendingQuestionDeletionFollowsReferencedReply(t *testing.T) {
 }
 
 func TestLateReplyDoesNotInheritNewerQuestionSources(t *testing.T) {
-	b := &Bot{}
+	b := &Bot{Config: testConfig(config.Config{})}
 	older := supportTestMessage(20)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -188,7 +189,7 @@ func TestLateReplyDoesNotInheritNewerQuestionSources(t *testing.T) {
 }
 
 func TestPendingQuestionLineageIsBounded(t *testing.T) {
-	b := &Bot{}
+	b := &Bot{Config: testConfig(config.Config{})}
 	var messages []cmd.GarminAIMessage
 	for i := 0; i <= garminAIPendingSourceMax; i++ {
 		m := supportTestMessage(20 + i)

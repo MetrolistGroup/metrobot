@@ -62,7 +62,7 @@ func validConfig() Config {
 		DiscordToken:          "discord",
 		TelegramToken:         "telegram",
 		GitHubToken:           "github",
-		DiscordGuildID:        "guild",
+		DiscordGuildID:        "123",
 		TelegramChatID:        1,
 		PermaAdminDiscordIDs:  []string{"1"},
 		PermaAdminTelegramIDs: []string{"1"},

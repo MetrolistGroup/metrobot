@@ -2,6 +2,7 @@ package discord
 
 import (
 	"context"
+	"github.com/MetrolistGroup/metrobot/config"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -48,7 +49,7 @@ func TestRunGarminAILoadsLivePersistentBasePrompt(t *testing.T) {
 		Content: "garmin, metrolist playback keeps stopping", Author: discord.User{ID: snowflakeID("100000000000000056"), Username: "speaker"},
 	}
 	messages := []cmd.GarminAIMessage{{Role: "user", Content: "metrolist playback keeps stopping"}}
-	b := &Bot{DB: database, garminMemory: memory}
+	b := &Bot{Config: testConfig(config.Config{}), DB: database, garminMemory: memory}
 	var requests []cmd.GarminAIRequest
 	currentTime := regexp.MustCompile(`"current_utc_time":"[^"]+"|Request time \(UTC\): [^\n]+`)
 	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
@@ -114,9 +115,9 @@ func TestGarminBasePromptIsInstanceScopedAndNilSafe(t *testing.T) {
 		bot  *Bot
 		base string
 	}{
-		{&Bot{}, cmd.GarminSystemPrompt()},
-		{&Bot{DB: otherDB}, cmd.GarminSystemPrompt()},
-		{&Bot{DB: database}, "private instance base"},
+		{&Bot{Config: testConfig(config.Config{})}, cmd.GarminSystemPrompt()},
+		{&Bot{Config: testConfig(config.Config{}), DB: otherDB}, cmd.GarminSystemPrompt()},
+		{&Bot{Config: testConfig(config.Config{}), DB: database}, "private instance base"},
 	} {
 		got, err := test.bot.garminSystemPromptWithMemory("memory data", false)
 		want := test.base + "\n\nVerified project reference"
@@ -125,10 +126,10 @@ func TestGarminBasePromptIsInstanceScopedAndNilSafe(t *testing.T) {
 			t.Fatalf("composition = %q, %v", got, err)
 		}
 	}
-	if got, err := (&Bot{DB: database}).garminSystemPromptWithMemory("memory data", true); err != nil || !strings.HasPrefix(got, cmd.GarminGeneralSystemPrompt()) {
+	if got, err := (&Bot{Config: testConfig(config.Config{}), DB: database}).garminSystemPromptWithMemory("memory data", true); err != nil || !strings.HasPrefix(got, cmd.GarminGeneralSystemPrompt()) {
 		t.Fatalf("#general composition = %q, %v", got, err)
 	}
-	generalBot := &Bot{garminAI: garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+	generalBot := &Bot{Config: testConfig(config.Config{}), garminAI: garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		if !strings.HasPrefix(request.SystemPrompt, cmd.GarminGeneralSystemPrompt()) {
 			t.Fatal("#general did not use its short prompt")
 		}
@@ -139,7 +140,7 @@ func TestGarminBasePromptIsInstanceScopedAndNilSafe(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Minimal fixtures can run with neither a DB nor shared memory.
-	b := &Bot{garminAI: garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+	b := &Bot{Config: testConfig(config.Config{}), garminAI: garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		if !strings.HasPrefix(request.SystemPrompt, cmd.GarminSystemPrompt()) {
 			t.Fatal("nil DB/memory fixture lost default prompt")
 		}
@@ -159,7 +160,7 @@ func TestGarminPromptReadErrorStopsModelRequest(t *testing.T) {
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}
-	b := &Bot{DB: database, garminAI: garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+	b := &Bot{Config: testConfig(config.Config{}), DB: database, garminAI: garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		t.Fatal("model called after prompt read failure")
 		return nil, nil
 	})}
@@ -178,7 +179,7 @@ func TestBasePromptOverrideDoesNotChangeSupportTriagePrompt(t *testing.T) {
 	if err := database.SetGarminSystemPrompt("base override must never enter secondary requests"); err != nil {
 		t.Fatal(err)
 	}
-	b := &Bot{DB: database}
+	b := &Bot{Config: testConfig(config.Config{}), DB: database}
 	var prompts []string
 	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		prompts = append(prompts, request.SystemPrompt)
@@ -241,7 +242,7 @@ func TestGarminSharedMemoryKeepsStaticPromptPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := &Bot{garminMemory: memory}
+	b := &Bot{Config: testConfig(config.Config{}), garminMemory: memory}
 	var prefix string
 	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		if strings.Contains(request.SystemPrompt, "volatile memory") || !strings.Contains(request.Context, "volatile memory") {

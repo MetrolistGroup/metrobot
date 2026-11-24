@@ -12,7 +12,43 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Paid live model tests skip unless these point at private configs.
+      METROBOT_DECISIONS_LIVE_CONFIG: ""
+      METROBOT_SUPPORT_LIVE_CONFIG: ""
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Note editor checks
+        working-directory: tools/note-editor
+        run: |
+          bun install --frozen-lockfile
+          bun test
+          bun build ./app.ts --target=browser --minify --outfile="$RUNNER_TEMP/note-editor-app.js"
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -3,10 +3,32 @@ package cmd
 import (
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 	"text/scanner"
 	"unicode/utf8"
 )
+
+// maxMathBits bounds every intermediate numerator and denominator. The final
+// answer is capped at 4096 characters, roughly 13,600 bits, so larger values
+// can never be printed anyway.
+const maxMathBits = 16384
+
+var errMathTooLarge = fmt.Errorf("result is too large")
+
+func mathSize(value *big.Rat) int {
+	return max(value.Num().BitLen(), value.Denom().BitLen())
+}
+
+// checkMathOperands rejects a binary operation whose result could exceed the
+// bit budget. Sums, products and quotients of a/b and c/d need at most
+// size(a/b)+size(c/d)+1 bits.
+func checkMathOperands(left, right *big.Rat) error {
+	if mathSize(left)+mathSize(right)+1 > maxMathBits {
+		return errMathTooLarge
+	}
+	return nil
+}
 
 var superscriptDigits = map[rune]rune{
 	'⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4',
@@ -31,7 +53,7 @@ func Calculate(expression string) (string, error) {
 	}
 	answer := result.RatString()
 	if len(answer) > 4096 {
-		return "", fmt.Errorf("result is too large")
+		return "", errMathTooLarge
 	}
 	return answer, nil
 }
@@ -107,6 +129,9 @@ func (p *mathParser) parseExpression() (*big.Rat, error) {
 		p.next()
 		var right *big.Rat
 		right, err = p.parseTerm()
+		if err == nil {
+			err = checkMathOperands(left, right)
+		}
 		if err == nil && operator == '+' {
 			left.Add(left, right)
 		} else if err == nil {
@@ -123,6 +148,9 @@ func (p *mathParser) parseTerm() (*big.Rat, error) {
 		p.next()
 		var right *big.Rat
 		right, err = p.parseUnary()
+		if err == nil {
+			err = checkMathOperands(left, right)
+		}
 		if err != nil {
 			break
 		}
@@ -174,6 +202,9 @@ func (p *mathParser) parsePrimary() (*big.Rat, error) {
 	if p.token == scanner.Int || p.token == scanner.Float {
 		literal := p.literal
 		p.next()
+		if err := checkMathLiteral(literal); err != nil {
+			return nil, err
+		}
 		value, ok := new(big.Rat).SetString(literal)
 		if !ok {
 			return nil, fmt.Errorf("invalid number %q", literal)
@@ -210,8 +241,29 @@ func raiseMathPower(base, exponent *big.Rat) (*big.Rat, error) {
 		base = new(big.Rat).Inv(base)
 		power = -power
 	}
+	if int64(mathSize(base))*power > maxMathBits {
+		return nil, errMathTooLarge
+	}
 	exponentValue := big.NewInt(power)
 	numerator := new(big.Int).Exp(new(big.Int).Set(base.Num()), exponentValue, nil)
 	denominator := new(big.Int).Exp(new(big.Int).Set(base.Denom()), exponentValue, nil)
 	return new(big.Rat).SetFrac(numerator, denominator), nil
+}
+
+// checkMathLiteral rejects scientific notation whose exponent would make
+// big.Rat.SetString compute a huge power of ten or two.
+func checkMathLiteral(literal string) error {
+	markers, limit := "eE", 4096
+	if strings.HasPrefix(literal, "0x") || strings.HasPrefix(literal, "0X") {
+		markers, limit = "pP", maxMathBits
+	}
+	index := strings.IndexAny(literal, markers)
+	if index < 0 {
+		return nil
+	}
+	exponent, err := strconv.Atoi(literal[index+1:])
+	if err != nil || exponent < -limit || exponent > limit {
+		return errMathTooLarge
+	}
+	return nil
 }

@@ -36,7 +36,6 @@ type Bot struct {
 	Actions    *cmd.ActionsHandler
 	Moderation *cmd.ModerationHandler
 	Warn       *cmd.WarnHandler
-	Admin      *cmd.AdminHandler
 	Ping       *cmd.PingHandler
 	Case       *cmd.CaseHandler
 
@@ -88,10 +87,11 @@ type Bot struct {
 
 func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 	notes *cmd.NotesHandler, version *cmd.VersionHandler, actions *cmd.ActionsHandler,
-	moderation *cmd.ModerationHandler, warn *cmd.WarnHandler, admin *cmd.AdminHandler, ping *cmd.PingHandler,
+	moderation *cmd.ModerationHandler, warn *cmd.WarnHandler, ping *cmd.PingHandler,
 	cases *cmd.CaseHandler,
 ) (*Bot, error) {
-	if snowflakeID(cfg.DiscordGuildID) == 0 {
+	cfg.ApplyDefaults()
+	if snowflakeID(cfg.Discord.GuildID) == 0 {
 		return nil, fmt.Errorf("invalid Discord guild ID")
 	}
 	lifecycle, cancelLifecycle := context.WithCancel(context.Background())
@@ -104,7 +104,6 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		Actions:              actions,
 		Moderation:           moderation,
 		Warn:                 warn,
-		Admin:                admin,
 		Ping:                 ping,
 		Case:                 cases,
 		gsmarena:             gsmarena.New(database),
@@ -123,11 +122,15 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 		lifecycle:            lifecycle,
 		cancelLifecycle:      cancelLifecycle,
 	}
-	session, err := disgo.New(cfg.DiscordToken,
+	session, err := disgo.New(cfg.Discord.Token,
 		bot.WithEventManagerConfigOpts(bot.WithGatewayHandlers(b.gatewayHandlers())),
 		bot.WithGatewayConfigOpts(
 			gateway.WithIntents(gateway.IntentGuilds|gateway.IntentGuildMessages|gateway.IntentGuildMembers|gateway.IntentGuildModeration|gateway.IntentGuildMessageReactions|gateway.IntentMessageContent),
 			gateway.WithEnableRawEvents(true),
+			gateway.WithPresenceOpts(
+				gateway.WithOnlineStatus(discord.OnlineStatusOnline),
+				gateway.WithCustomActivity("Keeping Metrolist on track 🎵"),
+			),
 		),
 		// Message content is kept only in the bounded, filtered audit cache.
 		bot.WithCacheConfigOpts(cache.WithCaches(cache.FlagGuilds|cache.FlagChannels|cache.FlagRoles|cache.FlagMembers|cache.FlagEmojis)),
@@ -225,7 +228,6 @@ func (b *Bot) Stop() {
 }
 
 func (b *Bot) registerCommands() error {
-	manageRolesPermission := discord.PermissionManageRoles
 	commands := []discord.ApplicationCommandCreate{discord.SlashCommandCreate{
 		Name:        "help",
 		Description: "Show available commands",
@@ -261,7 +263,7 @@ func (b *Bot) registerCommands() error {
 		Options:     compareOptions("CPU or GPU name"),
 	}, discord.SlashCommandCreate{
 		Name:        "ctx-reset",
-		Description: "Forget Garmin context before this point in this channel (admin only)",
+		Description: "Forget Garmin context before this point in this channel (Manage Messages)",
 	}, discord.SlashCommandCreate{
 		Name:        "quote",
 		Description: "Turn the previous message into a quote image",
@@ -296,13 +298,13 @@ func (b *Bot) registerCommands() error {
 			Required:    false,
 		}, discord.ApplicationCommandOptionBool{
 			Name:        "stay",
-			Description: "Keep message permanently (admin only)",
+			Description: "Keep message permanently (Manage Messages)",
 			Required:    false,
 		},
 		},
 	}, discord.SlashCommandCreate{
 		Name:        "addnote",
-		Description: "Add a new note (admin only)",
+		Description: "Add a new note (Manage Server)",
 		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionString{
 			Name:        "name",
 			Description: "Note name",
@@ -320,7 +322,7 @@ func (b *Bot) registerCommands() error {
 		},
 	}, discord.SlashCommandCreate{
 		Name:        "editnote",
-		Description: "Edit an existing note (admin only)",
+		Description: "Edit an existing note (Manage Server)",
 		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionString{
 			Name:        "name",
 			Description: "Note name",
@@ -338,7 +340,7 @@ func (b *Bot) registerCommands() error {
 		},
 	}, discord.SlashCommandCreate{
 		Name:        "renamenote",
-		Description: "Rename an existing note (admin only)",
+		Description: "Rename an existing note (Manage Server)",
 		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionString{
 			Name:        "name",
 			Description: "Current note name",
@@ -351,7 +353,7 @@ func (b *Bot) registerCommands() error {
 		},
 	}, discord.SlashCommandCreate{
 		Name:        "delnote",
-		Description: "Delete a note (admin only)",
+		Description: "Delete a note (Manage Server)",
 		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionString{
 			Name:        "name",
 			Description: "Note name",
@@ -367,7 +369,7 @@ func (b *Bot) registerCommands() error {
 			Required:    false,
 		}, discord.ApplicationCommandOptionBool{
 			Name:        "stay",
-			Description: "Keep message permanently (admin only)",
+			Description: "Keep message permanently (Manage Messages)",
 			Required:    false,
 		},
 		},
@@ -379,13 +381,13 @@ func (b *Bot) registerCommands() error {
 		Description: "Show Metrolist nightly downloads",
 		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionBool{
 			Name:        "stay",
-			Description: "Keep message permanently (admin only)",
+			Description: "Keep message permanently (Manage Messages)",
 			Required:    false,
 		},
 		},
 	}, discord.SlashCommandCreate{
 		Name:        "ban",
-		Description: "Permanently ban a user (admin/moderator)",
+		Description: "Permanently ban a user (Ban Members)",
 		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
 			Name:        "user",
 			Description: "User to ban",
@@ -398,7 +400,7 @@ func (b *Bot) registerCommands() error {
 		},
 	}, discord.SlashCommandCreate{
 		Name:        "dban",
-		Description: "Ban a user and delete their messages (admin only)",
+		Description: "Ban a user and delete their messages (Ban Members)",
 		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
 			Name:        "user",
 			Description: "User to ban",
@@ -411,7 +413,7 @@ func (b *Bot) registerCommands() error {
 		},
 	}, discord.SlashCommandCreate{
 		Name:        "tban",
-		Description: "Temporarily ban a user (admin only)",
+		Description: "Temporarily ban a user (Ban Members)",
 		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
 			Name:        "user",
 			Description: "User to ban",
@@ -428,7 +430,7 @@ func (b *Bot) registerCommands() error {
 		},
 	}, discord.SlashCommandCreate{
 		Name:        "sban",
-		Description: "Softban a user (admin/moderator)",
+		Description: "Softban a user (Ban Members)",
 		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
 			Name:        "user",
 			Description: "User to softban",
@@ -441,7 +443,7 @@ func (b *Bot) registerCommands() error {
 		},
 	}, discord.SlashCommandCreate{
 		Name:        "kick",
-		Description: "Kick a user (admin/moderator)",
+		Description: "Kick a user (Kick Members)",
 		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
 			Name:        "user",
 			Description: "User to kick",
@@ -454,7 +456,7 @@ func (b *Bot) registerCommands() error {
 		},
 	}, discord.SlashCommandCreate{
 		Name:        "mute",
-		Description: "Temporarily mute a user (admin/moderator)",
+		Description: "Temporarily mute a user (Moderate Members)",
 		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
 			Name:        "user",
 			Description: "User to mute",
@@ -471,7 +473,7 @@ func (b *Bot) registerCommands() error {
 		},
 	}, discord.SlashCommandCreate{
 		Name:        "timeout",
-		Description: "Timeout a user (admin/moderator)",
+		Description: "Timeout a user (Moderate Members)",
 		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
 			Name:        "user",
 			Description: "User to timeout",
@@ -488,7 +490,7 @@ func (b *Bot) registerCommands() error {
 		},
 	}, discord.SlashCommandCreate{
 		Name:        "warn",
-		Description: "Warn a user (admin only)",
+		Description: "Warn a user (Moderate Members)",
 		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
 			Name:        "user",
 			Description: "User to warn",
@@ -510,7 +512,7 @@ func (b *Bot) registerCommands() error {
 		},
 	}, discord.SlashCommandCreate{
 		Name:        "unwarn",
-		Description: "Remove a warning from a user (admin only)",
+		Description: "Remove a warning from a user (Moderate Members)",
 		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
 			Name:        "user",
 			Description: "User to unwarn",
@@ -524,7 +526,7 @@ func (b *Bot) registerCommands() error {
 		},
 	}, discord.SlashCommandCreate{
 		Name:        "dehoist",
-		Description: "Dehoist a user or rerun dehoisting across the server (admin only)",
+		Description: "Dehoist a user or rerun dehoisting across the server (Manage Nicknames)",
 		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
 			Name:        "user",
 			Description: "User to dehoist (omit to rerun all untouched server names)",
@@ -537,7 +539,7 @@ func (b *Bot) registerCommands() error {
 		},
 	}, discord.SlashCommandCreate{
 		Name:        "approvenick",
-		Description: "Allow a user's next nickname change without dehoisting (admin only)",
+		Description: "Allow a user's next nickname change without dehoisting (Manage Nicknames)",
 		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
 			Name:        "user",
 			Description: "User whose next nickname change should be allowed",
@@ -545,9 +547,8 @@ func (b *Bot) registerCommands() error {
 		},
 		},
 	}, discord.SlashCommandCreate{
-		Name:                     "bulkrole",
-		Description:              "Add one role to multiple users",
-		DefaultMemberPermissions: omit.New(&manageRolesPermission),
+		Name:        "bulkrole",
+		Description: "Add one role to multiple users",
 		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionRole{
 			Name:        "role",
 			Description: "Role to add",
@@ -559,26 +560,8 @@ func (b *Bot) registerCommands() error {
 		},
 		},
 	}, discord.SlashCommandCreate{
-		Name:        "addadmin",
-		Description: "Add a bot admin (permaadmin only)",
-		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
-			Name:        "user",
-			Description: "User to make admin",
-			Required:    true,
-		},
-		},
-	}, discord.SlashCommandCreate{
-		Name:        "removeadmin",
-		Description: "Remove a bot admin (permaadmin only)",
-		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionUser{
-			Name:        "user",
-			Description: "User to remove as admin",
-			Required:    true,
-		},
-		},
-	}, discord.SlashCommandCreate{
 		Name:        "memory",
-		Description: "Manage Metrobot AI memory",
+		Description: "Manage Metrobot AI memory (Manage Server)",
 		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionSubCommand{
 			Name:        "view",
 			Description: "View Metrobot's memory",
@@ -610,7 +593,7 @@ func (b *Bot) registerCommands() error {
 		Description: "Check latency to various services",
 	}, discord.SlashCommandCreate{
 		Name:        "purge",
-		Description: "Delete recent messages from the current channel (admin only)",
+		Description: "Delete recent messages from the current channel (Manage Messages)",
 		Options: []discord.ApplicationCommandOption{discord.ApplicationCommandOptionInt{
 			Name:        "count",
 			Description: "Number of messages to delete (alternative to replying)",
@@ -621,11 +604,27 @@ func (b *Bot) registerCommands() error {
 		},
 	}, discord.SlashCommandCreate{
 		Name:        "scanreactions",
-		Description: "Scan the last 100 channel messages for prohibited reactions (admin only)",
+		Description: "Scan the last 100 channel messages for prohibited reactions (Manage Messages)",
 	}, discord.SlashCommandCreate{
 		Name:        "refreshstarboard",
-		Description: "Refresh all starboard entries by rechecking star counts (admin only)",
+		Description: "Refresh all starboard entries by rechecking star counts (Manage Server)",
 	},
+	}
+
+	for index, command := range commands {
+		slash, ok := command.(discord.SlashCommandCreate)
+		if !ok || slash.Name == "notes" {
+			continue
+		}
+		action := slash.Name
+		switch action {
+		case "addnote", "editnote", "renamenote", "delnote":
+			action = "notes"
+		}
+		if permission, ok := discordActionPermissions[action]; ok {
+			slash.DefaultMemberPermissions = omit.New(&permission)
+			commands[index] = slash
+		}
 	}
 
 	if _, err := b.Client.Rest.SetGuildCommands(b.Client.ApplicationID, snowflakeID(b.Config.DiscordGuildID), commands); err != nil {
@@ -653,8 +652,13 @@ func (d *DiscordBanner) BanAndDeleteMessages(userID, reason string) error {
 	return d.session.Rest.AddBan(snowflakeID(d.guildID), snowflakeID(userID), 7*24*time.Hour, rest.WithReason(reason))
 }
 
+// Unban treats an already-lifted ban as done so expiry does not retry forever.
 func (d *DiscordBanner) Unban(userID string) error {
-	return d.session.Rest.DeleteBan(snowflakeID(d.guildID), snowflakeID(userID))
+	err := d.session.Rest.DeleteBan(snowflakeID(d.guildID), snowflakeID(userID))
+	if rest.IsJSONErrorCode(err, rest.JSONErrorCodeUnknownBan) {
+		return nil
+	}
+	return err
 }
 
 func (d *DiscordBanner) Kick(userID, reason string) error {
@@ -761,8 +765,14 @@ func (d *DiscordBanner) Restrict(userID string, untilDate int64) error {
 	return updateTimeout(d.session, snowflakeID(d.guildID), snowflakeID(userID), &timeoutUntil)
 }
 
+// Unrestrict treats a member who left as done; their timeout cannot outlive
+// them in a way the bot can lift, so expiry does not retry forever.
 func (d *DiscordBanner) Unrestrict(userID string) error {
-	return updateTimeout(d.session, snowflakeID(d.guildID), snowflakeID(userID), nil)
+	err := updateTimeout(d.session, snowflakeID(d.guildID), snowflakeID(userID), nil)
+	if rest.IsJSONErrorCode(err, rest.JSONErrorCodeUnknownMember) {
+		return nil
+	}
+	return err
 }
 
 func (d *DiscordBanner) SetNickname(userID, nickname string) error {
@@ -854,11 +864,16 @@ func (d *DiscordBanner) GetAllMembers() ([]cmd.MemberInfo, error) {
 }
 
 func (b *Bot) newBanner() *DiscordBanner {
-	return &DiscordBanner{
-		session: b.Client,
-		guildID: b.Config.DiscordGuildID,
-		logger:  b.Logger,
+	return b.bannerFor(b.Client)
+}
+
+// bannerFor binds moderation and permission checks to the event's client.
+func (b *Bot) bannerFor(s *bot.Client) *DiscordBanner {
+	guildID := ""
+	if b.Config != nil {
+		guildID = b.Config.DiscordGuildID
 	}
+	return &DiscordBanner{session: s, guildID: guildID, logger: b.Logger}
 }
 
 // NewBanner creates a new DiscordBanner for external use

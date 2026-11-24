@@ -52,7 +52,7 @@ func TestOCRValidationBeforeProviderCall(t *testing.T) {
 				"guild_id":"300","channel":{"id":"200","type":0},"member":{"user":{"id":"500"}},
 				"data":{"name":"OCR Translate","type":3,"target_id":"50","resolved":{"messages":{"50":`+string(encoded)+`}}}
 			}`)
-			b := &Bot{Config: &config.Config{DiscordGuildID: "300"}, Logger: zap.NewNop()}
+			b := &Bot{Config: testConfig(config.Config{DiscordGuildID: "300"}), Logger: zap.NewNop()}
 			b.onInteractionCreate(client, interaction)
 			data, err := json.Marshal(response.Data)
 			if err != nil {

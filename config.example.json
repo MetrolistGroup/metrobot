@@ -1,22 +1,75 @@
 {
-  "discord_token": "MTQ...",
-  "telegram_token": "1234:ABCD",
   "github_token": "github_pat",
-  "openrouter_api_keys": ["sk-or-example-1", "sk-or-example-2"],
+  "openrouter_api_keys": [
+    "sk-or-example-1",
+    "sk-or-example-2"
+  ],
   "openrouter_model": "z-ai/glm-5.3-flash:floor",
   "openrouter_decision_model": "perplexity/pplx-decider-flash-v1.2",
-  "firecrawl_api_keys": ["fc-example-1", "fc-example-2"],
-  "wolfram_app_ids": ["", ""],
+  "firecrawl_api_keys": [
+    "fc-example-1",
+    "fc-example-2"
+  ],
+  "wolfram_app_ids": [],
   "garmin_memory_file": "garmin-memory.md",
-  "discord_guild_id": "123",
-  "telegram_chat_id": -100,
-  "permaadmin_discord_ids": ["123"],
-  "permaadmin_telegram_ids": ["123"],
   "github_owner": "MetrolistGroup",
   "github_repo": "Metrolist",
   "log_file": "bot.log",
-  "discord_log_channel": "1234567890123456789",
-  "starboard_channel_id": "",
-  "starboard_threshold": 3,
-  "starboard_emoji": "⭐"
+  "discord": {
+    "token": "MTQ...",
+    "guild_id": "123",
+    "logging": {
+      "case_channel_id": "",
+      "server_channel_id": "1417290212278538310",
+      "message_channel_id": "1417289373124132864",
+      "reaction_channel_id": "1547010470332989571"
+    },
+    "moderation": {
+      "blocked_guild_id": "1469982893056200819",
+      "prohibited_reactions": {
+        "🇮🇱": "using prohibited :flag_il: reaction",
+        "✡️": "using prohibited :star_of_david: reaction",
+        "✡": "using prohibited :star_of_david: reaction"
+      }
+    },
+    "welcome": {
+      "role_id": "1528525769570127872",
+      "channel_id": "1528531338196418683",
+      "note": "donorwelcome"
+    },
+    "ai": {
+      "general_channel_id": "1398083750616891465",
+      "bots_channel_id": "1423657766622593104",
+      "support_channel_id": "1400780694979870732",
+      "chat_thread_id": "1523126462306320415",
+      "readable_channels": {
+        "coolchannel": "1468369310215831552",
+        "sneak-peeks": "1533978905344610385",
+        "polls": "1462860353204654111",
+        "minky": "1529998926445285428"
+      },
+      "channel_descriptions": {
+        "1468369310215831552": "staff random posts and shitposts; regular users cannot post here",
+        "1533978905344610385": "staff previews of Metrolist KMP and related projects",
+        "1462860353204654111": "staff polls users about app designs and possible features",
+        "1529998926445285428": "pictures of a cat named Minky"
+      }
+    },
+    "starboard": {
+      "channel_id": "",
+      "threshold": 3,
+      "emoji": "⭐",
+      "sob_emoji": "😭",
+      "ignored_category_ids": [
+        "1441100425595195442",
+        "1417289207944183939",
+        "1471523726947254272",
+        "1462269835756175462"
+      ]
+    }
+  },
+  "telegram": {
+    "token": "1234:ABCD",
+    "chat_id": -100
+  }
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/disgoorg/disgo"
 	"github.com/disgoorg/disgo/bot"
@@ -27,9 +28,12 @@ func newTestClient(t *testing.T, opts ...bot.ConfigOpt) (*bot.Client, error) {
 	if err == nil {
 		initialREST := client.Rest
 		t.Cleanup(func() {
-			client.Close(context.Background())
+			// Reply goroutines can still hold REST buckets when cleanup begins.
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			client.Close(ctx)
 			if client.Rest != initialREST {
-				initialREST.Close(context.Background())
+				initialREST.Close(ctx)
 			}
 		})
 	}

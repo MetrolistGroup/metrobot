@@ -2,6 +2,7 @@ package discord
 
 import (
 	"context"
+	"github.com/MetrolistGroup/metrobot/config"
 	"strings"
 	"testing"
 
@@ -11,7 +12,7 @@ import (
 func TestSupportNamedDefectCannotPassHighGrounding(t *testing.T) {
 	for _, problem := range []string{"none", "needs_research", "off_request", "unsafe", "unsupported", "wrong_scope"} {
 		t.Run(problem, func(t *testing.T) {
-			b := &Bot{garminDecisions: supportDecisionTestFunc(func(context.Context, cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+			b := &Bot{Config: testConfig(config.Config{}), garminDecisions: supportDecisionTestFunc(func(context.Context, cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
 				response := supportNoulDecision("grounded", .99)
 				response.Answers["problem"] = cmd.DecisionAnswer{Type: "choice", Choice: problem}
 				return response, nil

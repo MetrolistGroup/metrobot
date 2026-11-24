@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf16"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/util"
@@ -14,7 +16,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var chatModPattern = regexp.MustCompile(`(?i)^!(ban|dban|tban|sban|mute|warn)\s*(.*)$`)
+var chatModPattern = regexp.MustCompile(`(?i)^!(ban|dban|tban|sban|mute|warn)(?:\s+(.*))?$`)
 var telegramBoldPattern = regexp.MustCompile(`\*\*([^*\n][^\n]*?)\*\*`)
 var telegramInlineCodePattern = regexp.MustCompile("`([^`\\n]+)`")
 var telegramMarkdownLinkPattern = regexp.MustCompile(`\[([^\]\n]+)\]\(<?(https?://[^>\s)]+)>?\)`)
@@ -25,6 +27,9 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	callerID := telegramSenderID(msg)
 
 	if msg.IsCommand() {
+		if _, username, directed := strings.Cut(msg.CommandWithAt(), "@"); directed && !strings.EqualFold(username, b.API.Self.UserName) {
+			return
+		}
 		b.handleCommand(msg, callerID)
 		return
 	}
@@ -62,7 +67,7 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 
 	args := strings.TrimSpace(matches[2])
 
-	if !b.DB.IsAdmin("telegram", callerID, b.Config) {
+	if !b.hasNativeRight(callerID, canRestrictMembers) {
 		return
 	}
 
@@ -105,22 +110,22 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		return
 	}
 
-	if b.DB.IsAdmin("telegram", targetID, b.Config) {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "I will not take action against an admin.", "", false, b.Logger)
-		return
-	}
-
-	// Execute the command directly
-	b.executePrefixCommand(msg.Chat.ID, telegramSenderID(msg), action, commandArgs, targetID)
+	// The shared handler checks the caller's and target's current group status.
+	b.executePrefixCommand(msg.Chat.ID, callerID, action, commandArgs, targetID)
 }
 
 func (b *Bot) handleCommand(msg *tgbotapi.Message, callerID string) {
 	command := msg.Command()
 	args := msg.CommandArguments()
-	stay := b.DB.IsAdmin("telegram", callerID, b.Config) && strings.Contains(args, " stay")
+	stay := false
+	switch command {
+	case "notes", "version", "latest", "actions":
+		stay = (args == "stay" || strings.HasSuffix(args, " stay")) && b.isGroupAdmin(callerID)
+	case "note":
+		stay = strings.HasSuffix(args, " stay") && b.isGroupAdmin(callerID)
+	}
 	if stay {
-		args = strings.Replace(args, " stay", "", 1)
-		args = strings.TrimSpace(args)
+		args = strings.TrimSpace(strings.TrimSuffix(args, "stay"))
 	}
 
 	b.Logger.Info("command",
@@ -170,10 +175,6 @@ func (b *Bot) handleCommand(msg *tgbotapi.Message, callerID string) {
 		b.tgHandleUnwarn(msg, args, callerID)
 	case "dehoist":
 		b.tgHandleDehoist(msg, args, callerID)
-	case "addadmin":
-		b.tgHandleAddAdmin(msg, args, callerID)
-	case "removeadmin":
-		b.tgHandleRemoveAdmin(msg, args, callerID)
 	case "ping":
 		b.tgHandlePing(msg)
 	}
@@ -185,10 +186,11 @@ func (b *Bot) tgHandleHelp(msg *tgbotapi.Message) {
 <b>Notes:</b>
 • /notes - List all available notes
 • /note - Show a specific note
-• /addnote name | short description | content - Add a note (admin only)
-• /editnote name | short description | content - Edit a note (admin only)
-• /renamenote old_name new_name - Rename a note (admin only)
-• /delnote - Delete a note (admin only)
+• /addnote name | short description | content - Add a note
+• /editnote name | short description | content - Edit a note
+• /renamenote old_name new_name - Rename a note
+• /delnote - Delete a note
+Managing notes needs the Change group info permission.
 
 <b>Bot info:</b>
 • /version - Show release info
@@ -196,21 +198,19 @@ func (b *Bot) tgHandleHelp(msg *tgbotapi.Message) {
 • /actions - Metrolist nightly downloads
 • /ping - Check latency to services
 
-<b>Moderation (admin only):</b>
+<b>Moderation (needs the Ban users permission):</b>
 • /ban - Permanently ban a user
 • /dban - Ban and delete messages
 • /tban - Temporarily ban a user
 • /sban - Softban a user
 • /mute - Mute a user
 • /warn - Warn a user
-• /warnings - Show warnings for a user
-• /warns - Show warnings (alias)
 • /unwarn - Remove a warning from a user
 • /dehoist - Remove hoisting characters from name
 
-<b>Admin management (permaadmin only):</b>
-• /addadmin - Add a bot admin
-• /removeadmin - Remove a bot admin
+<b>Warnings (anyone):</b>
+• /warnings - Show warnings for a user
+• /warns - Show warnings (alias)
 
 <b>Prefix commands:</b>
 You can also use !<code>action</code> [user] [args] for moderation.
@@ -239,8 +239,8 @@ func (b *Bot) tgHandleNote(msg *tgbotapi.Message, args string, stay bool) {
 }
 
 func (b *Bot) tgHandleAddNote(msg *tgbotapi.Message, args string, callerID string) {
-	if !b.DB.IsAdmin("telegram", callerID, b.Config) {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Only admins can add notes.", "", false, b.Logger)
+	if !b.hasNativeRight(callerID, canChangeInfo) {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "You need the Change group info permission to add notes.", "", false, b.Logger)
 		return
 	}
 	name, shortDesc, content, ok := parseTelegramNoteArgs(args)
@@ -256,8 +256,8 @@ func (b *Bot) tgHandleAddNote(msg *tgbotapi.Message, args string, callerID strin
 }
 
 func (b *Bot) tgHandleEditNote(msg *tgbotapi.Message, args string, callerID string) {
-	if !b.DB.IsAdmin("telegram", callerID, b.Config) {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Only admins can edit notes.", "", false, b.Logger)
+	if !b.hasNativeRight(callerID, canChangeInfo) {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "You need the Change group info permission to edit notes.", "", false, b.Logger)
 		return
 	}
 	name, shortDesc, content, ok := parseTelegramNoteArgs(args)
@@ -281,8 +281,8 @@ func parseTelegramNoteArgs(args string) (name, shortDesc, content string, ok boo
 }
 
 func (b *Bot) tgHandleRenameNote(msg *tgbotapi.Message, args string, callerID string) {
-	if !b.DB.IsAdmin("telegram", callerID, b.Config) {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Only admins can rename notes.", "", false, b.Logger)
+	if !b.hasNativeRight(callerID, canChangeInfo) {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "You need the Change group info permission to rename notes.", "", false, b.Logger)
 		return
 	}
 	parts := strings.Fields(args)
@@ -298,8 +298,8 @@ func (b *Bot) tgHandleRenameNote(msg *tgbotapi.Message, args string, callerID st
 }
 
 func (b *Bot) tgHandleDelNote(msg *tgbotapi.Message, args string, callerID string) {
-	if !b.DB.IsAdmin("telegram", callerID, b.Config) {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Only admins can delete notes.", "", false, b.Logger)
+	if !b.hasNativeRight(callerID, canChangeInfo) {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "You need the Change group info permission to delete notes.", "", false, b.Logger)
 		return
 	}
 	name := strings.TrimSpace(args)
@@ -346,8 +346,8 @@ func (b *Bot) tgHandleActions(msg *tgbotapi.Message, stay bool) {
 }
 
 func (b *Bot) tgHandleBan(msg *tgbotapi.Message, args string, callerID string) {
-	if !b.DB.IsAdmin("telegram", callerID, b.Config) {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "You don't have ban permissions.", "", false, b.Logger)
+	if !b.hasNativeRight(callerID, canRestrictMembers) {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, noRestrictRights, "", false, b.Logger)
 		return
 	}
 	parts := strings.Fields(args)
@@ -377,17 +377,18 @@ func (b *Bot) tgHandleBan(msg *tgbotapi.Message, args string, callerID string) {
 		return
 	}
 	banner := b.newBanner()
-	resp, _, err := b.Moderation.Ban(banner, callerID, targetID, reason, b.Config)
+	resp, _, err := b.Moderation.Ban(banner, callerID, targetID, reason)
 	if err != nil {
 		b.Logger.Error("ban failed", zap.Error(err))
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, err.Error(), "", false, b.Logger)
 		return
 	}
 	sendPublicModerationReply(b.API, msg.Chat.ID, msg.MessageID, resp, b.Logger)
 }
 
 func (b *Bot) tgHandleDBan(msg *tgbotapi.Message, args string, callerID string) {
-	if !b.DB.IsAdmin("telegram", callerID, b.Config) {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "You don't have ban permissions.", "", false, b.Logger)
+	if !b.hasNativeRight(callerID, canRestrictMembers) {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, noRestrictRights, "", false, b.Logger)
 		return
 	}
 	parts := strings.Fields(args)
@@ -417,17 +418,18 @@ func (b *Bot) tgHandleDBan(msg *tgbotapi.Message, args string, callerID string) 
 		return
 	}
 	banner := b.newBanner()
-	resp, _, err := b.Moderation.DBan(banner, callerID, targetID, reason, b.Config)
+	resp, _, err := b.Moderation.DBan(banner, callerID, targetID, reason)
 	if err != nil {
 		b.Logger.Error("dban failed", zap.Error(err))
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, err.Error(), "", false, b.Logger)
 		return
 	}
 	sendPublicModerationReply(b.API, msg.Chat.ID, msg.MessageID, resp, b.Logger)
 }
 
 func (b *Bot) tgHandleTBan(msg *tgbotapi.Message, args string, callerID string) {
-	if !b.DB.IsAdmin("telegram", callerID, b.Config) {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "You don't have ban permissions.", "", false, b.Logger)
+	if !b.hasNativeRight(callerID, canRestrictMembers) {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, noRestrictRights, "", false, b.Logger)
 		return
 	}
 	parts := strings.Fields(args)
@@ -462,17 +464,18 @@ func (b *Bot) tgHandleTBan(msg *tgbotapi.Message, args string, callerID string) 
 		return
 	}
 	banner := b.newBanner()
-	resp, _, err := b.Moderation.TBan(banner, callerID, targetID, dur, reason, b.Config)
+	resp, _, err := b.Moderation.TBan(banner, callerID, targetID, dur, reason)
 	if err != nil {
 		b.Logger.Error("tban failed", zap.Error(err))
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, err.Error(), "", false, b.Logger)
 		return
 	}
 	sendPublicModerationReply(b.API, msg.Chat.ID, msg.MessageID, resp, b.Logger)
 }
 
 func (b *Bot) tgHandleSBan(msg *tgbotapi.Message, args string, callerID string) {
-	if !b.DB.IsAdmin("telegram", callerID, b.Config) {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "You don't have ban permissions.", "", false, b.Logger)
+	if !b.hasNativeRight(callerID, canRestrictMembers) {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, noRestrictRights, "", false, b.Logger)
 		return
 	}
 	parts := strings.Fields(args)
@@ -502,17 +505,18 @@ func (b *Bot) tgHandleSBan(msg *tgbotapi.Message, args string, callerID string) 
 		return
 	}
 	banner := b.newBanner()
-	resp, _, err := b.Moderation.SBan(banner, callerID, targetID, reason, b.Config)
+	resp, _, err := b.Moderation.SBan(banner, callerID, targetID, reason)
 	if err != nil {
 		b.Logger.Error("sban failed", zap.Error(err))
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, err.Error(), "", false, b.Logger)
 		return
 	}
 	sendPublicModerationReply(b.API, msg.Chat.ID, msg.MessageID, resp, b.Logger)
 }
 
 func (b *Bot) tgHandleMute(msg *tgbotapi.Message, args string, callerID string) {
-	if !b.DB.IsAdmin("telegram", callerID, b.Config) {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "You don't have mute permissions.", "", false, b.Logger)
+	if !b.hasNativeRight(callerID, canRestrictMembers) {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, noRestrictRights, "", false, b.Logger)
 		return
 	}
 	parts := strings.Fields(args)
@@ -548,17 +552,18 @@ func (b *Bot) tgHandleMute(msg *tgbotapi.Message, args string, callerID string) 
 		return
 	}
 	banner := b.newBanner()
-	resp, _, err := b.Moderation.Mute(banner, callerID, targetID, dur, reason, b.Config)
+	resp, _, err := b.Moderation.Mute(banner, callerID, targetID, dur, reason)
 	if err != nil {
 		b.Logger.Error("mute failed", zap.Error(err))
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, err.Error(), "", false, b.Logger)
 		return
 	}
 	sendPublicModerationReply(b.API, msg.Chat.ID, msg.MessageID, resp, b.Logger)
 }
 
 func (b *Bot) tgHandleWarn(msg *tgbotapi.Message, args string, callerID string) {
-	if !b.DB.IsAdmin("telegram", callerID, b.Config) {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "You don't have warn permissions.", "", false, b.Logger)
+	if !b.hasNativeRight(callerID, canRestrictMembers) {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, noRestrictRights, "", false, b.Logger)
 		return
 	}
 	parts := strings.Fields(args)
@@ -592,9 +597,10 @@ func (b *Bot) tgHandleWarn(msg *tgbotapi.Message, args string, callerID string) 
 		return
 	}
 	banner := b.newBanner()
-	resp, extras, _, err := b.Warn.Warn(banner, callerID, targetID, reason, b.Config)
+	resp, extras, _, err := b.Warn.Warn(banner, callerID, targetID, reason)
 	if err != nil {
 		b.Logger.Error("warn failed", zap.Error(err))
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, err.Error(), "", false, b.Logger)
 		return
 	}
 	sendPublicModerationReply(b.API, msg.Chat.ID, msg.MessageID, resp, b.Logger)
@@ -626,8 +632,8 @@ func (b *Bot) tgHandleWarnings(msg *tgbotapi.Message, args string) {
 }
 
 func (b *Bot) tgHandleUnwarn(msg *tgbotapi.Message, args string, callerID string) {
-	if !b.DB.IsAdmin("telegram", callerID, b.Config) {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "You don't have unwarn permissions.", "", false, b.Logger)
+	if !b.hasNativeRight(callerID, canRestrictMembers) {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, noRestrictRights, "", false, b.Logger)
 		return
 	}
 	parts := strings.Fields(args)
@@ -673,8 +679,8 @@ func (b *Bot) tgHandleUnwarn(msg *tgbotapi.Message, args string, callerID string
 }
 
 func (b *Bot) tgHandleDehoist(msg *tgbotapi.Message, args string, callerID string) {
-	if !b.DB.IsAdmin("telegram", callerID, b.Config) {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "You don't have dehoist permissions.", "", false, b.Logger)
+	if !b.hasNativeRight(callerID, canRestrictMembers) {
+		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, noRestrictRights, "", false, b.Logger)
 		return
 	}
 
@@ -685,12 +691,15 @@ func (b *Bot) tgHandleDehoist(msg *tgbotapi.Message, args string, callerID strin
 		if strings.ToLower(p) == "dry" {
 			dry = true
 		} else if targetID == "" {
-			targetID = extractTelegramUserID(msg, p)
+			if targetID = extractTelegramUserID(msg, p); targetID == "" {
+				sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Could not resolve user.", "", false, b.Logger)
+				return
+			}
 		}
 	}
 
 	banner := b.newBanner()
-	resp, err := b.Moderation.Dehoist(banner, targetID, dry, b.Config)
+	resp, err := b.Moderation.Dehoist(banner, callerID, targetID, dry)
 	if err != nil {
 		b.Logger.Error("dehoist error", zap.Error(err))
 		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, fmt.Sprintf("Error: %s", err), "", false, b.Logger)
@@ -714,46 +723,6 @@ func (b *Bot) tgHandleDehoist(msg *tgbotapi.Message, args string, callerID strin
 	}
 }
 
-func (b *Bot) tgHandleAddAdmin(msg *tgbotapi.Message, args string, callerID string) {
-	parts := strings.Fields(args)
-	if len(parts) == 0 {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Usage: /addadmin [user]", "", false, b.Logger)
-		return
-	}
-	targetID := extractTelegramUserID(msg, parts[0])
-	if targetID == "" {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Could not resolve user.", "", false, b.Logger)
-		return
-	}
-	banner := b.newBanner()
-	resp, err := b.Admin.AddAdmin(banner, callerID, targetID, b.Config)
-	if err != nil {
-		b.Logger.Error("addadmin error", zap.Error(err))
-		return
-	}
-	sendPublicModerationReply(b.API, msg.Chat.ID, msg.MessageID, resp, b.Logger)
-}
-
-func (b *Bot) tgHandleRemoveAdmin(msg *tgbotapi.Message, args string, callerID string) {
-	parts := strings.Fields(args)
-	if len(parts) == 0 {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Usage: /removeadmin [user]", "", false, b.Logger)
-		return
-	}
-	targetID := extractTelegramUserID(msg, parts[0])
-	if targetID == "" {
-		sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, "Could not resolve user.", "", false, b.Logger)
-		return
-	}
-	banner := b.newBanner()
-	resp, err := b.Admin.RemoveAdmin(banner, callerID, targetID, b.Config)
-	if err != nil {
-		b.Logger.Error("removeadmin error", zap.Error(err))
-		return
-	}
-	sendPublicModerationReply(b.API, msg.Chat.ID, msg.MessageID, resp, b.Logger)
-}
-
 func (b *Bot) tgHandlePing(msg *tgbotapi.Message) {
 	text, err := b.Ping.Ping()
 	if err != nil {
@@ -764,26 +733,58 @@ func (b *Bot) tgHandlePing(msg *tgbotapi.Message) {
 	sendPublicReply(b.API, msg.Chat.ID, msg.MessageID, text, "", false, b.Logger)
 }
 
+// extractTelegramUserID resolves a moderation target. A reply targets the
+// replied-to sender. Otherwise the token must be a numeric ID or start at a
+// text_mention entity; the entity is matched by its UTF-16 offset so mentions
+// later in the reason never become the target. Plain @usernames cannot be
+// resolved by the Bot API and return "".
 func extractTelegramUserID(msg *tgbotapi.Message, mention string) string {
-	if msg.ReplyToMessage != nil && msg.ReplyToMessage.From != nil {
-		return strconv.FormatInt(msg.ReplyToMessage.From.ID, 10)
+	if reply := msg.ReplyToMessage; reply != nil {
+		if reply.SenderChat != nil || reply.From == nil || reply.From.ID <= 0 {
+			return ""
+		}
+		return strconv.FormatInt(reply.From.ID, 10)
 	}
 
-	mention = strings.TrimPrefix(mention, "@")
-
-	if id, err := strconv.ParseInt(mention, 10, 64); err == nil {
+	if id, err := strconv.ParseInt(strings.TrimPrefix(mention, "@"), 10, 64); err == nil && id > 0 {
 		return strconv.FormatInt(id, 10)
 	}
 
-	if msg.Entities != nil {
-		for _, entity := range msg.Entities {
-			if entity.Type == "text_mention" && entity.User != nil {
-				return strconv.FormatInt(entity.User.ID, 10)
-			}
+	offset, ok := telegramArgumentOffset(msg.Text, mention)
+	if !ok {
+		return ""
+	}
+	for _, entity := range msg.Entities {
+		if entity.Type == "text_mention" && entity.User != nil && entity.Offset == offset {
+			return strconv.FormatInt(entity.User.ID, 10)
 		}
 	}
+	return ""
+}
 
-	return mention
+// telegramArgumentOffset returns the UTF-16 offset of the first
+// whitespace-separated field after the command that equals token.
+func telegramArgumentOffset(text, token string) (int, bool) {
+	if token == "" {
+		return 0, false
+	}
+	offset, fieldStart, fieldIndex := 0, -1, 0
+	start := 0
+	for index, r := range text + " " {
+		if unicode.IsSpace(r) {
+			if fieldStart >= 0 {
+				if fieldIndex > 0 && text[start:index] == token {
+					return fieldStart, true
+				}
+				fieldIndex++
+				fieldStart = -1
+			}
+		} else if fieldStart < 0 {
+			fieldStart, start = offset, index
+		}
+		offset += utf16.RuneLen(r)
+	}
+	return 0, false
 }
 
 func timedModerationArgs(parts []string, isReply bool) (durationStr string, reason string, ok bool) {
@@ -816,14 +817,31 @@ func chunkString(s string, maxLen int) []string {
 	return chunks
 }
 
+// telegramSenderID returns the real user who sent msg, or "" when the sender
+// cannot be attributed: anonymous admins and channels post as a sender chat,
+// and bots never act with group rights.
 func telegramSenderID(msg *tgbotapi.Message) string {
-	if msg.From != nil {
-		return strconv.FormatInt(msg.From.ID, 10)
+	if msg.SenderChat != nil || msg.From == nil || msg.From.IsBot {
+		return ""
 	}
-	if msg.SenderChat != nil {
-		return strconv.FormatInt(msg.SenderChat.ID, 10)
+	return strconv.FormatInt(msg.From.ID, 10)
+}
+
+const noRestrictRights = "You need the Ban users permission in this group."
+
+// hasNativeRight checks userID's current rights in the configured group.
+// Lookup failures, unattributed senders and non-admin statuses all deny.
+func (b *Bot) hasNativeRight(userID string, right func(tgbotapi.ChatMember) bool) bool {
+	member, err := b.newBanner().member(userID)
+	if err != nil {
+		b.Logger.Warn("telegram permission check failed", zap.String("user", userID), zap.Error(err))
+		return false
 	}
-	return "0"
+	return hasRight(member, right)
+}
+
+func (b *Bot) isGroupAdmin(userID string) bool {
+	return b.hasNativeRight(userID, func(tgbotapi.ChatMember) bool { return true })
 }
 
 func extractTriggeredNoteName(content, botUsername string) string {

@@ -114,7 +114,10 @@ var compareNumber = regexp.MustCompile(`(?:^|[\s(~:=/])(-?\d+(?:,\d{3})*(?:\.\d+
 
 var (
 	compareWords       = regexp.MustCompile(`[^a-z0-9]+`)
-	compareLowerBetter = []string{"weight", "process", "lithography", "tdp", "power consumption", "place in the ranking", "sar"}
+	compareLowerBetter = []string{"weight", "process", "lithography", "tdp", "power consumption", "place in the ranking", "sar", "response time", "latency", "input lag", "charging time"}
+	// Durations have no default direction: only these rows reward a longer time.
+	compareLongerBetter = []string{"battery life", "endurance", "playback", "talk time", "standby"}
+	compareTimeUnits    = []string{"ns", "us", "µs", "ms", "s", "sec", "secs", "seconds", "min", "mins", "minutes", "h", "hr", "hrs", "hours"}
 	// Numbers in these are dates, model names, versions of different products or matters of taste.
 	compareNoVerdict = []string{"platform", "dimensions", "announced", "release date", "status", "model", "models", "model number", "colors", "bands", "technology", "name", "architecture", "graphics card", "popularity", "samples", "phones tested", "socket", "sim", "build", "bus", "protection", "price", "temperature", "number of cpus", "internal"}
 )
@@ -147,7 +150,7 @@ func compareVerdict(section, name, first, second string) (int, float64) {
 	}
 	a, unitA, okA := compareValue(first)
 	b, unitB, okB := compareValue(second)
-	if !okA || !okB || unitA != unitB || a == b {
+	if !okA || !okB || unitA != unitB || a == b || (!lower && slices.Contains(compareTimeUnits, unitA) && !has(compareLongerBetter)) {
 		return 0, 0
 	}
 	winner := 2

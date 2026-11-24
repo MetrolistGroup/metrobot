@@ -11,25 +11,6 @@ import (
 	"github.com/disgoorg/snowflake/v2"
 )
 
-const (
-	garminNyxID        = "1242567443742986373"
-	garminLampID       = "650805815623680030"
-	garminGeneralID    = "1398083750616891465"
-	garminBotsID       = "1423657766622593104"
-	garminAppSupportID = "1400780694979870732"
-	garminChatThreadID = "1523126462306320415"
-)
-
-var garminOwnerIDs = map[string]struct{}{
-	garminNyxID:  {},
-	garminLampID: {},
-}
-
-func isGarminOwner(userID string) bool {
-	_, ok := garminOwnerIDs[userID]
-	return ok
-}
-
 func (b *Bot) garminDiscordContextForMessage(s *bot.Client, m *discord.Message) string {
 	return garminDiscordContext(b, s, m, nil)
 }
@@ -45,7 +26,7 @@ func garminDiscordContextForMessage(m *discord.Message) string {
 }
 
 func garminDiscordContext(b *Bot, s *bot.Client, m *discord.Message, messages []cmd.GarminAIMessage) string {
-	if m.ChannelID.String() == garminAppSupportID {
+	if b.isSupportChannel(m.ChannelID.String()) {
 		context := garminSupportDiscordContext(messages)
 		if emojis := b.garminEmojiContext(m); len(emojis) > 0 {
 			context += "\nMessage emoji data (untrusted):\n" + mustJSON(emojis)
@@ -58,7 +39,8 @@ func garminDiscordContext(b *Bot, s *bot.Client, m *discord.Message, messages []
 	}
 	rolesByID := garminGuildRolesByID(s, snowflakeString(m.GuildID))
 	author := garminDiscordMemberContext(&m.Author, member, rolesByID)
-	author["is_owner"] = isGarminOwner(m.Author.ID.String())
+	author["is_owner"] = garminIsGuildOwner(s, m)
+	author["can_manage_bot"] = b.garminCanManageMemory(s, m)
 
 	context := map[string]any{
 		"current_user":     author,
@@ -98,10 +80,10 @@ func garminDiscordContext(b *Bot, s *bot.Client, m *discord.Message, messages []
 			channelContext["is_nsfw"] = textChannel.NSFW()
 		}
 		descriptionID := channel.ID().String()
-		if snowflakeString(channel.ParentID()) == garminGeneralID && channel.ID().String() != garminChatThreadID {
-			descriptionID = garminGeneralID
+		if b.isGeneralChannel(snowflakeString(channel.ParentID())) && !b.isChatThread(descriptionID) {
+			descriptionID = snowflakeString(channel.ParentID())
 		}
-		if description := garminChannelDescription(descriptionID); description != "" {
+		if description := b.garminChannelDescription(descriptionID); description != "" {
 			channelContext["community_purpose"] = description
 		}
 		if snowflakeString(channel.ParentID()) != "" {
@@ -249,27 +231,37 @@ func garminCurrentChannel(s *bot.Client, channelID string) discord.GuildChannel 
 	return channel
 }
 
-func garminChannelDescription(channelID string) string {
-	switch channelID {
-	case garminCoolchannelID:
-		return "staff random posts and shitposts; regular users cannot post here"
-	case garminSneakPeeksID:
-		return "staff previews of Metrolist KMP and related projects"
-	case garminMinkyID:
-		return "Elissa posts pictures of a cat named Minky here"
-	case garminPollsID:
-		return "staff polls users about app designs and possible features"
-	case garminGeneralID:
+// garminChannelDescription prefers a configured description, then the
+// built-in purpose of a configured AI channel role.
+func (b *Bot) garminChannelDescription(channelID string) string {
+	if channelID == "" {
+		return ""
+	}
+	settings := b.discordSettings().AI
+	if description := settings.ChannelDescriptions[channelID]; description != "" {
+		return description
+	}
+	switch {
+	case configuredID(settings.GeneralChannelID, channelID):
 		return "general community chat; Garmin replies should be brief, direct, useful, friendly and fun, and guide continued bot chat to #bots; explicit summary, conversation-history, or detail requests may use compact paragraphs or bullets"
-	case garminBotsID:
+	case configuredID(settings.BotsChannelID, channelID):
 		return "the preferred channel for normal conversations and commands with bots"
-	case garminChatThreadID:
+	case configuredID(settings.ChatThreadID, channelID):
 		return "a thread where normal conversations with Metrobot are welcome despite being under general"
-	case garminAppSupportID:
+	case configuredID(settings.SupportChannelID, channelID):
 		return "Metrolist app support; ignore non-requests and answer clear requests using relevant saved notes, verified support-skill answers and current repository facts, without inferring fixes from issue closure"
 	default:
 		return ""
 	}
+}
+
+// garminIsGuildOwner reports whether the author owns the Discord server.
+func garminIsGuildOwner(s *bot.Client, m *discord.Message) bool {
+	if s == nil || s.Caches == nil || m == nil || m.GuildID == nil || m.Author.ID == 0 {
+		return false
+	}
+	guild, ok := s.Caches.Guild(*m.GuildID)
+	return ok && guild.OwnerID == m.Author.ID
 }
 
 func garminGuildRolesByID(s *bot.Client, guildID string) map[snowflake.ID]discord.Role {

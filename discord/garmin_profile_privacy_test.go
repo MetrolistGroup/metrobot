@@ -60,7 +60,7 @@ func TestGetGarminDiscordProfileUsesOnlyDiscordData(t *testing.T) {
 	}
 	session.Rest = testREST(server.Client())
 	session.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: session.Rest.HTTPClient().Transport, target: server.URL}
-	bot := &Bot{Config: &config.Config{DiscordGuildID: "100000000000000012"}}
+	bot := &Bot{Config: testConfig(config.Config{DiscordGuildID: "100000000000000012"})}
 
 	profile, err := bot.getGarminDiscordProfile(session, targetID)
 	if err != nil {

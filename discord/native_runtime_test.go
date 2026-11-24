@@ -38,11 +38,15 @@ func TestNativeStartupRegistersCommandsAfterReadyAndCleansFailures(t *testing.T)
 	t.Cleanup(func() { http.DefaultTransport = originalTransport })
 	for _, failure := range []string{"", "gateway", "registration", "ready"} {
 		t.Run("failure="+failure, func(t *testing.T) {
-			b, err := New(&config.Config{DiscordToken: "MTIzNDU2Nzg5MDEyMzQ1Njc4.test.test", DiscordGuildID: "300"}, nil, zap.NewNop(), nil, nil, nil, nil, nil, nil, nil, nil)
+			b, err := New(testConfig(config.Config{DiscordToken: "MTIzNDU2Nzg5MDEyMzQ1Njc4.test.test", DiscordGuildID: "300"}), nil, zap.NewNop(), nil, nil, nil, nil, nil, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(b.Stop)
+			presence := b.Client.Gateway.Presence()
+			if presence == nil || presence.Status != discord.OnlineStatusOnline || len(presence.Activities) != 1 || presence.Activities[0].Type != discord.ActivityTypeCustom || value(presence.Activities[0].State) != "Keeping Metrolist on track 🎵" {
+				t.Fatalf("startup presence = %+v", presence)
+			}
 			b.Client.Rest.Close(context.Background())
 			var commandNames []string
 			b.Client.Rest = testREST(&http.Client{Transport: garminRoundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -72,6 +76,9 @@ func TestNativeStartupRegistersCommandsAfterReadyAndCleansFailures(t *testing.T)
 					}
 					if command.Name == "bulkrole" && (value(command.Permissions) != "268435456" || len(command.Options) != 2 || command.Options[0].Type != 8) {
 						t.Errorf("bulkrole permissions/options lost: %#v", command)
+					}
+					if want, checked := map[string]string{"ban": "4", "kick": "2", "warn": "1099511627776", "memory": "32", "addnote": "32", "purge": "8192", "notes": "", "note": ""}[command.Name]; checked && value(command.Permissions) != want {
+						t.Errorf("%s default permissions = %q, want %q", command.Name, value(command.Permissions), want)
 					}
 					if command.Name == "memory" && len(command.Options) != 4 {
 						t.Errorf("memory subcommands lost: %#v", command.Options)
@@ -105,7 +112,7 @@ func TestNativeStartupRegistersCommandsAfterReadyAndCleansFailures(t *testing.T)
 					t.Fatal("commands registered without readiness")
 				}
 			} else {
-				want := strings.Fields("help gsm nanoreview technicalcity gsmcompare nanoreviewcompare technicalcitycompare ctx-reset quote Clip nuke notes note addnote editnote renamenote delnote version latest actions ban dban tban sban kick mute timeout warn warnings unwarn dehoist approvenick bulkrole addadmin removeadmin memory ping purge scanreactions refreshstarboard")
+				want := strings.Fields("help gsm nanoreview technicalcity gsmcompare nanoreviewcompare technicalcitycompare ctx-reset quote Clip nuke notes note addnote editnote renamenote delnote version latest actions ban dban tban sban kick mute timeout warn warnings unwarn dehoist approvenick bulkrole memory ping purge scanreactions refreshstarboard")
 				want = slices.Insert(want, slices.Index(want, "nuke"), "OCR Translate")
 				if !slices.Equal(commandNames, want) {
 					t.Fatalf("command set changed: %v", commandNames)

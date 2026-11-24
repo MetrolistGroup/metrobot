@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/MetrolistGroup/metrobot/config"
 	"math"
 	"strings"
 	"testing"
@@ -16,7 +17,7 @@ import (
 func TestSupportAnswerHasNoWordGate(t *testing.T) {
 	message := supportTestMessage(20)
 	messages := []cmd.GarminAIMessage{{Role: "user", Content: "fullscreen artwork is broken"}}
-	accepted, hint, err := (&Bot{}).supportAnswerGrounded(context.Background(), message, messages, messages, strings.Repeat("word ", 200), nil)
+	accepted, hint, err := testBot().supportAnswerGrounded(context.Background(), message, messages, messages, strings.Repeat("word ", 200), nil)
 	if err != nil || !accepted {
 		t.Fatalf("accepted=%v hint=%q err=%v", accepted, hint, err)
 	}
@@ -42,7 +43,7 @@ func TestSupportDestinationsRequireExactEvidence(t *testing.T) {
 }
 
 func TestUnreadAttachmentCannotRequestAnotherScreenshot(t *testing.T) {
-	b := &Bot{garminDecisions: supportDecisionTestFunc(func(context.Context, cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+	b := &Bot{Config: testConfig(config.Config{}), garminDecisions: supportDecisionTestFunc(func(context.Context, cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
 		t.Fatal("an unread-image request reached the model checker")
 		return nil, nil
 	})}
@@ -80,7 +81,7 @@ func TestSupportAnswerGroundingFailsClosed(t *testing.T) {
 				cmd.GarminAIMessage{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{ID: "note-call", Function: cmd.GarminAIFunctionCall{Name: "get_note", Arguments: `{"name":"nightly"}`}}}},
 				cmd.GarminAIMessage{Role: "tool", ToolCallID: "note-call", Content: `CURRENT_TOOL_RESULT {"latest_release":"stale note data"}`},
 			)
-			b := &Bot{garminDecisions: supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+			b := &Bot{Config: testConfig(config.Config{}), garminDecisions: supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
 				state, err := json.Marshal(request.State)
 				if err != nil {
 					t.Fatal(err)
@@ -123,7 +124,7 @@ func TestSupportNoteReferenceRequiresPositiveVerdict(t *testing.T) {
 		{name: "legacy has no reference check", legacy: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			b := &Bot{}
+			b := &Bot{Config: testConfig(config.Config{})}
 			if !tc.legacy {
 				b.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
 					if request.State.(map[string]any)["reference_note"] != "rpc" || request.Questions["note_used"].Type != "noul" {
@@ -161,7 +162,7 @@ func TestSupportEvidenceTracksCurrentAttachmentAvailability(t *testing.T) {
 		{name: "image and unread log", attachments: []discord.Attachment{{URL: "https://example.org/current.png"}, {URL: "https://example.org/log.txt"}}, images: []string{"https://example.org/current.png"}, unread: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			b := &Bot{garminDecisions: supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+			b := &Bot{Config: testConfig(config.Config{}), garminDecisions: supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
 				if got := request.State.(map[string]any)["unread_attachments"]; got != test.unread {
 					t.Fatalf("unread = %v, want %v", got, test.unread)
 				}
@@ -184,6 +185,7 @@ func TestSupportAgentSuppressesUngroundedDraft(t *testing.T) {
 			probability = 0.99
 		}
 		b := &Bot{
+			Config: testConfig(config.Config{}),
 			garminAI: garminAITestFunc(func(_ context.Context, _ cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "Which app version are you using?"}}, nil
 			}),

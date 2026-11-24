@@ -1,7 +1,9 @@
 package discord
 
 import (
+	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
@@ -85,6 +87,9 @@ func (b *Bot) repostCleanYouTubeLinks(s *bot.Client, m *discord.Message) bool {
 		return false
 	}
 	if err := s.Rest.DeleteMessage(m.ChannelID, m.ID); err != nil {
+		if !b.youtubeSourceStillExists(s, m, err) {
+			return true
+		}
 		if posted != nil {
 			_ = s.Rest.DeleteWebhookMessage(webhook.ID(), webhook.Token, posted.ID, snowflakeID(threadID))
 		}
@@ -92,6 +97,30 @@ func (b *Bot) repostCleanYouTubeLinks(s *bot.Client, m *discord.Message) bool {
 		return false
 	}
 	return true
+}
+
+// youtubeSourceStillExists decides whether a failed source deletion left the
+// original in place. Only then may the repost be rolled back; a lost response
+// can hide a successful deletion, and rolling back would lose both messages.
+func (b *Bot) youtubeSourceStillExists(s *bot.Client, m *discord.Message, deleteErr error) bool {
+	var restErr *rest.Error
+	if errors.As(deleteErr, &restErr) && restErr.Response != nil {
+		status := restErr.Response.StatusCode
+		if status == http.StatusNotFound {
+			return false
+		}
+		if status >= 400 && status < 500 {
+			return true
+		}
+	}
+	_, err := s.Rest.GetMessage(m.ChannelID, m.ID)
+	if err == nil {
+		return true
+	}
+	if !errors.As(err, &restErr) || restErr.Response == nil || restErr.Response.StatusCode != http.StatusNotFound {
+		b.Logger.Warn("could not confirm YouTube source deletion; keeping the repost", zap.String("message", m.ID.String()), zap.NamedError("delete_error", deleteErr), zap.Error(err))
+	}
+	return false
 }
 
 func (b *Bot) messageWebhook(s *bot.Client, channelID, name string) (*discord.IncomingWebhook, string, error) {

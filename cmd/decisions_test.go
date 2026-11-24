@@ -311,3 +311,31 @@ func TestDecisionsDoesNotFollowRedirects(t *testing.T) {
 		t.Fatalf("redirect followed: %v", err)
 	}
 }
+
+func TestDecisionsFailsOverAcrossEveryKey(t *testing.T) {
+	for _, status := range []int{401, 402, 429} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			var seen []string
+			working := true
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen = append(seen, r.Header.Get("Authorization"))
+				if !working || r.Header.Get("Authorization") != "Bearer working" {
+					w.Header().Set("Retry-After", "60")
+					w.WriteHeader(status)
+					return
+				}
+				_, _ = io.WriteString(w, decisionTestResponse)
+			}))
+			defer server.Close()
+			client := newDecisionsClient([]string{"expired-1", "expired-2", "working"}, "model", server.URL, server.Client())
+			start := time.Now()
+			if _, err := client.Decide(context.Background(), decisionTestRequest()); err != nil || strings.Join(seen, ",") != "Bearer expired-1,Bearer expired-2,Bearer working" || time.Since(start) > 2*time.Second {
+				t.Fatalf("failover = %v keys=%v", err, seen)
+			}
+			seen, working = nil, false
+			if _, err := client.Decide(context.Background(), decisionTestRequest()); err == nil || len(seen) != 3 {
+				t.Fatalf("failing keys were not bounded to one attempt each: %v keys=%v", err, seen)
+			}
+		})
+	}
+}

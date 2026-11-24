@@ -63,16 +63,13 @@ func garminGIFURL(rawURL string) bool {
 }
 
 func fetchGarminGIFMiddleFrame(ctx context.Context, client *http.Client, imageURL string) (string, error) {
-	if client == nil {
-		client = http.DefaultClient
-	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
 	if err != nil {
 		return "", err
 	}
-	response, err := client.Do(req)
+	response, err := discordMediaClient(client).Do(req)
 	if err != nil {
 		return "", err
 	}

@@ -8,16 +8,15 @@ import (
 	"github.com/MetrolistGroup/metrobot/db"
 )
 
-type fakeWarnConfig struct{}
-
-func (fakeWarnConfig) GetPermaAdminIDs(platform string) []string { return nil }
-
 type fakeWarnBanner struct {
 	platform      string
 	chatID        string
 	banCalls      int
 	restrictCalls int
 }
+
+func (b *fakeWarnBanner) IsAdministrator(string) (bool, error)         { return false, nil }
+func (b *fakeWarnBanner) CanManageMember(string, string, string) error { return nil }
 
 func (b *fakeWarnBanner) Ban(userID, reason string) error    { b.banCalls++; return nil }
 func (b *fakeWarnBanner) Unban(userID string) error          { return nil }
@@ -84,7 +83,7 @@ func TestUnwarnUsesOneBasedIDs(t *testing.T) {
 		t.Fatalf("AddWarning second: %v", err)
 	}
 
-	resp, _, err := handler.Unwarn("discord", "caller", "target", 1, nil)
+	resp, _, err := handler.Unwarn("discord", "caller", "target", 1, banner)
 	if err != nil {
 		t.Fatalf("Unwarn: %v", err)
 	}
@@ -110,16 +109,16 @@ func TestUnwarnUsesOneBasedIDs(t *testing.T) {
 
 func TestWarnUsesEscalatingTimeout(t *testing.T) {
 	database := openWarnTestDB(t)
-	handler := &WarnHandler{DB: database}
+	handler := &WarnHandler{DB: database, Moderation: &ModerationHandler{DB: database, Scheduler: &recordingScheduler{}}}
 	banner := &fakeWarnBanner{platform: "discord", chatID: "test-chat"}
 
 	for i := 0; i < 2; i++ {
-		if _, _, _, err := handler.Warn(banner, "mod", "target", "reason", fakeWarnConfig{}); err != nil {
+		if _, _, _, err := handler.Warn(banner, "mod", "target", "reason"); err != nil {
 			t.Fatalf("Warn pre-threshold #%d: %v", i+1, err)
 		}
 	}
 
-	resp, extras, _, err := handler.Warn(banner, "mod", "target", "third reason", fakeWarnConfig{})
+	resp, extras, _, err := handler.Warn(banner, "mod", "target", "third reason")
 	if err != nil {
 		t.Fatalf("Warn threshold: %v", err)
 	}

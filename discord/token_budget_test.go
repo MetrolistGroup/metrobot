@@ -8,7 +8,7 @@ import (
 )
 
 func TestGarminPromptBudget(t *testing.T) {
-	chat, err := (&Bot{}).garminSystemPromptWithMemory("", false)
+	chat, err := testBot().garminSystemPromptWithMemory("", false)
 	if err != nil {
 		t.Fatal(err)
 	}

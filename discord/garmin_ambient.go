@@ -10,8 +10,8 @@ import (
 	"github.com/disgoorg/disgo/discord"
 )
 
-func garminAIAmbientEnabled(s *bot.Client, channelID string) bool {
-	return garminRedirectChannelID(s, channelID) != garminGeneralID
+func (b *Bot) garminAIAmbientEnabled(s *bot.Client, channelID string) bool {
+	return !b.isGeneralChannel(b.garminRedirectChannelID(s, channelID))
 }
 
 func (b *Bot) tryBeginGarminAIAmbient(m *discord.Message) uint64 {

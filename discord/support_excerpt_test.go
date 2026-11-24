@@ -97,7 +97,7 @@ func TestQwenTentativeNoteStillNeedsApplicabilitySelection(t *testing.T) {
 }
 
 func TestQwenCannotApproveParaphrasedNoteFacts(t *testing.T) {
-	b := &Bot{Config: &config.Config{OpenRouterDecisionModel: "qwen/qwen3.7-flash"}}
+	b := &Bot{Config: testConfig(config.Config{OpenRouterDecisionModel: "qwen/qwen3.7-flash"})}
 	b.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
 		return supportTestDecision(request, "agent", 1, 1), nil
 	})
@@ -123,7 +123,7 @@ func TestSupportExcerptUncertainOrUnmatchedUsesAgent(t *testing.T) {
 		choice      string
 		probability float64
 	}{{"agent", .99}, {"s0", .6}, {"unknown", .99}} {
-		b := &Bot{Config: &config.Config{OpenRouterDecisionModel: "qwen/qwen3.7-flash"}}
+		b := &Bot{Config: testConfig(config.Config{OpenRouterDecisionModel: "qwen/qwen3.7-flash"})}
 		b.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
 			return excerptDecision(request, test.choice, test.probability), nil
 		})

@@ -49,7 +49,7 @@ const supportRouteInstructions = `Choose an action for the current message in Me
 
 func (b *Bot) supportDecisionEligible(s *bot.Client, m *discord.Message) bool {
 	if m == nil || b.Config == nil || m.Author.ID == 0 || m.Author.Bot || m.WebhookID != nil ||
-		snowflakeString(m.GuildID) != b.Config.DiscordGuildID || m.ChannelID.String() != garminAppSupportID {
+		snowflakeString(m.GuildID) != b.Config.DiscordGuildID || !b.isSupportChannel(m.ChannelID.String()) {
 		return false
 	}
 	text := strings.TrimSpace(m.Content)

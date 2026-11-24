@@ -13,7 +13,7 @@ const supportSessionTTL = 3 * time.Minute
 // refreshSupportSession starts or extends the asker's session after the bot replies to them in app-support.
 func (b *Bot) refreshSupportSession(m *discord.Message) {
 	key := garminAIUserContextKey(m)
-	if key == "" || m.ChannelID.String() != garminAppSupportID {
+	if key == "" || !b.isSupportChannel(m.ChannelID.String()) {
 		return
 	}
 	now := time.Now()
@@ -65,7 +65,7 @@ func supportUserKey(m *discord.Message, userID string) string {
 // noteSupportHandoff hands m's author, and any human they reply to or mention, over to each other.
 // A stop request from the author hands only them off.
 func (b *Bot) noteSupportHandoff(m *discord.Message, botID string) {
-	if m.ChannelID.String() != garminAppSupportID || m.Author.ID == 0 {
+	if !b.isSupportChannel(m.ChannelID.String()) || m.Author.ID == 0 {
 		return
 	}
 	var users []string

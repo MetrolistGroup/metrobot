@@ -3,6 +3,7 @@ package discord
 import (
 	"context"
 	"errors"
+	"github.com/MetrolistGroup/metrobot/config"
 	"io"
 	"net/http"
 	"reflect"
@@ -390,7 +391,7 @@ func TestGarminRequestedPublicLookupsPrecedeCommunityRead(t *testing.T) {
 
 func TestGarminCommunityPreloadRechecksCancellationAndVisibility(t *testing.T) {
 	for _, reset := range []bool{false, true} {
-		b := &Bot{garminAI: garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		b := &Bot{Config: testConfig(config.Config{}), garminAI: garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 			t.Fatal("cancelled or reset community data reached the provider")
 			return nil, nil
 		})}
@@ -733,7 +734,7 @@ func TestGarminUnavailableDeviceSourceCannotUnlockPrivateHistory(t *testing.T) {
 		t.Fatal("unavailable device source unlocked private history")
 		return "[]", nil
 	})
-	b := &Bot{garminAI: garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+	b := &Bot{Config: testConfig(config.Config{}), garminAI: garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		if garminToolAvailable(request.Tools, "read_community_channel") || garminToolAvailable(request.Tools, "read_channel_history") {
 			t.Fatal("private tools became available before required device evidence")
 		}

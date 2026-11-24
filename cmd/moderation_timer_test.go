@@ -10,10 +10,6 @@ import (
 	"github.com/MetrolistGroup/metrobot/db"
 )
 
-type fakeModerationConfig struct{}
-
-func (fakeModerationConfig) GetPermaAdminIDs(platform string) []string { return nil }
-
 type fakeModerationBanner struct {
 	platform string
 	chatID   string
@@ -23,7 +19,11 @@ type fakeModerationBanner struct {
 	kickCalls   int
 	unbanCalls  int
 	unmuteCalls int
+	manageErr   error
 }
+
+func (b *fakeModerationBanner) IsAdministrator(string) (bool, error)         { return false, nil }
+func (b *fakeModerationBanner) CanManageMember(string, string, string) error { return b.manageErr }
 
 func (b *fakeModerationBanner) Ban(userID, reason string) error { return b.banErr }
 func (b *fakeModerationBanner) Unban(userID string) error {
@@ -76,7 +76,7 @@ func TestKickUsesPlatformKick(t *testing.T) {
 	handler := &ModerationHandler{DB: openTimerTestDB(t)}
 	banner := &fakeModerationBanner{platform: "discord", chatID: "guild"}
 
-	response, _, err := handler.Kick(banner, "mod", "123", "reason", fakeModerationConfig{})
+	response, _, err := handler.Kick(banner, "mod", "123", "reason")
 	if err != nil || banner.kickCalls != 1 || !strings.Contains(response, "<@123> has been kicked") {
 		t.Fatalf("Kick response=%q calls=%d err=%v", response, banner.kickCalls, err)
 	}
@@ -88,7 +88,7 @@ func TestTBanSchedulesManagedTimerAndDeletesOnExpiry(t *testing.T) {
 	handler := &ModerationHandler{DB: database, Scheduler: scheduler}
 	banner := &fakeModerationBanner{platform: "discord", chatID: "guild"}
 
-	if _, _, err := handler.TBan(banner, "mod", "target", time.Hour, "reason", fakeModerationConfig{}); err != nil {
+	if _, _, err := handler.TBan(banner, "mod", "target", time.Hour, "reason"); err != nil {
 		t.Fatalf("TBan: %v", err)
 	}
 	if scheduler.id != "ban_1" || scheduler.duration != time.Hour || scheduler.callback == nil {
@@ -121,7 +121,7 @@ func TestTBanRollsBackStoredBanWhenBanFails(t *testing.T) {
 	handler := &ModerationHandler{DB: database, Scheduler: &fakeScheduler{}}
 	banner := &fakeModerationBanner{platform: "discord", chatID: "guild", banErr: errors.New("api failed")}
 
-	if _, _, err := handler.TBan(banner, "mod", "target", time.Hour, "reason", fakeModerationConfig{}); err == nil {
+	if _, _, err := handler.TBan(banner, "mod", "target", time.Hour, "reason"); err == nil {
 		t.Fatal("TBan should fail when platform ban fails")
 	}
 	bans, err := database.GetPendingTimedBans()
@@ -139,7 +139,7 @@ func TestMuteSchedulesManagedTimerAndUnrestrictsOnExpiry(t *testing.T) {
 	handler := &ModerationHandler{DB: database, Scheduler: scheduler}
 	banner := &fakeModerationBanner{platform: "discord", chatID: "guild"}
 
-	if _, _, err := handler.Mute(banner, "mod", "target", time.Hour, "reason", fakeModerationConfig{}); err != nil {
+	if _, _, err := handler.Mute(banner, "mod", "target", time.Hour, "reason"); err != nil {
 		t.Fatalf("Mute: %v", err)
 	}
 	if scheduler.id != "mute_1" || scheduler.duration != time.Hour || scheduler.callback == nil {
@@ -164,7 +164,7 @@ func TestMuteRollsBackStoredMuteWhenRestrictFails(t *testing.T) {
 	handler := &ModerationHandler{DB: database, Scheduler: &fakeScheduler{}}
 	banner := &fakeModerationBanner{platform: "discord", chatID: "guild", restrictErr: errors.New("api failed")}
 
-	if _, _, err := handler.Mute(banner, "mod", "target", time.Hour, "reason", fakeModerationConfig{}); err == nil {
+	if _, _, err := handler.Mute(banner, "mod", "target", time.Hour, "reason"); err == nil {
 		t.Fatal("Mute should fail when platform restrict fails")
 	}
 	mutes, err := database.GetPendingMutes()

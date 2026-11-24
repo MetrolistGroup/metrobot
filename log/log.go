@@ -19,9 +19,10 @@ func New(logFilePath string) (*zap.Logger, error) {
 
 	fileWriter := zapcore.AddSync(&lumberjack.Logger{
 		Filename:   logFilePath,
-		MaxSize:    100,
-		MaxBackups: 5,
-		MaxAge:     30,
+		MaxSize:    10,
+		MaxBackups: 2,
+		MaxAge:     7,
+		Compress:   true,
 	})
 
 	core := zapcore.NewTee(

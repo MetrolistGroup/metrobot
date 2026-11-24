@@ -18,17 +18,19 @@ func (b *Bot) executePrefixCommand(chatID int64, callerID, action, args, targetI
 
 	switch action {
 	case "ban":
-		resp, _, err := b.Moderation.Ban(banner, callerID, targetID, args, b.Config)
+		resp, _, err := b.Moderation.Ban(banner, callerID, targetID, args)
 		if err != nil {
 			b.Logger.Error("ban failed", zap.Error(err))
+			b.API.Send(tgbotapi.NewMessage(chatID, err.Error()))
 			return
 		}
 		b.API.Send(newTelegramModerationMessage(chatID, resp))
 
 	case "dban":
-		resp, _, err := b.Moderation.DBan(banner, callerID, targetID, args, b.Config)
+		resp, _, err := b.Moderation.DBan(banner, callerID, targetID, args)
 		if err != nil {
 			b.Logger.Error("dban failed", zap.Error(err))
+			b.API.Send(tgbotapi.NewMessage(chatID, err.Error()))
 			return
 		}
 		b.API.Send(newTelegramModerationMessage(chatID, resp))
@@ -46,17 +48,19 @@ func (b *Bot) executePrefixCommand(chatID int64, callerID, action, args, targetI
 		if len(parts) > 1 {
 			reason = strings.Join(parts[1:], " ")
 		}
-		resp, _, err := b.Moderation.TBan(banner, callerID, targetID, dur, reason, b.Config)
+		resp, _, err := b.Moderation.TBan(banner, callerID, targetID, dur, reason)
 		if err != nil {
 			b.Logger.Error("tban failed", zap.Error(err))
+			b.API.Send(tgbotapi.NewMessage(chatID, err.Error()))
 			return
 		}
 		b.API.Send(newTelegramModerationMessage(chatID, resp))
 
 	case "sban":
-		resp, _, err := b.Moderation.SBan(banner, callerID, targetID, args, b.Config)
+		resp, _, err := b.Moderation.SBan(banner, callerID, targetID, args)
 		if err != nil {
 			b.Logger.Error("sban failed", zap.Error(err))
+			b.API.Send(tgbotapi.NewMessage(chatID, err.Error()))
 			return
 		}
 		b.API.Send(newTelegramModerationMessage(chatID, resp))
@@ -74,17 +78,19 @@ func (b *Bot) executePrefixCommand(chatID int64, callerID, action, args, targetI
 		if len(parts) > 1 {
 			reason = strings.Join(parts[1:], " ")
 		}
-		resp, _, err := b.Moderation.Mute(banner, callerID, targetID, dur, reason, b.Config)
+		resp, _, err := b.Moderation.Mute(banner, callerID, targetID, dur, reason)
 		if err != nil {
 			b.Logger.Error("mute failed", zap.Error(err))
+			b.API.Send(tgbotapi.NewMessage(chatID, err.Error()))
 			return
 		}
 		b.API.Send(newTelegramModerationMessage(chatID, resp))
 
 	case "warn":
-		resp, extras, _, err := b.Warn.Warn(banner, callerID, targetID, args, b.Config)
+		resp, extras, _, err := b.Warn.Warn(banner, callerID, targetID, args)
 		if err != nil {
 			b.Logger.Error("warn failed", zap.Error(err))
+			b.API.Send(tgbotapi.NewMessage(chatID, err.Error()))
 			return
 		}
 		b.API.Send(newTelegramModerationMessage(chatID, resp))

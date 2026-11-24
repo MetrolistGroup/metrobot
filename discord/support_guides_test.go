@@ -3,6 +3,7 @@ package discord
 import (
 	"context"
 	"encoding/json"
+	"github.com/MetrolistGroup/metrobot/config"
 	"strings"
 	"testing"
 
@@ -28,6 +29,7 @@ func TestSupportSetupGuidesReachAgentAndEvidenceCheck(t *testing.T) {
 	checked, calls := false, 0
 	messages = append(messages, cmd.GarminAIMessage{Role: "assistant", Content: "Which variant?"}, cmd.GarminAIMessage{Role: "user", Content: "regular Android 13.7.0"})
 	b := &Bot{
+		Config: testConfig(config.Config{}),
 		garminAI: garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 			calls++
 			if !strings.Contains(request.SystemPrompt, selected) {
@@ -72,6 +74,7 @@ func TestSupportCanRetrieveGuideWithoutTopicKeywords(t *testing.T) {
 	}
 	calls, checked := 0, false
 	b := &Bot{
+		Config: testConfig(config.Config{}),
 		garminAI: garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 			calls++
 			if calls == 1 {

@@ -18,13 +18,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	serverLogChannelID   = "1417290212278538310"
-	messageLogChannelID  = "1417289373124132864"
-	reactionLogChannelID = "1547010470332989571"
-
-	messageLogCachePerChannel = 1000
-)
+const messageLogCachePerChannel = 1000
 
 type cachedLogMessage struct {
 	ID         string
@@ -102,7 +96,7 @@ func (b *Bot) onGuildRoleCreateLog(s *bot.Client, event *events.RoleCreate) {
 	}
 	entry := b.findAuditEntry(s, discord.AuditLogEventRoleCreate, event.Role.ID.String(), nil)
 	body := fmt.Sprintf("**Role:** %s (`%s`)\n**Permissions:** %s", event.Role.Mention(), event.Role.ID, permissionNames(event.Role.Permissions))
-	b.sendEventLog(s, serverLogChannelID, "Role created", body+auditDetails(entry), "role-created.txt")
+	b.sendEventLog(s, b.discordSettings().Logging.ServerChannelID, "Role created", body+auditDetails(entry), "role-created.txt")
 }
 
 func (b *Bot) onGuildRoleUpdateLog(s *bot.Client, event *events.RoleUpdate) {
@@ -116,7 +110,7 @@ func (b *Bot) onGuildRoleUpdateLog(s *bot.Client, event *events.RoleUpdate) {
 	} else {
 		body += "\n**Current permissions:** " + permissionNames(event.Role.Permissions)
 	}
-	b.sendEventLog(s, serverLogChannelID, "Role updated", body+auditDetails(entry), "role-updated.txt")
+	b.sendEventLog(s, b.discordSettings().Logging.ServerChannelID, "Role updated", body+auditDetails(entry), "role-updated.txt")
 }
 
 func (b *Bot) onGuildRoleDeleteLog(s *bot.Client, event *events.RoleDelete) {
@@ -128,7 +122,7 @@ func (b *Bot) onGuildRoleDeleteLog(s *bot.Client, event *events.RoleDelete) {
 	if entry != nil {
 		body += "\n" + formatAuditChanges(entry.Changes)
 	}
-	b.sendEventLog(s, serverLogChannelID, "Role deleted", body+auditDetails(entry), "role-deleted.txt")
+	b.sendEventLog(s, b.discordSettings().Logging.ServerChannelID, "Role deleted", body+auditDetails(entry), "role-deleted.txt")
 }
 
 func (b *Bot) onChannelUpdateLog(s *bot.Client, event *events.GuildChannelUpdate) {
@@ -150,7 +144,7 @@ func (b *Bot) onChannelUpdateLog(s *bot.Client, event *events.GuildChannelUpdate
 			return entry.Options == nil || value(entry.Options.ID) == change.id
 		})
 		body := fmt.Sprintf("**Channel:** <#%s> (`%s`)\n**Target:** %s\n%s", event.ChannelID, event.ChannelID, overwriteTarget(change), formatOverwriteChange(change))
-		b.sendEventLog(s, serverLogChannelID, title, body+auditDetails(entry), "channel-permissions.txt")
+		b.sendEventLog(s, b.discordSettings().Logging.ServerChannelID, title, body+auditDetails(entry), "channel-permissions.txt")
 	}
 }
 
@@ -170,7 +164,7 @@ func (b *Bot) onGuildMemberUpdateLog(s *bot.Client, event *events.GuildMemberUpd
 			lines = append(lines, "**Removed:** "+roleLabels(s, event.GuildID.String(), removed))
 		}
 		body := fmt.Sprintf("**Member:** <@%s> (`%s`)\n%s", event.Member.User.ID.String(), event.Member.User.ID.String(), strings.Join(lines, "\n"))
-		b.sendEventLog(s, serverLogChannelID, "Member roles updated", body+auditDetails(entry), "member-roles.txt")
+		b.sendEventLog(s, b.discordSettings().Logging.ServerChannelID, "Member roles updated", body+auditDetails(entry), "member-roles.txt")
 	}
 
 	oldTimeout := timeoutValue(event.OldMember.CommunicationDisabledUntil)
@@ -195,7 +189,7 @@ func (b *Bot) onGuildMemberUpdateLog(s *bot.Client, event *events.GuildMemberUpd
 	if newTimeout != nil {
 		body += "\n**New end:** " + discordTimestamp(*newTimeout)
 	}
-	b.sendEventLog(s, serverLogChannelID, title, body+auditDetails(entry), "member-timeout.txt")
+	b.sendEventLog(s, b.discordSettings().Logging.ServerChannelID, title, body+auditDetails(entry), "member-timeout.txt")
 }
 
 func (b *Bot) onGuildMemberRemoveLog(s *bot.Client, event *events.GuildMemberLeave) {
@@ -207,7 +201,7 @@ func (b *Bot) onGuildMemberRemoveLog(s *bot.Client, event *events.GuildMemberLea
 		return // Ordinary departures and bans are handled elsewhere.
 	}
 	body := fmt.Sprintf("**Member:** <@%s> (`%s`)%s", event.User.ID.String(), event.User.ID.String(), auditDetails(entry))
-	b.sendEventLog(s, serverLogChannelID, "Member kicked", body, "member-kicked.txt")
+	b.sendEventLog(s, b.discordSettings().Logging.ServerChannelID, "Member kicked", body, "member-kicked.txt")
 }
 
 func (b *Bot) onGuildBanAddLog(s *bot.Client, event *events.GuildBan) {
@@ -216,7 +210,7 @@ func (b *Bot) onGuildBanAddLog(s *bot.Client, event *events.GuildBan) {
 	}
 	entry := b.findAuditEntry(s, discord.AuditLogEventMemberBanAdd, event.User.ID.String(), nil)
 	body := fmt.Sprintf("**Member:** <@%s> (`%s`)%s", event.User.ID.String(), event.User.ID.String(), auditDetails(entry))
-	b.sendEventLog(s, serverLogChannelID, "Member banned", body, "member-banned.txt")
+	b.sendEventLog(s, b.discordSettings().Logging.ServerChannelID, "Member banned", body, "member-banned.txt")
 }
 
 func (b *Bot) onGuildBanRemoveLog(s *bot.Client, event *events.GuildUnban) {
@@ -225,7 +219,7 @@ func (b *Bot) onGuildBanRemoveLog(s *bot.Client, event *events.GuildUnban) {
 	}
 	entry := b.findAuditEntry(s, discord.AuditLogEventMemberBanRemove, event.User.ID.String(), nil)
 	body := fmt.Sprintf("**Member:** <@%s> (`%s`)%s", event.User.ID.String(), event.User.ID.String(), auditDetails(entry))
-	b.sendEventLog(s, serverLogChannelID, "Member unbanned", body, "member-unbanned.txt")
+	b.sendEventLog(s, b.discordSettings().Logging.ServerChannelID, "Member unbanned", body, "member-unbanned.txt")
 }
 
 func (b *Bot) onReactionAddLog(s *bot.Client, event *events.MessageReactionAdd) {
@@ -252,7 +246,7 @@ func (b *Bot) logReaction(s *bot.Client, title string, reaction *events.GenericR
 		emoji = custom.Mention() + fmt.Sprintf(" (`%s:%s`)", emoji, reaction.Emoji.ID)
 	}
 	body := fmt.Sprintf("**User:** <@%s> (`%s`)\n**Emoji:** %s\n**Channel:** <#%s>\n**Message:** %s", reaction.UserID, reaction.UserID, emoji, reaction.ChannelID, messageURL(snowflakeString(reaction.GuildID), reaction.ChannelID.String(), reaction.MessageID.String()))
-	b.sendEventLog(s, reactionLogChannelID, title, body, "reaction.txt")
+	b.sendEventLog(s, b.discordSettings().Logging.ReactionChannelID, title, body, "reaction.txt")
 }
 
 func (b *Bot) onMessageUpdateLog(s *bot.Client, event *events.MessageUpdate) {
@@ -284,7 +278,7 @@ func (b *Bot) onMessageUpdateLog(s *bot.Client, event *events.MessageUpdate) {
 		body += "\n\n**Before**\n> *(content unavailable)*"
 	}
 	body += "\n\n**After**\n" + after.Payload
-	go b.sendEventLog(s, messageLogChannelID, "Message edited", body, "message-edited-"+event.MessageID.String()+".txt")
+	go b.sendEventLog(s, b.discordSettings().Logging.MessageChannelID, "Message edited", body, "message-edited-"+event.MessageID.String()+".txt")
 }
 
 func (b *Bot) onMessageDeleteLog(s *bot.Client, event *events.MessageDelete) {
@@ -309,7 +303,7 @@ func (b *Bot) onMessageDeleteLog(s *bot.Client, event *events.MessageDelete) {
 	} else {
 		body += "> *(content unavailable)*"
 	}
-	go b.sendEventLog(s, messageLogChannelID, "Message deleted", body, "message-deleted-"+event.MessageID.String()+".txt")
+	go b.sendEventLog(s, b.discordSettings().Logging.MessageChannelID, "Message deleted", body, "message-deleted-"+event.MessageID.String()+".txt")
 }
 
 func (b *Bot) onMessageDeleteBulkLog(s *bot.Client, event *gateway.EventMessageDeleteBulk) {
@@ -340,7 +334,7 @@ func (b *Bot) onMessageDeleteBulkLog(s *bot.Client, event *gateway.EventMessageD
 		return
 	}
 	body := fmt.Sprintf("**Channel:** <#%s>\n**Messages:** %d%s", event.ChannelID, included, details.String())
-	go b.sendEventLog(s, messageLogChannelID, "Messages bulk deleted", body, "messages-bulk-deleted.txt")
+	go b.sendEventLog(s, b.discordSettings().Logging.MessageChannelID, "Messages bulk deleted", body, "messages-bulk-deleted.txt")
 }
 
 func (b *Bot) rememberMessageForLogs(s *bot.Client, message *discord.Message) {
@@ -481,19 +475,20 @@ func messageMetadata(message cachedLogMessage) string {
 }
 
 func (b *Bot) eventLogExcluded(s *bot.Client, guildID, channelID string) bool {
-	if b.Config == nil || guildID != b.Config.DiscordGuildID || isEventLogChannel(channelID) {
+	if b.Config == nil || guildID != b.Config.DiscordGuildID || b.isEventLogChannel(channelID) {
 		return true
 	}
 	if s != nil && s.Caches != nil {
-		if channel, ok := s.Caches.Channel(snowflakeID(channelID)); ok && isThread(channel) && isEventLogChannel(snowflakeString(channel.ParentID())) {
+		if channel, ok := s.Caches.Channel(snowflakeID(channelID)); ok && isThread(channel) && b.isEventLogChannel(snowflakeString(channel.ParentID())) {
 			return true
 		}
 	}
 	return false
 }
 
-func isEventLogChannel(channelID string) bool {
-	return channelID == serverLogChannelID || channelID == messageLogChannelID || channelID == reactionLogChannelID
+func (b *Bot) isEventLogChannel(channelID string) bool {
+	logging := b.discordSettings().Logging
+	return configuredID(logging.ServerChannelID, channelID) || configuredID(logging.MessageChannelID, channelID) || configuredID(logging.ReactionChannelID, channelID)
 }
 
 func (b *Bot) reactionUserIsBot(s *bot.Client, guildID, userID string) bool {
@@ -794,6 +789,9 @@ func quoteLogText(value, empty string) string {
 }
 
 func (b *Bot) sendEventLog(s *bot.Client, channelID, title, body, filename string) {
+	if snowflakeID(channelID) == 0 {
+		return
+	}
 	content := "**" + title + "**\n" + body
 	message := &discord.MessageCreate{
 		Content:         content,

@@ -1,6 +1,7 @@
 package discord
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -14,16 +15,21 @@ import (
 // args contains the full argument string (reason, or duration+reason for tban/mute)
 // targetID is the resolved target user ID
 func (b *Bot) executePrefixCommand(s *bot.Client, channelID, callerID, action, args, targetID string) {
-	banner := b.newBanner()
+	banner := b.bannerFor(s)
 	parts := strings.Fields(args)
 	failed := func(err error) {
+		var denied errDiscordPermission
+		if errors.As(err, &denied) {
+			_, _ = s.Rest.CreateMessage(snowflakeID(channelID), *noPingMessage(string(denied)))
+			return
+		}
 		b.Logger.Error(action+" failed", zap.Error(err))
 		_, _ = s.Rest.CreateMessage(snowflakeID(channelID), *noPingMessage("Couldn't execute " + action + ". Check my permissions and role hierarchy."))
 	}
 
 	switch action {
 	case "ban":
-		resp, _, err := b.Moderation.Ban(banner, callerID, targetID, args, b.Config)
+		resp, _, err := b.Moderation.Ban(banner, callerID, targetID, args)
 		if err != nil {
 			failed(err)
 			return
@@ -31,7 +37,7 @@ func (b *Bot) executePrefixCommand(s *bot.Client, channelID, callerID, action, a
 		s.Rest.CreateMessage(snowflakeID(channelID), *noPingMessage(resp))
 
 	case "dban":
-		resp, _, err := b.Moderation.DBan(banner, callerID, targetID, args, b.Config)
+		resp, _, err := b.Moderation.DBan(banner, callerID, targetID, args)
 		if err != nil {
 			failed(err)
 			return
@@ -51,7 +57,7 @@ func (b *Bot) executePrefixCommand(s *bot.Client, channelID, callerID, action, a
 		if len(parts) > 1 {
 			reason = strings.Join(parts[1:], " ")
 		}
-		resp, _, err := b.Moderation.TBan(banner, callerID, targetID, dur, reason, b.Config)
+		resp, _, err := b.Moderation.TBan(banner, callerID, targetID, dur, reason)
 		if err != nil {
 			failed(err)
 			return
@@ -59,7 +65,7 @@ func (b *Bot) executePrefixCommand(s *bot.Client, channelID, callerID, action, a
 		s.Rest.CreateMessage(snowflakeID(channelID), *noPingMessage(resp))
 
 	case "sban":
-		resp, _, err := b.Moderation.SBan(banner, callerID, targetID, args, b.Config)
+		resp, _, err := b.Moderation.SBan(banner, callerID, targetID, args)
 		if err != nil {
 			failed(err)
 			return
@@ -67,7 +73,7 @@ func (b *Bot) executePrefixCommand(s *bot.Client, channelID, callerID, action, a
 		s.Rest.CreateMessage(snowflakeID(channelID), *noPingMessage(resp))
 
 	case "kick":
-		resp, _, err := b.Moderation.Kick(banner, callerID, targetID, args, b.Config)
+		resp, _, err := b.Moderation.Kick(banner, callerID, targetID, args)
 		if err != nil {
 			failed(err)
 			return
@@ -87,7 +93,7 @@ func (b *Bot) executePrefixCommand(s *bot.Client, channelID, callerID, action, a
 		if len(parts) > 1 {
 			reason = strings.Join(parts[1:], " ")
 		}
-		resp, _, err := b.Moderation.Mute(banner, callerID, targetID, dur, reason, b.Config)
+		resp, _, err := b.Moderation.Mute(banner, callerID, targetID, dur, reason)
 		if err != nil {
 			failed(err)
 			return
@@ -95,7 +101,7 @@ func (b *Bot) executePrefixCommand(s *bot.Client, channelID, callerID, action, a
 		s.Rest.CreateMessage(snowflakeID(channelID), *noPingMessage(resp))
 
 	case "warn":
-		resp, extras, _, err := b.Warn.Warn(banner, callerID, targetID, args, b.Config)
+		resp, extras, _, err := b.Warn.Warn(banner, callerID, targetID, args)
 		if err != nil {
 			failed(err)
 			return

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/MetrolistGroup/metrobot/config"
 	"io"
 	"net/http"
 	"strings"
@@ -55,6 +56,37 @@ func TestConfirmedSupportFixIsSavedOnlyForTheAsker(t *testing.T) {
 	}
 }
 
+func TestConfirmedSupportFixDoesNotOutliveCancellationOrReset(t *testing.T) {
+	for _, reset := range []bool{false, true} {
+		t.Run(fmt.Sprint("reset=", reset), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			b, _, _ := newSupportDecisionTestBot(t)
+			m := supportTestMessage(30)
+			m.Content = "that worked, thanks"
+			b.garminDecisions = supportDecisionTestFunc(func(context.Context, cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+				if reset {
+					b.garminAIMu.Lock()
+					b.garminContextCutoffs = map[string]string{m.ChannelID.String(): m.ID.String()}
+					b.garminAIMu.Unlock()
+				} else {
+					cancel()
+				}
+				return supportNoulDecision("confirms_fix", .99), nil
+			})
+			messages := []cmd.GarminAIMessage{
+				{Role: "user", Name: garminAIMessageName(m.Author.ID.String()), Content: "how do I translate lyrics?"},
+				{Role: "assistant", Content: "Open lyrics, then tap Translate."},
+				{Role: "user", Content: m.Content},
+			}
+			b.recordConfirmedSupportFix(ctx, m, messages)
+			if note, err := b.Notes.DB.GetNote(supportConfirmedFixesNote); err != nil || note != "" {
+				t.Fatalf("canceled or reset request persisted support history: %q err=%v", note, err)
+			}
+		})
+	}
+}
+
 func TestConfirmedSupportFixesStayNewestFirstAndBounded(t *testing.T) {
 	b, _, _ := newSupportDecisionTestBot(t)
 	day := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
@@ -75,7 +107,7 @@ func TestConfirmedSupportFixesStayNewestFirstAndBounded(t *testing.T) {
 
 func TestSupportRetryCarriesCheckerHint(t *testing.T) {
 	checks := 0
-	b := &Bot{}
+	b := &Bot{Config: testConfig(config.Config{})}
 	b.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
 		checks++
 		response := supportNoulDecision("grounded", .01)
@@ -140,7 +172,7 @@ func TestSupportEvidenceCheckFitsLargeResearch(t *testing.T) {
 			cmd.GarminAIMessage{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{{ID: id, Function: cmd.GarminAIFunctionCall{Name: "get_metrolist_issue", Arguments: `{"number":1}`}}}},
 			cmd.GarminAIMessage{Role: "tool", ToolCallID: id, Content: strings.Repeat("x", 12<<10)})
 	}
-	b := &Bot{garminDecisions: supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+	b := &Bot{Config: testConfig(config.Config{}), garminDecisions: supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
 		if body, _ := json.Marshal(request); len(body) > cmd.DecisionsBodyMax-512 {
 			t.Fatalf("evidence request is %d bytes", len(body))
 		}
@@ -156,7 +188,7 @@ func TestSupportEvidenceCheckFitsLargeResearch(t *testing.T) {
 }
 
 func TestSupportResearchToolBudget(t *testing.T) {
-	b := &Bot{garminDecisions: supportDecisionTestFunc(func(context.Context, cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
+	b := &Bot{Config: testConfig(config.Config{}), garminDecisions: supportDecisionTestFunc(func(context.Context, cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
 		return supportNoulDecision("grounded", .99), nil
 	})}
 	original := http.DefaultTransport
@@ -185,5 +217,47 @@ func TestSupportResearchToolBudget(t *testing.T) {
 	result, err := b.runGarminAI(context.Background(), nil, supportTestMessage(6), []cmd.GarminAIMessage{{Role: "user", Content: "how do I translate lyrics?"}})
 	if err != nil || result.Answer != "answer" || refused != 1 {
 		t.Fatalf("result=%+v err=%v refused=%d", result, err, refused)
+	}
+}
+
+func TestConfirmedSupportFixStoresWholeAnswersOnce(t *testing.T) {
+	b, _, _ := newSupportDecisionTestBot(t)
+	answer := strings.Repeat("Keep the existing app settings unchanged. ", 40) + "SAFETY_WARNING: back up before reinstalling; this removes local data."
+	for range 2 {
+		if err := b.appendConfirmedSupportFix("reinstall issue", answer, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	saved, err := b.Notes.DB.GetNote(supportConfirmedFixesNote)
+	if err != nil || strings.Count(saved, "Reported problem") != 1 || !strings.Contains(saved, answer) {
+		t.Fatalf("saved=%q err=%v", saved, err)
+	}
+	oversized := strings.Repeat("y", supportConfirmedAnswerMax) + " SAFETY_WARNING"
+	if err := b.appendConfirmedSupportFix("other issue", oversized, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := b.Notes.DB.GetNote(supportConfirmedFixesNote); after != saved {
+		t.Fatal("oversized answer was stored clipped")
+	}
+}
+
+func TestConfirmedSupportFixEvictionKeepsAnswerHeadingsAndWarnings(t *testing.T) {
+	b, _, _ := newSupportDecisionTestBot(t)
+	var answers []string
+	for index := range 20 {
+		answer := fmt.Sprintf("Answer %d: %s\n### Warning\nBack up first. SAFETY-%d", index, strings.Repeat("Keep the existing settings. ", 45), index)
+		answers = append(answers, answer)
+		if err := b.appendConfirmedSupportFix("installation", answer, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	saved, err := b.Notes.DB.GetNote(supportConfirmedFixesNote)
+	if err != nil || len(saved) > supportConfirmedFixesMax || !strings.Contains(saved, answers[len(answers)-1]) {
+		t.Fatalf("confirmed fixes were not saved within their budget: %v", err)
+	}
+	for index, answer := range answers {
+		if strings.Contains(saved, fmt.Sprintf("Confirmed answer: Answer %d:", index)) && !strings.Contains(saved, answer) {
+			t.Fatalf("answer %d was retained without its complete warning", index)
+		}
 	}
 }

@@ -2,6 +2,7 @@ package discord
 
 import (
 	"context"
+	"github.com/MetrolistGroup/metrobot/config"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -82,7 +83,7 @@ func TestAppSupportIsolatesMemoryAndPromptOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := &Bot{DB: database, garminMemory: memory}
+	b := &Bot{Config: testConfig(config.Config{}), DB: database, garminMemory: memory}
 	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 		if !strings.HasPrefix(request.SystemPrompt, garminAppSupportSystemPrompt) || !strings.Contains(request.SystemPrompt, "Dedicated support core:") {
 			t.Fatal("support request lost its dedicated prompt or skill")
@@ -127,7 +128,7 @@ func TestAppSupportIdentifiesUnreadAttachments(t *testing.T) {
 			if attached {
 				message.Attachments = []discord.Attachment{{Filename: "screenshot.png", URL: "https://invalid.example/must-not-fetch.png"}}
 			}
-			b := &Bot{garminAI: garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+			b := &Bot{Config: testConfig(config.Config{}), garminAI: garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 				if got := strings.Contains(request.Context, "current message has 1 attachment(s)"); got != attached {
 					t.Errorf("attachment metadata present = %v, want %v", got, attached)
 				}

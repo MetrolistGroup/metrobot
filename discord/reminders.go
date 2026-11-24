@@ -1,6 +1,7 @@
 package discord
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/discord"
+	"github.com/disgoorg/disgo/rest"
 	"github.com/disgoorg/snowflake/v2"
 	"go.uber.org/zap"
 )
@@ -19,6 +21,10 @@ const (
 	reminderMaxPending = 20
 	reminderMaxChars   = 400
 )
+
+// reminderRetryDelays bounds in-process retries after a failed delivery. The
+// row stays stored, so a restart tries again.
+var reminderRetryDelays = []time.Duration{time.Minute, 5 * time.Minute, 30 * time.Minute}
 
 var reminderUnits = map[byte]time.Duration{
 	's': time.Second,
@@ -127,37 +133,72 @@ func (b *Bot) handleRemind(s *bot.Client, m *discord.Message, args string) {
 // scheduleReminder arms the in-process timer for one stored reminder. Pending rows are
 // reloaded from the database on startup, so a stopped timer only delays delivery.
 func (b *Bot) scheduleReminder(id int64, userID, channelID string, due time.Time, content string) {
+	b.armReminder(id, time.Until(due), func() { b.deliverReminderAttempt(id, userID, channelID, content, 0) })
+}
+
+func (b *Bot) armReminder(id int64, delay time.Duration, deliver func()) {
 	b.reminderMu.Lock()
+	if b.lifecycle != nil && b.lifecycle.Err() != nil {
+		b.reminderMu.Unlock()
+		return
+	}
 	if b.reminderTimers == nil {
 		b.reminderTimers = make(map[int64]*time.Timer)
 	}
-	b.reminderTimers[id] = time.AfterFunc(time.Until(due), func() {
+	b.reminderTimers[id] = time.AfterFunc(delay, func() {
 		b.reminderMu.Lock()
 		delete(b.reminderTimers, id)
 		b.reminderMu.Unlock()
-		b.deliverReminder(id, userID, channelID, content)
+		if b.lifecycle != nil && b.lifecycle.Err() != nil {
+			return
+		}
+		deliver()
 	})
 	b.reminderMu.Unlock()
 }
 
 // deliverReminder pings the user in the channel where the reminder was set. If that
 // channel is gone (or the bot lost access), it falls back to the user's DMs.
-func (b *Bot) deliverReminder(id int64, userID, channelID, content string) {
+// It reports whether Discord confirmed a delivery.
+func (b *Bot) deliverReminder(id int64, userID, channelID, content string) bool {
 	content = reminderContent(userID, content)
-	if _, err := b.Client.Rest.CreateMessage(snowflakeID(channelID), discord.MessageCreate{
+	_, err := b.Client.Rest.CreateMessage(snowflakeID(channelID), discord.MessageCreate{
 		Content:         content,
 		AllowedMentions: &discord.AllowedMentions{Users: []snowflake.ID{snowflakeID(userID)}},
-	}); err != nil {
+	})
+	if err != nil && reminderSendRejected(err) {
 		b.Logger.Info("reminder channel unavailable, falling back to DMs",
 			zap.Int64("reminder_id", id), zap.String("channel_id", channelID), zap.Error(err))
-		if dmErr := dmUser(b.Client, userID, content); dmErr != nil {
-			b.Logger.Error("failed to deliver reminder",
-				zap.Int64("reminder_id", id), zap.String("user_id", userID), zap.Error(dmErr))
-		}
+		err = dmUser(b.Client, userID, content)
+	}
+	if err != nil {
+		// A lost response may hide a sent message, so an uncertain channel
+		// failure is retried later rather than also sent by DM right away.
+		b.Logger.Error("failed to deliver reminder",
+			zap.Int64("reminder_id", id), zap.String("user_id", userID), zap.Error(err))
+		return false
 	}
 	if err := b.DB.DeleteReminder(id); err != nil {
 		b.Logger.Error("failed to delete delivered reminder", zap.Int64("reminder_id", id), zap.Error(err))
 	}
+	return true
+}
+
+func (b *Bot) deliverReminderAttempt(id int64, userID, channelID, content string, attempt int) {
+	if b.deliverReminder(id, userID, channelID, content) || attempt >= len(reminderRetryDelays) {
+		return
+	}
+	b.armReminder(id, reminderRetryDelays[attempt], func() {
+		b.deliverReminderAttempt(id, userID, channelID, content, attempt+1)
+	})
+}
+
+// reminderSendRejected reports whether Discord answered with a client error,
+// meaning nothing was posted.
+func reminderSendRejected(err error) bool {
+	var restErr *rest.Error
+	return errors.As(err, &restErr) && restErr.Response != nil &&
+		restErr.Response.StatusCode >= 400 && restErr.Response.StatusCode < 500
 }
 
 func reminderContent(userID, content string) string {

@@ -20,8 +20,10 @@ import (
 
 // TimerManager manages active timers for cleanup on shutdown and automatic memory management
 type TimerManager struct {
-	timers map[string]*time.Timer
-	mutex  sync.RWMutex
+	timers  map[string]*time.Timer
+	mutex   sync.RWMutex
+	stopped bool
+	running sync.WaitGroup
 }
 
 // NewTimerManager creates a new TimerManager
@@ -31,23 +33,34 @@ func NewTimerManager() *TimerManager {
 	}
 }
 
-// AddTimer adds a timer with automatic cleanup when it completes.
+// AddTimer adds a timer with automatic cleanup when it completes. After
+// StopAll it does nothing, so in-flight callbacks cannot schedule retries.
 func (tm *TimerManager) AddTimer(id string, duration time.Duration, cleanupCallback func()) {
-	timer := time.AfterFunc(duration, func() {
+	tm.mutex.Lock()
+	defer tm.mutex.Unlock()
+	if tm.stopped {
+		return
+	}
+	if old, exists := tm.timers[id]; exists {
+		old.Stop()
+	}
+	var timer *time.Timer
+	// The callback blocks on the mutex until the timer is registered below.
+	timer = time.AfterFunc(duration, func() {
 		tm.mutex.Lock()
+		if tm.stopped || tm.timers[id] != timer {
+			tm.mutex.Unlock()
+			return
+		}
 		delete(tm.timers, id)
+		tm.running.Add(1)
 		tm.mutex.Unlock()
+		defer tm.running.Done()
 
 		if cleanupCallback != nil {
 			cleanupCallback()
 		}
 	})
-
-	tm.mutex.Lock()
-	defer tm.mutex.Unlock()
-	if old, exists := tm.timers[id]; exists {
-		old.Stop()
-	}
 	tm.timers[id] = timer
 }
 
@@ -62,15 +75,17 @@ func (tm *TimerManager) RemoveTimer(id string) {
 	}
 }
 
-// StopAll stops and removes all managed timers
+// StopAll rejects new timers, cancels pending ones and waits for running callbacks.
 func (tm *TimerManager) StopAll() {
 	tm.mutex.Lock()
-	defer tm.mutex.Unlock()
 
+	tm.stopped = true
 	for id, timer := range tm.timers {
 		timer.Stop()
 		delete(tm.timers, id)
 	}
+	tm.mutex.Unlock()
+	tm.running.Wait()
 }
 
 // Count returns the number of active timers (useful for monitoring)
@@ -120,8 +135,7 @@ func main() {
 	timerManager := NewTimerManager()
 
 	moderationHandler := &cmd.ModerationHandler{DB: database, Scheduler: timerManager}
-	warnHandler := &cmd.WarnHandler{DB: database}
-	adminHandler := &cmd.AdminHandler{DB: database}
+	warnHandler := &cmd.WarnHandler{DB: database, Moderation: moderationHandler}
 	pingHandler := &cmd.PingHandler{}
 	caseHandler := &cmd.CaseHandler{DB: database}
 
@@ -131,7 +145,7 @@ func main() {
 
 	discordBot, err := discord.New(cfg, database, logger,
 		notesHandler, versionHandler, actionsHandler,
-		moderationHandler, warnHandler, adminHandler, pingHandler,
+		moderationHandler, warnHandler, pingHandler,
 		caseHandler,
 	)
 	if err != nil {
@@ -144,7 +158,7 @@ func main() {
 
 	telegramBot, err := telegram.New(cfg, database, logger,
 		notesHandler, versionHandler, actionsHandler,
-		moderationHandler, warnHandler, adminHandler, pingHandler,
+		moderationHandler, warnHandler, pingHandler,
 		caseHandler,
 	)
 	if err != nil {
@@ -158,8 +172,8 @@ func main() {
 	logger.Info("both bots are running. Press Ctrl+C to stop.")
 
 	// Restore timed moderation after both bots are started so expiry can call the platform APIs.
-	restoreTimedBans(database, discordBot, telegramBot, logger, timerManager)
-	restoreTimedMutes(database, discordBot, telegramBot, logger, timerManager)
+	restoreTimedBans(database, moderationHandler, discordBot, telegramBot, logger, timerManager)
+	restoreTimedMutes(database, moderationHandler, discordBot, telegramBot, logger, timerManager)
 	if err := discordBot.RestoreReminders(); err != nil {
 		logger.Error("failed to restore reminders", zap.Error(err))
 	}
@@ -179,7 +193,7 @@ func main() {
 	logger.Info("graceful shutdown complete")
 }
 
-func restoreTimedBans(database *db.DB, discordBot *discord.Bot, telegramBot *telegram.Bot, logger *zap.Logger, timerManager *TimerManager) {
+func restoreTimedBans(database *db.DB, moderation *cmd.ModerationHandler, discordBot *discord.Bot, telegramBot *telegram.Bot, logger *zap.Logger, timerManager *TimerManager) {
 	bans, err := database.GetPendingTimedBans()
 	if err != nil {
 		logger.Error("failed to load pending timed bans", zap.Error(err))
@@ -188,67 +202,26 @@ func restoreTimedBans(database *db.DB, discordBot *discord.Bot, telegramBot *tel
 
 	now := time.Now().Unix()
 	for _, ban := range bans {
-		ban := ban
-		if ban.ExpiresAt <= now {
-			logger.Info("expired timed ban found, removing",
-				zap.Int64("ban_id", ban.ID),
-				zap.String("user_id", ban.UserID),
-			)
-			if err := unbanTimedUser(ban.Platform, ban.UserID, discordBot, telegramBot); err != nil {
-				logger.Error("failed to unban expired timed ban", zap.Error(err), zap.String("user_id", ban.UserID))
-			}
-			if err := database.DeleteTimedBan(ban.ID); err != nil {
-				logger.Error("failed to delete expired timed ban", zap.Error(err))
-			}
-			if err := database.LogModAction(ban.Platform, "system", ban.UserID, "unban", "timed ban expired (bot was offline)"); err != nil {
-				logger.Error("failed to log mod action for expired ban", zap.Error(err))
-			}
+		banner, err := platformBanner(ban.Platform, ban.ChatID, discordBot, telegramBot)
+		if err != nil {
+			logger.Error("cannot restore timed ban", zap.Int64("ban_id", ban.ID), zap.Error(err))
 			continue
 		}
-
-		remaining := time.Duration(ban.ExpiresAt-now) * time.Second
+		remaining := max(time.Duration(ban.ExpiresAt-now)*time.Second, 0)
 		logger.Info("restoring timed ban",
 			zap.Int64("ban_id", ban.ID),
 			zap.String("user_id", ban.UserID),
 			zap.Duration("remaining", remaining),
 		)
-
-		// Create a unique ID for this ban timer
-		banTimerID := fmt.Sprintf("ban_%d", ban.ID)
-
-		// Add timer with cleanup callback
-		timerManager.AddTimer(banTimerID, remaining, func() {
-			logger.Info("timed ban expired, unbanning",
-				zap.Int64("ban_id", ban.ID),
-				zap.String("user_id", ban.UserID),
-			)
-			if err := unbanTimedUser(ban.Platform, ban.UserID, discordBot, telegramBot); err != nil {
-				logger.Error("failed to unban timed ban", zap.Error(err), zap.String("user_id", ban.UserID))
-			}
-			if err := database.DeleteTimedBan(ban.ID); err != nil {
-				logger.Error("failed to delete expired timed ban", zap.Error(err), zap.Int64("ban_id", ban.ID))
-			}
-			if err := database.LogModAction(ban.Platform, "system", ban.UserID, "unban", "timed ban expired"); err != nil {
-				logger.Error("failed to log mod action for ban expiry", zap.Error(err), zap.String("user_id", ban.UserID))
-			}
+		timerManager.AddTimer(fmt.Sprintf("ban_%d", ban.ID), remaining, func() {
+			moderation.ExpireTimedBan(banner, ban.ID, ban.UserID)
 		})
 	}
 
 	logger.Info("timed bans restored", zap.Int("count", len(bans)))
 }
 
-func unbanTimedUser(platform, userID string, discordBot *discord.Bot, telegramBot *telegram.Bot) error {
-	switch platform {
-	case "discord":
-		return discordBot.NewBanner().Unban(userID)
-	case "telegram":
-		return telegramBot.NewBanner().Unban(userID)
-	default:
-		return fmt.Errorf("unsupported platform %q", platform)
-	}
-}
-
-func restoreTimedMutes(database *db.DB, discordBot *discord.Bot, telegramBot *telegram.Bot, logger *zap.Logger, timerManager *TimerManager) {
+func restoreTimedMutes(database *db.DB, moderation *cmd.ModerationHandler, discordBot *discord.Bot, telegramBot *telegram.Bot, logger *zap.Logger, timerManager *TimerManager) {
 	mutes, err := database.GetPendingMutes()
 	if err != nil {
 		logger.Error("failed to load pending timed mutes", zap.Error(err))
@@ -257,73 +230,38 @@ func restoreTimedMutes(database *db.DB, discordBot *discord.Bot, telegramBot *te
 
 	now := time.Now().Unix()
 	for _, mute := range mutes {
-		mute := mute
-		if mute.ExpiresAt <= now {
-			logger.Info("expired timed mute found, removing",
-				zap.Int64("mute_id", mute.ID),
-				zap.String("user_id", mute.UserID),
-			)
-			if err := unmuteTimedUser(mute.Platform, mute.UserID, discordBot, telegramBot); err != nil {
-				logger.Error("failed to unmute expired timed mute", zap.Error(err), zap.String("user_id", mute.UserID))
-			}
-			if err := database.DeleteMute(mute.ID); err != nil {
-				logger.Error("failed to delete expired timed mute", zap.Error(err))
-			}
-			if err := database.LogModAction(mute.Platform, "system", mute.UserID, "unmute", "timed mute expired (bot was offline)"); err != nil {
-				logger.Error("failed to log mod action for expired mute", zap.Error(err))
-			}
+		banner, err := platformBanner(mute.Platform, mute.ChatID, discordBot, telegramBot)
+		if err != nil {
+			logger.Error("cannot restore timed mute", zap.Int64("mute_id", mute.ID), zap.Error(err))
 			continue
 		}
-
-		remaining := time.Duration(mute.ExpiresAt-now) * time.Second
+		remaining := max(time.Duration(mute.ExpiresAt-now)*time.Second, 0)
 		logger.Info("restoring timed mute",
 			zap.Int64("mute_id", mute.ID),
 			zap.String("user_id", mute.UserID),
 			zap.Duration("remaining", remaining),
 		)
-
-		// Create a unique ID for this mute timer
-		muteTimerID := fmt.Sprintf("mute_%d", mute.ID)
-
-		// Add timer with cleanup callback
-		timerManager.AddTimer(muteTimerID, remaining, func() {
-			logger.Info("timed mute expired, unmuting",
-				zap.Int64("mute_id", mute.ID),
-				zap.String("user_id", mute.UserID),
-			)
-
-			// Unrestrict the user based on platform
-			if mute.Platform == "discord" {
-				banner := discordBot.NewBanner()
-				if err := banner.Unrestrict(mute.UserID); err != nil {
-					logger.Error("failed to unrestrict Discord user", zap.Error(err), zap.String("user_id", mute.UserID))
-				}
-			} else if mute.Platform == "telegram" {
-				banner := telegramBot.NewBanner()
-				if err := banner.Unrestrict(mute.UserID); err != nil {
-					logger.Error("failed to unrestrict Telegram user", zap.Error(err), zap.String("user_id", mute.UserID))
-				}
-			}
-
-			if err := database.DeleteMute(mute.ID); err != nil {
-				logger.Error("failed to delete expired timed mute", zap.Error(err), zap.Int64("mute_id", mute.ID))
-			}
-			if err := database.LogModAction(mute.Platform, "system", mute.UserID, "unmute", "timed mute expired"); err != nil {
-				logger.Error("failed to log mod action for mute expiry", zap.Error(err), zap.String("user_id", mute.UserID))
-			}
+		timerManager.AddTimer(fmt.Sprintf("mute_%d", mute.ID), remaining, func() {
+			moderation.ExpireMute(banner, mute.ID, mute.UserID)
 		})
 	}
 
 	logger.Info("timed mutes restored", zap.Int("count", len(mutes)))
 }
 
-func unmuteTimedUser(platform, userID string, discordBot *discord.Bot, telegramBot *telegram.Bot) error {
+// platformBanner returns the banner for a stored punishment's platform.
+func platformBanner(platform, chatID string, discordBot *discord.Bot, telegramBot *telegram.Bot) (cmd.PlatformBanner, error) {
+	var banner cmd.PlatformBanner
 	switch platform {
-	case "discord":
-		return discordBot.NewBanner().Unrestrict(userID)
-	case "telegram":
-		return telegramBot.NewBanner().Unrestrict(userID)
+	case cmd.PlatformDiscord:
+		banner = discordBot.NewBanner()
+	case cmd.PlatformTelegram:
+		banner = telegramBot.NewBanner()
 	default:
-		return fmt.Errorf("unsupported platform %q", platform)
+		return nil, fmt.Errorf("unsupported platform %q", platform)
 	}
+	if banner.ChatID() != chatID {
+		return nil, fmt.Errorf("stored %s chat %q differs from configured chat %q", platform, chatID, banner.ChatID())
+	}
+	return banner, nil
 }

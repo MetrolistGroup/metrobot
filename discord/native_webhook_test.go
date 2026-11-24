@@ -45,7 +45,7 @@ func TestNativeThreadWebhookFailuresKeepOriginalAndRollBackRepost(t *testing.T) 
 				}
 				return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 			})})
-			b := &Bot{Config: &config.Config{DiscordGuildID: "300"}, Logger: zap.NewNop()}
+			b := &Bot{Config: testConfig(config.Config{DiscordGuildID: "300"}), Logger: zap.NewNop()}
 			message := &discord.Message{ID: 100, ChannelID: 200, GuildID: ptr(snowflake.ID(300)), Content: "https://youtu.be/video?si=source", Author: discord.User{ID: 400, Username: "author"}}
 			if b.repostCleanYouTubeLinks(client, message) {
 				t.Fatal("failed repost/delete reported success")

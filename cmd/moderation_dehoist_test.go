@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -8,20 +9,22 @@ import (
 	"github.com/MetrolistGroup/metrobot/db"
 )
 
-type fakeDehoistConfig struct{}
-
-func (fakeDehoistConfig) GetPermaAdminIDs(platform string) []string {
-	if platform == "discord" {
-		return []string{"admin-1"}
-	}
-	return nil
-}
-
 type fakeDehoistBanner struct {
 	platform string
 	members  []MemberInfo
 
-	setCalls map[string]string
+	setCalls      map[string]string
+	deniedTargets map[string]bool
+}
+
+func (b *fakeDehoistBanner) IsAdministrator(userID string) (bool, error) {
+	return userID == "admin-1", nil
+}
+func (b *fakeDehoistBanner) CanManageMember(_, targetID, _ string) error {
+	if b.deniedTargets[targetID] {
+		return errors.New("target is above the caller")
+	}
+	return nil
 }
 
 func (b *fakeDehoistBanner) Ban(userID, reason string) error    { return nil }
@@ -73,7 +76,7 @@ func TestDehoistBulkUsesOriginalNamesAndSkipsProtectedMembers(t *testing.T) {
 		},
 	}
 
-	resp, err := handler.Dehoist(banner, "", false, fakeDehoistConfig{})
+	resp, err := handler.Dehoist(banner, "mod", "", false)
 	if err != nil {
 		t.Fatalf("Dehoist bulk: %v", err)
 	}
@@ -121,7 +124,7 @@ func TestDehoistBulkDryRunDoesNotChangeNicknames(t *testing.T) {
 		},
 	}
 
-	resp, err := handler.Dehoist(banner, "", true, fakeDehoistConfig{})
+	resp, err := handler.Dehoist(banner, "mod", "", true)
 	if err != nil {
 		t.Fatalf("Dehoist dry run: %v", err)
 	}
@@ -136,6 +139,24 @@ func TestDehoistBulkDryRunDoesNotChangeNicknames(t *testing.T) {
 	}
 }
 
+func TestDehoistBulkRespectsCallerTargetPermissions(t *testing.T) {
+	handler := &ModerationHandler{DB: openModerationTestDB(t)}
+	banner := &fakeDehoistBanner{
+		platform:      "discord",
+		deniedTargets: map[string]bool{"higher": true},
+		members:       []MemberInfo{{UserID: "lower", OriginalName: "!!!Alice"}, {UserID: "higher", OriginalName: "!!!Bob"}},
+	}
+	if _, err := handler.Dehoist(banner, "mod", "", false); err != nil {
+		t.Fatal(err)
+	}
+	if len(banner.setCalls) != 1 || banner.setCalls["lower"] == "" || banner.setCalls["higher"] != "" {
+		t.Fatalf("bulk dehoist bypassed caller hierarchy: %v", banner.setCalls)
+	}
+	if _, err := handler.Dehoist(banner, "mod", "higher", false); err == nil {
+		t.Fatal("single-target dehoist bypassed caller hierarchy")
+	}
+}
+
 func TestDehoistSkipsAdminTarget(t *testing.T) {
 	database := openModerationTestDB(t)
 	handler := &ModerationHandler{DB: database}
@@ -144,7 +165,7 @@ func TestDehoistSkipsAdminTarget(t *testing.T) {
 		platform: "discord",
 	}
 
-	resp, err := handler.Dehoist(banner, "admin-1", false, fakeDehoistConfig{})
+	resp, err := handler.Dehoist(banner, "mod", "admin-1", false)
 	if err != nil {
 		t.Fatalf("Dehoist admin: %v", err)
 	}

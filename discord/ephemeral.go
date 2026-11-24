@@ -60,9 +60,9 @@ func respondPublicAllowEmbeds(s *bot.Client, i discord.Interaction, content stri
 }
 
 func deferResponse(s *bot.Client, i discord.Interaction, ephemeral bool) error {
-	flags := discord.MessageFlagSuppressEmbeds
+	var flags discord.MessageFlags
 	if ephemeral {
-		flags |= discord.MessageFlagEphemeral
+		flags = discord.MessageFlagEphemeral
 	}
 
 	return s.Rest.CreateInteractionResponse(i.ID(), i.Token(), discord.InteractionResponse{

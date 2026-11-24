@@ -74,6 +74,12 @@ func TestCompareVerdict(t *testing.T) {
 		{"Memory specs", "Supported memory types", "DDR4-2666", "DDR5-5600", 0},
 		{"Detailed specifications", "L3 cache", "12 MB (shared)", "512 KB", 0},
 		{"Connectivity", "Wi-Fi", "7", "7", 3},
+		{"Display", "Response time", "4.7 ms", "9.4 ms", 1},
+		{"Network", "Latency", "40 ms", "25 ms", 2},
+		{"Battery", "Charging time", "1 h", "2 h", 1},
+		{"Battery", "Battery life", "20 h", "25 h", 2},
+		{"Display", "PWM", "240 Hz", "120 Hz", 1},
+		{"Camera", "Shutter lag", "120 ms", "80 ms", 0},
 	} {
 		if got, _ := compareVerdict(tt.section, tt.name, tt.first, tt.second); got != tt.winner {
 			t.Errorf("%s · %s: %q vs %q = %d, want %d", tt.section, tt.name, tt.first, tt.second, got, tt.winner)

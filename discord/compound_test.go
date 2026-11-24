@@ -51,7 +51,7 @@ func TestCompoundSigmaCommands(t *testing.T) {
 	client := mustTestClient(t)
 	client.Rest = testREST(server.Client())
 	client.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: client.Rest.HTTPClient().Transport, target: server.URL}
-	b := &Bot{DB: database, Config: &config.Config{DiscordGuildID: "12", WolframAppIDs: []string{"unused"}}, Logger: zap.NewNop()}
+	b := &Bot{DB: database, Config: testConfig(config.Config{DiscordGuildID: "12", WolframAppIDs: []string{"unused"}}), Logger: zap.NewNop()}
 
 	for _, test := range []struct {
 		name, content string
@@ -84,7 +84,7 @@ func TestCompoundSigmaCommandsIgnoreNonCommands(t *testing.T) {
 		"ordinary text", "a bare >>wa 2+2 in prose", "{{}}", "{{not a command}}",
 		"{{>>unknown}}", "{{>>wa 2+2}", "{>>wa 2+2}}", "{{>>wa 2+2",
 	} {
-		if (&Bot{}).handleCompoundSigmaCommands(nil, &discord.Message{}, content) {
+		if testBot().handleCompoundSigmaCommands(nil, &discord.Message{}, content) {
 			t.Errorf("handled non-command %q", content)
 		}
 	}

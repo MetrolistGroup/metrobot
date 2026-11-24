@@ -130,6 +130,8 @@ func TestGitHubCachesReturnIndependentValues(t *testing.T) {
 			fmt.Fprint(w, `{"private":false}`)
 		} else if strings.HasSuffix(r.URL.Path, "/runs") {
 			fmt.Fprint(w, `{"workflow_runs":[{"run_number":1,"display_title":"original","conclusion":"success"}]}`)
+		} else if strings.HasSuffix(r.URL.Path, "/releases/latest") {
+			fmt.Fprint(w, `{"tag_name":"v1","assets":[{"name":"original"}]}`)
 		} else {
 			fmt.Fprint(w, `[{"tag_name":"v1","assets":[{"name":"original"}]}]`)
 		}
@@ -183,8 +185,8 @@ func TestGitHubCachesReturnIndependentValues(t *testing.T) {
 		t.Fatalf("cached releases cancellation = %v", err)
 	}
 	// Version data still refreshes after its existing TTL.
-	releases.fetchedAt = time.Now().Add(-6 * time.Minute)
-	if _, err := releases.FetchReleases(ctx); err != nil || calls.Load() != 6 {
+	releases.latestFetchedAt = time.Now().Add(-6 * time.Minute)
+	if _, err := releases.GetRelease(ctx, "latest"); err != nil || calls.Load() != 6 {
 		t.Fatalf("expired releases: calls=%d, err=%v", calls.Load(), err)
 	}
 }

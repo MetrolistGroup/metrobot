@@ -49,7 +49,7 @@ func TestBoardDescriptionIncludesReplyContext(t *testing.T) {
 }
 
 func TestCleanerWebhookRepostsCanCreateAndUpdateBothBoards(t *testing.T) {
-	for _, board := range []reactionBoard{{"starboard", defaultStarboardEmoji}, {"sobboard", sobboardEmoji}} {
+	for _, board := range []reactionBoard{{"starboard", defaultStarboardEmoji}, {"sobboard", defaultSobboardEmoji}} {
 		t.Run(board.name, func(t *testing.T) {
 			database, err := db.Open(filepath.Join(t.TempDir(), "boards.db"))
 			if err != nil {
@@ -97,7 +97,7 @@ func TestCleanerWebhookRepostsCanCreateAndUpdateBothBoards(t *testing.T) {
 				}
 				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(body))), Request: r}, nil
 			})})
-			b := &Bot{DB: database, Config: &config.Config{DiscordGuildID: "300", StarboardChannelID: "500"}, Logger: zap.NewNop()}
+			b := &Bot{DB: database, Config: testConfig(config.Config{DiscordGuildID: "300", StarboardChannelID: "500"}), Logger: zap.NewNop()}
 			reaction := &events.MessageReactionAdd{GenericReaction: &events.GenericReaction{
 				MessageID: 100, ChannelID: 200, GuildID: ptr(snowflake.ID(300)), UserID: 400,
 				Emoji: discord.PartialEmoji{Name: ptr(board.emoji)},
@@ -118,10 +118,15 @@ func TestCleanerWebhookRepostsCanCreateAndUpdateBothBoards(t *testing.T) {
 }
 
 func TestScanProhibitedUnicodeReactionsRemovesAndWarns(t *testing.T) {
-	for _, test := range []struct{ name, emoji, reason string }{
-		{"flag", prohibitedFlagReaction, prohibitedFlagReactionReason},
-		{"symbol", prohibitedStarOfDavidReaction, prohibitedStarOfDavidReactionReason},
-		{"text symbol", prohibitedStarOfDavidTextReaction, prohibitedStarOfDavidReactionReason},
+	for _, test := range []struct {
+		name, emoji, reason string
+		admin, disabled     bool
+	}{
+		{name: "flag", emoji: prohibitedFlagReaction, reason: prohibitedFlagReactionReason},
+		{name: "symbol", emoji: prohibitedStarOfDavidReaction, reason: prohibitedStarOfDavidReactionReason},
+		{name: "text symbol", emoji: prohibitedStarOfDavidTextReaction, reason: prohibitedStarOfDavidReactionReason},
+		{name: "native admin is not warned", emoji: prohibitedFlagReaction, admin: true},
+		{name: "unconfigured reactions are ignored", emoji: prohibitedFlagReaction, disabled: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			database, err := db.Open(filepath.Join(t.TempDir(), "reactions.db"))
@@ -129,9 +134,19 @@ func TestScanProhibitedUnicodeReactionsRemovesAndWarns(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer database.Close()
+			authority := testGuildAuthority{guildID: "300", ownerID: "99", roles: []testRole{
+				{id: "60", permissions: discord.PermissionAdministrator, position: 2},
+				{id: "61", permissions: discord.PermissionModerateMembers, position: 5},
+			}, members: map[string][]string{"400": {}, testBotUserID: {"61"}}}
+			if test.admin {
+				authority.members["400"] = []string{"60"}
+			}
 			client := mustTestClient(t)
 			reactionPath := "/api/v10/channels/200/messages/100/reactions/" + test.emoji
 			client.Rest = testREST(&http.Client{Transport: garminRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if response, ok := authority.response(r); ok {
+					return response, nil
+				}
 				status, body := http.StatusOK, `{}`
 				switch r.Method + " " + r.URL.Path {
 				case "GET /api/v10/channels/200/messages":
@@ -152,16 +167,31 @@ func TestScanProhibitedUnicodeReactionsRemovesAndWarns(t *testing.T) {
 				return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 			})})
 			b := &Bot{
-				Client: client, DB: database, Config: &config.Config{DiscordGuildID: "300"},
+				Client: client, DB: database, Config: testConfig(config.Config{DiscordGuildID: "300"}),
 				Logger: zap.NewNop(), Warn: &cmd.WarnHandler{DB: database},
+			}
+			if test.disabled {
+				b.Config.Discord.Moderation.ProhibitedReactions = nil
 			}
 			result, err := b.scanProhibitedReactions(client, "200")
 			want := prohibitedReactionScanResult{MessagesChecked: 1, ReactionsFound: 1, ReactionsRemoved: 1, WarningsIssued: 1}
+			switch {
+			case test.admin:
+				want.WarningsIssued, want.WarningsSkipped = 0, 1
+			case test.disabled:
+				want = prohibitedReactionScanResult{MessagesChecked: 1}
+			}
 			if err != nil || result != want {
 				t.Fatalf("scan result = %#v, err = %v, want %#v", result, err, want)
 			}
 			warnings, err := database.GetWarnings("discord", "400")
-			if err != nil || len(warnings) != 1 || warnings[0].Reason != test.reason || warnings[0].WarnedBy != "system" {
+			if test.admin || test.disabled {
+				if err != nil || len(warnings) != 0 {
+					t.Fatalf("protected or disabled scan warned: %#v, err = %v", warnings, err)
+				}
+				return
+			}
+			if err != nil || len(warnings) != 1 || warnings[0].Reason != test.reason || warnings[0].WarnedBy != testBotUserID {
 				t.Fatalf("scan warning = %#v, err = %v", warnings, err)
 			}
 		})
@@ -183,7 +213,7 @@ func TestBoardCategoryExclusionsIncludeThreads(t *testing.T) {
 	}
 
 	for _, channelID := range []string{"100000000000000008", "100000000000000054"} {
-		ignored, err := boardChannelIgnored(session, channelID)
+		ignored, err := testBot().boardChannelIgnored(session, channelID)
 		if err != nil {
 			t.Fatal(err)
 		}

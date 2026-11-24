@@ -410,7 +410,7 @@ func TestSupportAgentLive(t *testing.T) {
 	} {
 		t.Run(test.id, func(t *testing.T) {
 			r := report{ID: test.id}
-			b := &Bot{Config: &botconfig.Config{OpenRouterDecisionModel: config.DecisionModel}, DB: database, Notes: &cmd.NotesHandler{DB: database}, Logger: zap.NewNop(), garminGitHub: gh.NewAssistantClient(config.GitHubToken, "MetrolistGroup", "Metrolist")}
+			b := &Bot{Config: testConfig(botconfig.Config{OpenRouterDecisionModel: config.DecisionModel}), DB: database, Notes: &cmd.NotesHandler{DB: database}, Logger: zap.NewNop(), garminGitHub: gh.NewAssistantClient(config.GitHubToken, "MetrolistGroup", "Metrolist")}
 			if test.casual {
 				memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
 				if err != nil {

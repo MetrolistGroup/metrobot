@@ -1,6 +1,6 @@
 # metrobot
 
-Metrobot is Metrolist's Discord and Telegram bot for moderation, logging, dehoisting, and community support. Server, role, and channel IDs in `discord/` are hardcoded for the official server; review them before running the bot elsewhere.
+Metrobot is Metrolist's Discord and Telegram bot for moderation, logging, dehoisting, and community support. Server-specific channels, welcome roles, moderation rules, and AI routing live in `config.json`.
 
 ## Features
 
@@ -14,7 +14,28 @@ Metrobot is Metrolist's Discord and Telegram bot for moderation, logging, dehois
 
 ## Configuration and running
 
-Build with the Go version in `go.mod`, currently Go 1.27.3. Copy `config.example.json` to `config.json` and fill in tokens, guild and chat IDs, admin IDs, and repository fields. Leave unused optional key arrays like `openrouter_api_keys`, `firecrawl_api_keys`, or `wolfram_app_ids` as `[]` or omit them; `config/config.go` rejects blank strings inside any key list.
+Build with the Go version in `go.mod`, currently Go 1.27.3. Copy `config.example.json` to `config.json` and fill in tokens, the Discord guild ID, Telegram chat ID, and repository fields. The example keeps the official server's feature IDs. Replace those IDs for another deployment, or clear optional IDs to disable those features. Leave unused optional key arrays like `openrouter_api_keys`, `firecrawl_api_keys`, or `wolfram_app_ids` as `[]` or omit them; `config/config.go` rejects blank strings inside any key list.
+
+The configuration has one `discord` section and one `telegram` section. Discord settings are grouped under `logging`, `moderation`, `welcome`, `ai`, and `starboard`. Clearing an optional log destination, support channel, welcome configuration, or starboard destination disables that feature. A welcome configuration requires its role, channel, and note together. AI community-channel aliases and descriptions are configured in `discord.ai.readable_channels` and `discord.ai.channel_descriptions`. Empty maps and lists add no server-specific defaults.
+
+Access comes from native platform permissions. Stored bot-admin records and legacy `permaadmin_*` arrays grant no access; `/addadmin` and `/removeadmin` are removed. Normal members can still read notes and use public utilities.
+
+| Feature | Discord permission | Telegram permission |
+| --- | --- | --- |
+| Ban, temporary ban, softban, ban and delete | Ban Members | Ban users |
+| Kick | Kick Members | Not exposed on Telegram |
+| Timeout, warn, remove warning | Moderate Members | Ban users |
+| Edit notes | Manage Server | Change group info |
+| AI memory and bot settings | Manage Server | Not exposed on Telegram |
+| Dehoist, approve nicknames | Manage Nicknames | Ban users for the preview |
+| Purge, scan reactions, reset channel context | Manage Messages | Not exposed on Telegram |
+| Bulk role assignment | Manage Roles | Not exposed on Telegram |
+
+Discord server owners and Administrators have these permissions. Telegram group creators have all group rights; administrators need the relevant right for the requested action. Member-management commands also check target protection and role hierarchy. Channel commands also respect channel permission overrides, including the parent channel of a thread. Failed permission lookups deny the action.
+
+Softban bans and immediately unbans the member on either platform, allowing them to rejoin. Discord deletes recent messages; Telegram deletes the member's messages in supergroups.
+
+When migrating an existing config, flat connection keys and existing starboard keys still load. Move them into the corresponding nested section when convenient; an explicitly supplied nested value takes precedence, including an empty destination. Add the feature sections from the example to retain the former official-server routing and logging. Features without configured IDs stay disabled. The database is retained, including old admin rows, but those rows no longer authorize actions. Restart the bot after editing configuration.
 
 ```sh
 go build -o metrobot .
@@ -23,9 +44,13 @@ go build -o metrobot .
 
 The bot expects `config.json` and `bot.db` in its working directory and opens no inbound HTTP listener. When `garmin_memory_file` is empty, `discord/bot.go` checks `garmin-memory.md` first and falls back to `/data/garmin-memory.md`. Keep `config.json`, `.env`, `bot.db*`, and `bot.log` out of Git.
 
+Discord shows the custom status "Keeping Metrolist on track 🎵" while the bot is connected.
+
 ## Deployment and upgrades
 
 Production runs as a compiled Go binary at `/opt/metrobot/metrobot` managed by the `metrobot` `systemd` service, keeping `config.json`, `bot.db`, `bot.log`, and the live `garmin-memory.md` in its working directory. `Dockerfile` and `.github/workflows/docker.yml` also build a `gcr.io/distroless/static-debian12:nonroot` Linux amd64 container on pushes to `main`, publish it to GHCR, and seed `/data/garmin-memory.md`.
+
+File logs rotate at 10 MB and retain at most two compressed archives for seven days.
 
 Before upgrading, back up the runtime directory and preserve `bot.db`, `config.json`, and your live memory file. Never overwrite production data with `garmin-memory.md` or test databases from Git. Startup migrations `note_markup_v1` and `metrolist_v14_notes_v1` run once per database; see [Metrolist v14 note migration](docs/notes.md#metrolist-v14-note-migration).
 

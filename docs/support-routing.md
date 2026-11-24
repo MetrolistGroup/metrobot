@@ -58,7 +58,7 @@ Static system prompts precede dynamic context and tool outputs, and `compactGarm
 
 ## Memory, context, and confirmed fixes
 
-Ordinary chat outside `#general` reads SQLite `garmin_base_system_prompt` if set, capped at 64 KiB via `GetGarminSystemPrompt`, `SetGarminSystemPrompt`, and `ResetGarminSystemPrompt`. Admins can run `/memory view`, while `append`, `replace`, `clear`, and agent `remember` calls require Nyx or Lamp. Shared memory in `garmin-memory.md` is lower-priority data capped at 16 KiB.
+Ordinary chat outside the configured general channel reads SQLite `garmin_base_system_prompt` if set, capped at 64 KiB via `GetGarminSystemPrompt`, `SetGarminSystemPrompt`, and `ResetGarminSystemPrompt`. Native Manage Server permission controls `/memory` and explicit safe agent `remember` requests. Shared memory in `garmin-memory.md` is lower-priority data capped at 16 KiB. Channel routing, readable community aliases, and channel descriptions come from `discord.ai` in the configuration.
 
 Channel conversations live in RAM for 24 hours with a 12-message sliding window, stripping legacy `conversation_summary` items and prepending an omission notice rather than running compaction. Image retention covers the newest 4 messages up to 8 images per request, pending-question lineage caps at 40 source IDs, and `/ctx-reset` cuts off prior channel context. When the router stays silent on an `#app-support` follow-up and confirms a solved problem at probability `>= 0.90`, `confirmed-fixes` records the dated Q and A newest-first up to 10 KiB.
 

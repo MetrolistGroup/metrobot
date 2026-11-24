@@ -122,7 +122,7 @@ func (b *Bot) handleNoteCallback(q *tgbotapi.CallbackQuery) {
 	}
 	unavailable := func() { answer(tgbotapi.NewCallbackWithAlert(q.ID, "That FAQ question is unavailable.")) }
 	parts := strings.Split(q.Data, ":")
-	if len(parts) != 3 || parts[0] != "faq" || q.Message == nil || q.Message.Chat.ID != b.Config.TelegramChatID {
+	if len(parts) != 3 || parts[0] != "faq" || q.Message == nil || q.Message.Chat.ID != b.Config.Telegram.ChatID {
 		unavailable()
 		return
 	}

@@ -60,7 +60,7 @@ func TestNukeReplyRoutingAndReferenceFetch(t *testing.T) {
 				}
 				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 			})})
-			b := &Bot{Config: &config.Config{DiscordGuildID: "300"}, Logger: zap.NewNop()}
+			b := &Bot{Config: testConfig(config.Config{DiscordGuildID: "300"}), Logger: zap.NewNop()}
 			command := &discord.Message{
 				ID: 60, ChannelID: 200, GuildID: snowflakePtr("300"), Author: discord.User{ID: 500}, Content: "garmin nuke them",
 				MessageReference: &discord.MessageReference{MessageID: snowflakePtr("50")},
@@ -105,7 +105,7 @@ func TestNukeSlashCommandAndAvatarFailure(t *testing.T) {
 		}
 		return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 	})})
-	b := &Bot{Config: &config.Config{DiscordGuildID: "300"}, Logger: zap.NewNop()}
+	b := &Bot{Config: testConfig(config.Config{DiscordGuildID: "300"}), Logger: zap.NewNop()}
 	interaction := testCommandInteraction(t, client, `{
 		"id":"100","application_id":"123456789012345678","token":"token","type":2,
 		"guild_id":"300","channel":{"id":"200","type":0},"member":{"user":{"id":"500"}},

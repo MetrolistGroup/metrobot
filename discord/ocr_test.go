@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"image/png"
 	"io"
@@ -79,7 +80,7 @@ func TestOCRTranslateMessageAction(t *testing.T) {
 				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`)), Request: r}, nil
 			})})
 			b := &Bot{
-				Config: &config.Config{DiscordGuildID: "300"}, Logger: zap.NewNop(),
+				Config: testConfig(config.Config{DiscordGuildID: "300"}), Logger: zap.NewNop(),
 				garminAILastUsed: make(map[string]time.Time), garminAISlots: make(chan struct{}, 1),
 				garminAI: garminAITestFunc(func(ctx context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 					called = true
@@ -136,13 +137,16 @@ func TestOCRImageSelection(t *testing.T) {
 			{Filename: "image.jpg", URL: "http://localhost/a.jpg"},
 		},
 		Embeds: []discord.Embed{
-			{Image: &discord.EmbedResource{URL: "https://example.com/image.png"}},
+			{Image: &discord.EmbedResource{URL: "https://example.com/image.png", ProxyURL: "https://images-ext-1.discordapp.net/external/x/image.png"}},
 			{Image: &discord.EmbedResource{URL: "https://cdn.discordapp.com/a.png"}},
 			{Thumbnail: &discord.EmbedResource{URL: "https://example.com/unrelated.png"}},
 			{Image: &discord.EmbedResource{URL: "file:///etc/passwd"}},
+			{Image: &discord.EmbedResource{URL: "https://127.0.0.1/private.png"}},
+			{Image: &discord.EmbedResource{URL: "https://cdn.discordapp.com.evil.example/a.png"}},
+			{Type: discord.EmbedTypeGifV, Thumbnail: &discord.EmbedResource{URL: "https://tenor.example/a.gif", ProxyURL: "https://media.discordapp.net/external/a.gif"}},
 		},
 	}
-	want := []string{"https://cdn.discordapp.com/a.png", "https://example.com/image.png"}
+	want := []string{"https://cdn.discordapp.com/a.png", "https://images-ext-1.discordapp.net/external/x/image.png", "https://media.discordapp.net/external/a.gif"}
 	if got := ocrImageURLs(message); !reflect.DeepEqual(got, want) {
 		t.Fatalf("OCR images = %v, want %v", got, want)
 	}
@@ -191,7 +195,7 @@ func TestOCRTranslateImageOverlay(t *testing.T) {
 				}
 			})})
 			b := &Bot{
-				Config: &config.Config{DiscordGuildID: "300"}, Logger: zap.NewNop(),
+				Config: testConfig(config.Config{DiscordGuildID: "300"}), Logger: zap.NewNop(),
 				garminAILastUsed: make(map[string]time.Time), garminAISlots: make(chan struct{}, 1),
 				garminAI: garminAITestFunc(func(ctx context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 					switch request.SystemPrompt {
@@ -229,6 +233,61 @@ func TestOCRTranslateImageOverlay(t *testing.T) {
 			}
 			if mode == "fallback" && (fileDelivered || !strings.Contains(content, "English")) {
 				t.Fatalf("fallback: file=%v content=%q", fileDelivered, content)
+			}
+		})
+	}
+}
+
+func TestOCRPartialOverlayDisclosesFailedImages(t *testing.T) {
+	for _, fallbackWorks := range []bool{true, false} {
+		t.Run(fmt.Sprint("fallback=", fallbackWorks), func(t *testing.T) {
+			client := mustTestClient(t)
+			var delivered string
+			var files []string
+			client.Rest = testREST(&http.Client{Transport: garminRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if r.Method == http.MethodGet {
+					return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(tinyPNG(t))), Request: r}, nil
+				}
+				if r.Method == http.MethodPatch {
+					if err := r.ParseMultipartForm(1 << 20); err != nil {
+						t.Fatal(err)
+					}
+					defer r.MultipartForm.RemoveAll()
+					var update discord.MessageUpdate
+					if err := json.Unmarshal([]byte(r.FormValue("payload_json")), &update); err != nil {
+						t.Fatal(err)
+					}
+					delivered = value(update.Content)
+					for _, headers := range r.MultipartForm.File {
+						for _, header := range headers {
+							files = append(files, header.Filename)
+						}
+					}
+				}
+				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`)), Request: r}, nil
+			})})
+			b := &Bot{Config: testConfig(config.Config{DiscordGuildID: "300"}), Logger: zap.NewNop(), garminAILastUsed: make(map[string]time.Time), garminAISlots: make(chan struct{}, 1)}
+			var fallbackImages []string
+			b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+				if request.SystemPrompt == ocrTranslatePrompt {
+					fallbackImages = request.Messages[0].Images
+					if !fallbackWorks {
+						return nil, errors.New("synthetic failure")
+					}
+					return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: "translated fallback"}}, nil
+				}
+				if strings.HasSuffix(request.Messages[0].Images[0], "/b.png") {
+					return nil, errors.New("synthetic failure")
+				}
+				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Content: `{"blocks":[{"text":"hello","box":[0,0,1,0.8]}]}`}}, nil
+			})
+			interaction := testCommandInteraction(t, client, `{"id":"100","application_id":"123456789012345678","token":"token","type":2,"guild_id":"300","channel":{"id":"200","type":0},"member":{"user":{"id":"500"}},"data":{"name":"OCR Translate","type":3,"target_id":"50","resolved":{"messages":{"50":{"id":"50","content":"","author":{"id":"400"},"attachments":[{"filename":"a.png","url":"https://cdn.discordapp.com/a.png"},{"filename":"b.png","url":"https://cdn.discordapp.com/b.png"}]}}}}}`)
+			b.onInteractionCreate(client, interaction)
+			if !reflect.DeepEqual(fallbackImages, []string{"https://cdn.discordapp.com/b.png"}) || !reflect.DeepEqual(files, []string{"translated-1.png"}) || !strings.Contains(delivered, "Image 2") {
+				t.Fatalf("fallback images=%v files=%v content=%q", fallbackImages, files, delivered)
+			}
+			if strings.Contains(delivered, "translated fallback") != fallbackWorks {
+				t.Fatalf("fallback text delivery = %q", delivered)
 			}
 		})
 	}

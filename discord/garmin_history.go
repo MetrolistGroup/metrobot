@@ -4,42 +4,88 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/rest"
 	"github.com/disgoorg/snowflake/v2"
 )
 
-const (
-	garminCoolchannelID = "1468369310215831552"
-	garminSneakPeeksID  = "1533978905344610385"
-	garminPollsID       = "1462860353204654111"
-	garminMinkyID       = "1529998926445285428"
-)
+// garminReadableChannels returns the configured alias-to-channel map with
+// empty aliases and IDs removed.
+func (b *Bot) garminReadableChannels() map[string]string {
+	channels := map[string]string{}
+	for alias, channelID := range b.discordSettings().AI.ReadableChannels {
+		alias = normalizeGarminChannelAlias(alias)
+		if alias != "" && snowflakeID(channelID) != 0 {
+			channels[alias] = channelID
+		}
+	}
+	return channels
+}
 
-var garminReadableChannels = map[string]string{
-	"coolchannel": garminCoolchannelID,
-	"sneak-peeks": garminSneakPeeksID,
-	"polls":       garminPollsID,
-	"minky":       garminMinkyID,
+func normalizeGarminChannelAlias(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	name = strings.ReplaceAll(name, "_", "-")
+	return strings.ReplaceAll(name, " ", "-")
 }
 
 func (b *Bot) readGarminCommunityChannel(s *bot.Client, channelName, query string, limit int) (string, error) {
-	channelName = strings.ToLower(strings.TrimSpace(channelName))
-	channelName = strings.ReplaceAll(channelName, "_", "-")
-	channelName = strings.ReplaceAll(channelName, " ", "-")
-	if channelName == "sneakpeeks" {
-		channelName = "sneak-peeks"
-	}
-	channelID, ok := garminReadableChannels[channelName]
+	return b.readGarminCommunityChannelContext(context.Background(), s, channelName, query, limit)
+}
+
+func (b *Bot) readGarminCommunityChannelContext(ctx context.Context, s *bot.Client, channelName, query string, limit int) (string, error) {
+	channels := b.garminReadableChannels()
+	channelName = normalizeGarminChannelAlias(channelName)
+	channelID, ok := channels[channelName]
 	if !ok {
-		return "", fmt.Errorf("unknown readable channel %q; available channels: coolchannel, sneak-peeks, polls, minky", channelName)
+		channelID, ok = channels[strings.ReplaceAll(channelName, "-", "")]
 	}
-	return b.readGarminChannelMessages(s, channelID, "", query, limit)
+	if !ok {
+		return "", fmt.Errorf("unknown readable channel %q; available channels: %s", channelName, strings.Join(slices.Sorted(maps.Keys(channels)), ", "))
+	}
+	return b.readGarminChannelMessagesContext(ctx, s, channelID, "", query, min(limit, 25), garminAIToolResultSize)
+}
+
+// garminCommunityChannelTool describes only the configured readable channels.
+func (b *Bot) garminCommunityChannelTool() (cmd.GarminAITool, bool) {
+	channels := b.garminReadableChannels()
+	if len(channels) == 0 {
+		return cmd.GarminAITool{}, false
+	}
+	aliases := slices.Sorted(maps.Keys(channels))
+	described := make([]string, 0, len(aliases))
+	for _, alias := range aliases {
+		if description := b.garminChannelDescription(channels[alias]); description != "" {
+			alias += " (" + description + ")"
+		}
+		described = append(described, alias)
+	}
+	schema := mustJSON(map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"channel": map[string]any{"type": "string", "enum": aliases},
+			"query":   map[string]any{"type": "string", "description": "Optional case-insensitive text to find within the latest 100 messages"},
+			"limit":   map[string]any{"type": "integer", "minimum": 1, "maximum": 25, "description": "Maximum messages to return; defaults to 15"},
+		},
+		"required":             []string{"channel"},
+		"additionalProperties": false,
+	})
+	return garminTool("read_community_channel", "Read recent messages from approved channels: "+strings.Join(described, "; ")+". Optionally search within the latest 100 messages.", schema), true
+}
+
+// garminReadableChannelForRequest keeps a routed alias only when it is configured.
+func (b *Bot) garminReadableChannelForRequest(messages []cmd.GarminAIMessage) string {
+	alias := garminReadableChannelForConversation(messages)
+	if _, ok := b.garminReadableChannels()[alias]; !ok {
+		return ""
+	}
+	return alias
 }
 
 func confirmGarminHistoryAccess(ctx context.Context, s *bot.Client, m *discord.Message) error {

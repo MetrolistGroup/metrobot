@@ -78,7 +78,7 @@ func TestBanEventUsesAuditActorAndServerLogChannel(t *testing.T) {
 	}
 	session.Rest = testREST(server.Client())
 	session.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: session.Rest.HTTPClient().Transport, target: server.URL}
-	bot := &Bot{Config: &config.Config{DiscordGuildID: "100000000000000012"}, Logger: zap.NewNop()}
+	bot := &Bot{Config: testConfig(config.Config{DiscordGuildID: "100000000000000012"}), Logger: zap.NewNop()}
 	bot.onGuildBanAddLog(session, &events.GuildBan{GenericGuild: &events.GenericGuild{GuildID: snowflakeID("100000000000000012")},
 		User: discord.User{ID: snowflakeID("100000000000000052")}})
 

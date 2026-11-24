@@ -70,7 +70,7 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *bot.Client, m *discord
 			return &garminAIResult{Silent: true}, nil
 		}
 	}
-	appSupport := m.ChannelID.String() == garminAppSupportID
+	appSupport := b.isSupportChannel(m.ChannelID.String())
 	systemPrompt := garminAppSupportSystemPrompt
 	var memory string
 	if !appSupport {
@@ -81,7 +81,7 @@ func (b *Bot) runGarminAIWithMode(ctx context.Context, s *bot.Client, m *discord
 				return nil, err
 			}
 		}
-		systemPrompt, err = b.garminSystemPromptWithMemory("", garminRedirectChannelID(s, m.ChannelID.String()) == garminGeneralID)
+		systemPrompt, err = b.garminSystemPromptWithMemory("", b.isGeneralChannel(b.garminRedirectChannelID(s, m.ChannelID.String())))
 		if err != nil {
 			return nil, err
 		}
@@ -216,14 +216,14 @@ Do not run a public search for casual chat or channel-history summaries. Never s
 		}
 		conversation = append(conversation, cmd.GarminAIMessage{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{call}})
 		result.ToolCalls++
-		visible, output, _, _ := b.executeGarminAIToolIfVisible(ctx, s, m, call)
+		visible, output, _, _, failed := b.executeGarminAIToolIfVisible(ctx, s, m, call)
 		if !visible {
 			result.Silent = true
 			result.Conversation = conversation
 			return result, nil
 		}
 		conversation = append(conversation, cmd.GarminAIMessage{Role: "tool", ToolCallID: call.ID, Content: truncateGarminAIToolResult(output)})
-		if garminToolResultError(output) != "" {
+		if failed {
 			result.Silent = true
 			result.Conversation = conversation
 			return result, nil
@@ -232,7 +232,7 @@ Do not run a public search for casual chat or channel-history summaries. Never s
 		answerLinkSources = append(answerLinkSources, output)
 		discordContext += garminWebSearchResultInstruction(garminUserText(messages))
 	}
-	communityChannel := garminReadableChannelForConversation(messages)
+	communityChannel := b.garminReadableChannelForRequest(messages)
 	if !garminToolAvailable(tools, "read_community_channel") {
 		communityChannel = ""
 	}
@@ -244,13 +244,13 @@ Do not run a public search for casual chat or channel-history summaries. Never s
 		}}
 		conversation = append(conversation, cmd.GarminAIMessage{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{call}})
 		result.ToolCalls++
-		visible, output, _, _ := b.executeGarminAIToolIfVisible(ctx, s, m, call)
+		visible, output, _, _, failed := b.executeGarminAIToolIfVisible(ctx, s, m, call)
 		if !visible {
 			result.Silent = true
 			result.Conversation = conversation
 			return result, nil
 		}
-		if garminToolResultError(output) != "" {
+		if failed {
 			return nil, fmt.Errorf("selected support note is unavailable")
 		}
 		// Preserve the actual full tool result for synthesis and the evidence check.
@@ -296,7 +296,7 @@ Do not run a public search for casual chat or channel-history summaries. Never s
 		}
 		if communityChannel != "" && historyReady {
 			historyRetrieved = true
-			channelOutput, channelErr := b.readGarminCommunityChannel(s, communityChannel, "", 15)
+			channelOutput, channelErr := b.readGarminCommunityChannelContext(ctx, s, communityChannel, "", 15)
 			communityChannel = ""
 			if !b.garminMessageVisible(m.ChannelID.String(), m.ID.String()) {
 				result.Silent = true
@@ -328,7 +328,7 @@ Do not run a public search for casual chat or channel-history summaries. Never s
 				call.ID = fmt.Sprintf("deferred-history-%d-%d", round, index)
 				conversation = append(conversation, cmd.GarminAIMessage{Role: "assistant", ToolCalls: []cmd.GarminAIToolCall{call}})
 				result.ToolCalls++
-				visible, output, _, _ := b.executeGarminAIToolIfVisible(ctx, s, m, call)
+				visible, output, _, _, failed := b.executeGarminAIToolIfVisible(ctx, s, m, call)
 				if !visible {
 					result.Silent = true
 					result.Conversation = conversation
@@ -338,12 +338,12 @@ Do not run a public search for casual chat or channel-history summaries. Never s
 					return nil, err
 				}
 				historyRetrieved = true
-				currentHistoryRetrieved = currentHistoryRetrieved || (call.Function.Name == "read_channel_history" && garminToolResultError(output) == "")
-				if garminToolResultError(output) == "" {
+				currentHistoryRetrieved = currentHistoryRetrieved || (call.Function.Name == "read_channel_history" && !failed)
+				if !failed {
 					answerLinkSources = append(answerLinkSources, output)
 				}
 				conversation = append(conversation, cmd.GarminAIMessage{Role: "tool", ToolCallID: call.ID, Content: garminAIToolResult(call.Function.Name, output)})
-				if garminToolResultError(output) != "" {
+				if failed {
 					result.Silent, result.Conversation = true, conversation
 					return result, nil
 				}
@@ -618,7 +618,7 @@ Do not run a public search for casual chat or channel-history summaries. Never s
 				result.Conversation = conversation
 				return result, nil
 			}
-			visible, output, skill, memoryUpdated := b.executeGarminAIToolIfVisible(ctx, s, m, toolCall)
+			visible, output, skill, memoryUpdated, failed := b.executeGarminAIToolIfVisible(ctx, s, m, toolCall)
 			if !visible {
 				result.Silent = true
 				result.Conversation = conversation
@@ -627,13 +627,13 @@ Do not run a public search for casual chat or channel-history summaries. Never s
 			if toolCall.Function.Name == "read_channel_history" || toolCall.Function.Name == "read_community_channel" {
 				historyRetrieved = true
 			}
-			if toolCall.Function.Name == "read_channel_history" && garminToolResultError(output) == "" {
+			if toolCall.Function.Name == "read_channel_history" && !failed {
 				currentHistoryRetrieved = true
 			}
-			if garminRepositoryToolName(toolCall.Function.Name) && garminToolResultError(output) == "" && (!repositoryCommitsRequired || toolCall.Function.Name == "get_github_commits") {
+			if garminRepositoryToolName(toolCall.Function.Name) && !failed && (!repositoryCommitsRequired || toolCall.Function.Name == "get_github_commits") {
 				repositoryToolUsed = true
 			}
-			if toolCall.Function.Name == "calculate_math" && garminToolResultError(output) == "" {
+			if toolCall.Function.Name == "calculate_math" && !failed {
 				calculationUsed = true
 			}
 			if skill != "" {
@@ -646,17 +646,17 @@ Do not run a public search for casual chat or channel-history summaries. Never s
 				ToolCallID: toolCall.ID,
 				Content:    garminAIToolResult(toolCall.Function.Name, output),
 			})
-			if garminToolResultError(output) != "" {
+			if failed {
 				result.Silent, result.Conversation = true, conversation
 				return result, nil
 			}
 			if garminPublicQueryToolName(toolCall.Function.Name) || toolCall.Function.Name == "get_metrolist_status" || toolCall.Function.Name == "get_metrolist_changes" {
 				publicLookupSources = append(publicLookupSources, output)
 			}
-			if garminToolResultError(output) == "" {
+			if !failed {
 				answerLinkSources = append(answerLinkSources, output)
 			}
-			if appSupport && toolCall.Function.Name == "get_note" && garminToolResultError(output) == "" {
+			if appSupport && toolCall.Function.Name == "get_note" && !failed {
 				var args garminToolArgs
 				if json.Unmarshal([]byte(toolCall.Function.Arguments), &args) == nil {
 					// Check the actual full tool result; oversized Decisions requests fail closed.
@@ -665,7 +665,7 @@ Do not run a public search for casual chat or channel-history summaries. Never s
 					noteSource = output
 				}
 			}
-			if appSupport && toolCall.Function.Name == "get_metrolist_commit" && garminToolResultError(output) == "" {
+			if appSupport && toolCall.Function.Name == "get_metrolist_commit" && !failed {
 				conversation = append(conversation, cmd.GarminAIMessage{Role: "system", Content: "This patch is code-history evidence, not a diagnosis of this person. If the same commit appears in a verified published-nightly comparison and matches the reported symptom, offer a conditional trial: If you are on Metrolist stable with a published nightly asset, back up your library/settings and try the current linked nightly; it includes the verified change, and it is in development and may be unstable. Describe the change, not a definite or likely cause of their problem. Use the actual returned release/asset URL. Do not claim all nightlies after a date contain it. Otherwise ask the most useful missing detail."})
 			}
 			if toolCall.Function.Name == "search_web" {
@@ -707,7 +707,7 @@ func compactGarminToolResults(messages []cmd.GarminAIMessage, systemPrompt strin
 	result := copyGarminAIMessages(messages)
 	seen := make(map[string]string)
 	for i, message := range result {
-		if message.Role != "tool" || len(message.Content) < 1024 || garminToolResultError(message.Content) != "" {
+		if message.Role != "tool" || len(message.Content) < 1024 {
 			continue
 		}
 		if strings.Contains(systemPrompt, message.Content) {

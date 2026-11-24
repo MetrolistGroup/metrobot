@@ -51,7 +51,7 @@ func TestGarminAppSupportTriageUsesModelActions(t *testing.T) {
 		{name: "ignore wins", calls: []cmd.GarminAIToolCall{{Function: cmd.GarminAIFunctionCall{Name: "handoff_to_app_support_agent"}}, {Function: cmd.GarminAIFunctionCall{Name: "do_not_respond"}}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			bot := &Bot{}
+			bot := &Bot{Config: testConfig(config.Config{})}
 			bot.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
 				if !strings.Contains(request.SystemPrompt, "keyword by itself is never enough") || !strings.Contains(request.SystemPrompt, "donation-proof") || !strings.Contains(request.SystemPrompt, "staff coordination") {
 					t.Fatalf("triage prompt does not cover observed false replies: %q", request.SystemPrompt)
@@ -82,7 +82,7 @@ func TestOnMessageCreateTriagesAppSupportWithoutKeywordGate(t *testing.T) {
 
 	requests := make(chan cmd.GarminAIRequest, 1)
 	bot := &Bot{
-		Config: &config.Config{DiscordGuildID: "100000000000000012"}, DB: database, Notes: &cmd.NotesHandler{DB: database}, Logger: zap.NewNop(),
+		Config: testConfig(config.Config{DiscordGuildID: "100000000000000012"}), DB: database, Notes: &cmd.NotesHandler{DB: database}, Logger: zap.NewNop(),
 		garminProcessor: cmd.NewGarminProcessor(), garminAIContexts: make(map[string]garminAIContext),
 		garminAIUserContexts: make(map[string]garminAIContext), garminContextCutoffs: make(map[string]string),
 		garminAIRequests: make(map[string]map[string]context.CancelFunc),
@@ -158,7 +158,8 @@ func TestAutomaticAppSupportHandoffRunsSupportAgent(t *testing.T) {
 
 	calls := 0
 	bot := &Bot{
-		DB: database, Notes: &cmd.NotesHandler{DB: database}, Logger: zap.NewNop(), garminMemory: memory,
+		Config: testConfig(config.Config{}),
+		DB:     database, Notes: &cmd.NotesHandler{DB: database}, Logger: zap.NewNop(), garminMemory: memory,
 		garminAILastUsed: make(map[string]time.Time), garminAIContexts: make(map[string]garminAIContext),
 		garminAIUserContexts: make(map[string]garminAIContext), garminContextCutoffs: make(map[string]string),
 		garminAIRequests: make(map[string]map[string]context.CancelFunc), garminAISlots: make(chan struct{}, 3),
@@ -196,7 +197,7 @@ func TestAppSupportAgentSynthesizesExcerptFromNote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bot := &Bot{DB: database, Notes: &cmd.NotesHandler{DB: database}, garminMemory: memory}
+	bot := &Bot{Config: testConfig(config.Config{}), DB: database, Notes: &cmd.NotesHandler{DB: database}, garminMemory: memory}
 	const answer = "KMP is the multiplatform version of Metrolist."
 	bot.garminAI = supportTestNoteAnswer("kmp", answer)
 	bot.garminDecisions = supportDecisionTestFunc(func(_ context.Context, request cmd.DecisionRequest) (*cmd.DecisionResponse, error) {
@@ -243,7 +244,7 @@ func TestKMPNoteUsesCompactComponentsV2(t *testing.T) {
 	}
 	session.Rest = testREST(server.Client())
 	session.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: session.Rest.HTTPClient().Transport, target: server.URL}
-	bot := &Bot{Logger: zap.NewNop()}
+	bot := &Bot{Config: testConfig(config.Config{}), Logger: zap.NewNop()}
 	note, err := notefmt.Parse(notefmt.Fence("faq", testKMPNote))
 	if err != nil {
 		t.Fatal(err)
@@ -276,7 +277,7 @@ func TestSendGarminAppSupportReplyPreservesLongAnswerAsAttachment(t *testing.T) 
 	}
 	session.Rest = testREST(server.Client())
 	session.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: session.Rest.HTTPClient().Transport, target: server.URL}
-	bot := &Bot{Logger: zap.NewNop()}
+	bot := &Bot{Config: testConfig(config.Config{}), Logger: zap.NewNop()}
 	message := &discord.Message{ID: snowflakeID("100000000000000023"), ChannelID: snowflakeID(garminAppSupportID)}
 	if reply, _ := bot.sendGarminAppSupportReply(session, message, content, ""); reply == nil {
 		t.Fatal("long app support answer was not sent")

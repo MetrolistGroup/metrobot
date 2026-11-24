@@ -14,8 +14,8 @@ import (
 	"go.uber.org/zap"
 )
 
-func enforceGarminChannelReply(channelID, answer, prompt string) string {
-	if channelID == garminGeneralID && !garminAIRequestsDetail(prompt) {
+func (b *Bot) enforceGarminChannelReply(channelID, answer, prompt string) string {
+	if b.isGeneralChannel(channelID) && !garminAIRequestsDetail(prompt) {
 		return leadingGarminSentences(answer, 2)
 	}
 	return answer
@@ -34,15 +34,14 @@ func garminAIRequestsDetail(prompt string) bool {
 	return containsAnyGarminPhrase(strings.Join(words, " "), "more detail", "in detail", "break down", "conversation history", "who said what", "what did we talk", "what did i miss", "catch me up")
 }
 
-func garminRedirectChannelID(s *bot.Client, channelID string) string {
-	if channelID == garminGeneralID {
+// garminRedirectChannelID maps threads under the configured general channel,
+// except the configured chat thread, to general.
+func (b *Bot) garminRedirectChannelID(s *bot.Client, channelID string) string {
+	if b.isGeneralChannel(channelID) || b.isChatThread(channelID) {
 		return channelID
 	}
-	if channelID == garminChatThreadID {
-		return channelID
-	}
-	if channel := garminCurrentChannel(s, channelID); channel != nil && snowflakeString(channel.ParentID()) == garminGeneralID {
-		return garminGeneralID
+	if channel := garminCurrentChannel(s, channelID); channel != nil && b.isGeneralChannel(snowflakeString(channel.ParentID())) {
+		return snowflakeString(channel.ParentID())
 	}
 	return channelID
 }

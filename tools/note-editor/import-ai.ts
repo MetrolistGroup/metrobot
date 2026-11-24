@@ -5,7 +5,7 @@ import { formatNote, type AIText, type Note } from "./server";
 export function sourceCategory(path: string): string | undefined {
   if (path.endsWith("_test.go")) return;
   if (/^discord\/garmin_skills\/[^/]+\.md$/.test(path)) return "skills";
-  if (["cmd/garmin_prompt.go", "cmd/garmin_reply.go", "cmd/chat_decisions.go", "discord/garmin_support.go", "discord/support_decisions.go", "discord/support_answer.go", "discord/support_excerpt.go", "discord/support_learning.go", "discord/ocr.go"].includes(path)) return "prompts";
+  if (["cmd/garmin_prompt.go", "cmd/garmin_reply.go", "cmd/chat_decisions.go", "discord/garmin_support.go", "discord/support_decisions.go", "discord/support_answer.go", "discord/support_excerpt.go", "discord/support_learning.go", "discord/ocr.go", "discord/ocr_image.go"].includes(path)) return "prompts";
   if (/^(github|firecrawl|gsmarena|nanoreview|technicalcity|internal\/notefmt)\/[^/]+\.go$/.test(path) || ["cmd/calculator.go", "cmd/notes.go"].includes(path)) return "tools";
   if (/^discord\/(garmin[^/]*|support[^/]*)\.go$/.test(path) || /^cmd\/(garmin[^/]*|ai|decisions|openrouter)\.go$/.test(path) || path === "discord/bot.go") return "runtime";
 }
@@ -20,6 +20,7 @@ const titles: Record<string, string> = {
   "discord/support_excerpt.go": "Note section selector",
   "discord/support_learning.go": "Confirmed-fix learning prompt",
   "discord/ocr.go": "OCR & translation prompt",
+  "discord/ocr_image.go": "OCR in-place overlay prompt",
   "discord/garmin_agent.go": "Runtime instructions & retries",
   "discord/garmin_tools.go": "Every tool description & schema",
   "discord/garmin_profile.go": "Discord context & channel text",

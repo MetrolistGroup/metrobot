@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -11,20 +12,25 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	"image/png"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/disgoorg/disgo/discord"
+	"go.uber.org/zap"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/gofont/goregular"
 	"golang.org/x/image/font/opentype"
 	"golang.org/x/image/math/fixed"
 	_ "golang.org/x/image/webp"
-	"go.uber.org/zap"
 )
 
-const ocrOverlayMaxBytes = 16 << 20
+const (
+	ocrOverlayMaxBytes  = 16 << 20
+	ocrOverlayMaxPixels = 16_000_000
+)
 
 var ocrOverlayFont, _ = opentype.Parse(goregular.TTF)
 
@@ -39,28 +45,30 @@ type ocrBlock struct {
 	BgColor   string     `json:"bg_color"`
 }
 
-// renderOCROverlays returns one translated-in-place PNG per image Google-Translate style, skipping any that fail.
-func (b *Bot) renderOCROverlays(ctx context.Context, client *http.Client, images []string) []*discord.File {
-	var files []*discord.File
+// renderOCROverlays returns one translated-in-place PNG per image Google-Translate style, plus the indexes of images that failed.
+func (b *Bot) renderOCROverlays(ctx context.Context, client *http.Client, images []string) (files []*discord.File, failed []int) {
 	for index, imageURL := range images {
 		original, err := downloadImage(ctx, client, imageURL)
 		if err != nil {
 			b.Logger.Debug("OCR overlay: image download failed", zap.Error(err))
+			failed = append(failed, index)
 			continue
 		}
 		blocks, err := b.ocrTranslateBlocks(ctx, client, imageURL)
 		if err != nil || len(blocks) == 0 {
 			b.Logger.Debug("OCR overlay: no translatable text", zap.Error(err))
+			failed = append(failed, index)
 			continue
 		}
 		rendered, err := drawOCROverlay(original, blocks)
 		if err != nil {
 			b.Logger.Debug("OCR overlay: render failed", zap.Error(err))
+			failed = append(failed, index)
 			continue
 		}
 		files = append(files, &discord.File{Name: fmt.Sprintf("translated-%d.png", index+1), Reader: bytes.NewReader(rendered)})
 	}
-	return files
+	return files, failed
 }
 
 func (b *Bot) ocrTranslateBlocks(ctx context.Context, client *http.Client, imageURL string) ([]ocrBlock, error) {
@@ -97,15 +105,40 @@ func extractJSONObject(s string) string {
 	return s[start : end+1]
 }
 
-func downloadImage(ctx context.Context, client *http.Client, imageURL string) (image.Image, error) {
+// discordMediaURL accepts only Discord-hosted media, so message embeds cannot point fetches at private hosts.
+func discordMediaURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Port() != "" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "cdn.discordapp.com" || strings.HasSuffix(host, ".discordapp.net")
+}
+
+// discordMediaClient copies client and checks every redirect target, leaving the shared REST client unchanged.
+func discordMediaClient(client *http.Client) *http.Client {
 	if client == nil {
 		client = http.DefaultClient
+	}
+	restricted := *client
+	restricted.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 || !discordMediaURL(req.URL.String()) {
+			return errors.New("image redirect left Discord media hosts")
+		}
+		return nil
+	}
+	return &restricted
+}
+
+func downloadImage(ctx context.Context, client *http.Client, imageURL string) (image.Image, error) {
+	if !discordMediaURL(imageURL) {
+		return nil, errors.New("image is not hosted by Discord")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	response, err := client.Do(req)
+	response, err := discordMediaClient(client).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +146,22 @@ func downloadImage(ctx context.Context, client *http.Client, imageURL string) (i
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, fmt.Errorf("image returned HTTP %d", response.StatusCode)
 	}
-	img, _, err := image.Decode(http.MaxBytesReader(nil, response.Body, ocrOverlayMaxBytes))
+	data, err := io.ReadAll(io.LimitReader(response.Body, ocrOverlayMaxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > ocrOverlayMaxBytes {
+		return nil, fmt.Errorf("image exceeds %d bytes", ocrOverlayMaxBytes)
+	}
+	// Small compressed files can declare huge canvases; check dimensions before decoding pixels.
+	config, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	if config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > ocrOverlayMaxPixels {
+		return nil, fmt.Errorf("invalid image dimensions %dx%d", config.Width, config.Height)
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
 	return img, err
 }
 

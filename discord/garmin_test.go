@@ -350,10 +350,10 @@ func TestGarminAIAmbientDisabledInGeneral(t *testing.T) {
 
 	}
 	session := state
-	if garminAIAmbientEnabled(session, garminGeneralID) || garminAIAmbientEnabled(session, "100000000000000011") {
+	if testBot().garminAIAmbientEnabled(session, garminGeneralID) || testBot().garminAIAmbientEnabled(session, "100000000000000011") {
 		t.Fatal("ambient mode was enabled in general")
 	}
-	if !garminAIAmbientEnabled(session, garminChatThreadID) || !garminAIAmbientEnabled(session, garminBotsID) {
+	if !testBot().garminAIAmbientEnabled(session, garminChatThreadID) || !testBot().garminAIAmbientEnabled(session, garminBotsID) {
 		t.Fatal("ambient mode was disabled outside general")
 	}
 }
@@ -455,15 +455,15 @@ func TestGarminEmojiToolsListAndViewLiveGuildEmojis(t *testing.T) {
 }
 
 func TestEnforceGarminGeneralReplyIsShortWithoutRedirect(t *testing.T) {
-	got := enforceGarminChannelReply(garminGeneralID, "the setting is under Settings > Playback. it's been there forever! here's some extra detail.", "where is the setting?")
+	got := testBot().enforceGarminChannelReply(garminGeneralID, "the setting is under Settings > Playback. it's been there forever! here's some extra detail.", "where is the setting?")
 	want := "the setting is under Settings > Playback. it's been there forever!"
 	if got != want {
-		t.Fatalf("enforceGarminChannelReply() = %q, want %q", got, want)
+		t.Fatalf("testBot().enforceGarminChannelReply() = %q, want %q", got, want)
 	}
 	if strings.Contains(got, "#bots") || strings.Contains(got, garminBotsID) {
 		t.Fatalf("general reply redirected to #bots: %q", got)
 	}
-	if got := enforceGarminChannelReply("another-channel", "yeah, sure. what's on your mind?", "hello"); got != "yeah, sure. what's on your mind?" {
+	if got := testBot().enforceGarminChannelReply("another-channel", "yeah, sure. what's on your mind?", "hello"); got != "yeah, sure. what's on your mind?" {
 		t.Fatalf("non-general reply changed to %q", got)
 	}
 }
@@ -471,11 +471,11 @@ func TestEnforceGarminGeneralReplyIsShortWithoutRedirect(t *testing.T) {
 func TestEnforceGarminGeneralReplyAllowsRequestedDetail(t *testing.T) {
 	answer := "we chose option B.\n- Lamp corrected the date.\n- the release is still undecided.\n- nobody objected."
 	for _, prompt := range []string{"Summarize this conversation", "give me a recap", "more details please", "explain in detail", "what did we talk about?", "who said what?", "show our conversation history"} {
-		if got := enforceGarminChannelReply(garminGeneralID, answer, prompt); got != answer {
+		if got := testBot().enforceGarminChannelReply(garminGeneralID, answer, prompt); got != answer {
 			t.Errorf("requested detail %q was truncated: %q", prompt, got)
 		}
 	}
-	if got := enforceGarminChannelReply(garminGeneralID, answer, "hello"); got != "we chose option B. - Lamp corrected the date." {
+	if got := testBot().enforceGarminChannelReply(garminGeneralID, answer, "hello"); got != "we chose option B. - Lamp corrected the date." {
 		t.Fatalf("ordinary general policy changed: %q", got)
 	}
 }
@@ -487,7 +487,7 @@ func TestEnforceGarminThreadUnderGeneralStaysShort(t *testing.T) {
 	state.Caches.AddChannel(testChannel(t, map[string]any{"id": "100000000000000011", "guild_id": "100000000000000012", "parent_id": garminGeneralID, "name": "thread", "type": discord.ChannelTypeGuildPublicThread}))
 
 	session := state
-	got := enforceGarminChannelReply(garminRedirectChannelID(session, "100000000000000011"), "the answer is 42. obviously. here's some extra detail.", "what is the answer?")
+	got := testBot().enforceGarminChannelReply(testBot().garminRedirectChannelID(session, "100000000000000011"), "the answer is 42. obviously. here's some extra detail.", "what is the answer?")
 	if got != "the answer is 42. obviously." {
 		t.Fatalf("thread reply = %q", got)
 	}
@@ -501,20 +501,20 @@ func TestGarminChatThreadUnderGeneralAllowsNormalReplies(t *testing.T) {
 
 	session := state
 	answer := "yeah, sure. what's on your mind?"
-	if got := enforceGarminChannelReply(garminRedirectChannelID(session, garminChatThreadID), answer, "hello"); got != answer {
+	if got := testBot().enforceGarminChannelReply(testBot().garminRedirectChannelID(session, garminChatThreadID), answer, "hello"); got != answer {
 		t.Fatalf("allowed thread reply = %q, want %q", got, answer)
 	}
 	message := &discord.Message{
 		GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID(garminChatThreadID), Author: discord.User{ID: snowflakeID("100000000000000056"), Username: "speaker"}, Member: &discord.Member{},
 	}
-	context := (&Bot{}).garminDiscordContextForMessage(session, message)
+	context := testBot().garminDiscordContextForMessage(session, message)
 	if !strings.Contains(context, "normal conversations with Metrobot are welcome") || strings.Contains(context, "#bots") {
 		t.Fatalf("allowed thread received general-only context: %s", context)
 	}
 }
 
 func TestHandleGarminAIDoNotRespond(t *testing.T) {
-	handled, err := (&Bot{}).handleGarminAIMessageAction(nil, nil, cmd.GarminAIToolCall{Function: cmd.GarminAIFunctionCall{
+	handled, err := testBot().handleGarminAIMessageAction(nil, nil, cmd.GarminAIToolCall{Function: cmd.GarminAIFunctionCall{
 		Name:      "do_not_respond",
 		Arguments: `{}`,
 	}}, 0)

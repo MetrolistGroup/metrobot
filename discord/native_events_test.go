@@ -24,7 +24,7 @@ func (fixtureGateway) ShardID() int { return 0 }
 
 func nativeLogFixture(t *testing.T) (*Bot, chan discord.MessageCreate) {
 	t.Helper()
-	b := &Bot{Config: &config.Config{DiscordGuildID: "300"}, Logger: zap.NewNop(), ready: make(chan struct{})}
+	b := &Bot{Config: testConfig(config.Config{DiscordGuildID: "300"}), Logger: zap.NewNop(), ready: make(chan struct{})}
 	client := mustTestClient(t, bot.WithEventManagerConfigOpts(bot.WithGatewayHandlers(b.gatewayHandlers())))
 	b.Client = client
 	logged := make(chan discord.MessageCreate, 16)
@@ -65,7 +65,7 @@ func dispatchPartialMessage(b *Bot, data string) {
 
 func TestNativeListenersPreserveGatewayEventManagerAndDispatchReady(t *testing.T) {
 	client := mustTestClient(t)
-	b := &Bot{Client: client, Config: &config.Config{DiscordGuildID: "300"}, Logger: zap.NewNop(), ready: make(chan struct{})}
+	b := &Bot{Client: client, Config: testConfig(config.Config{DiscordGuildID: "300"}), Logger: zap.NewNop(), ready: make(chan struct{})}
 	manager := client.EventManager
 	// disgo binds this method when it constructs the gateway.
 	dispatch := manager.HandleGatewayEvent

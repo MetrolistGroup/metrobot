@@ -3,6 +3,7 @@ package discord
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -152,7 +153,7 @@ func garminDiscoveryTestBot(t *testing.T) *Bot {
 	}
 	return &Bot{
 		DB: database, Notes: &cmd.NotesHandler{DB: database}, garminMemory: memory,
-		Config:          &config.Config{DiscordGuildID: "100000000000000012"},
+		Config:          testConfig(config.Config{DiscordGuildID: "100000000000000012"}),
 		garminGitHub:    gh.NewAssistantClient("", "MetrolistGroup", "Metrolist"),
 		garminFirecrawl: firecrawl.NewClient([]string{"fake"}), gsmarena: gsmarena.New(database),
 		nanoreview: nanoreview.New(database), technicalCity: technicalcity.New(database),
@@ -913,7 +914,7 @@ func TestGarminSystemPromptAndDiscordContextContainIdentityAndGlobalMemory(t *te
 			GlobalName: ptr("Exact Name"),
 		},
 	}
-	prompt, err := (&Bot{}).garminSystemPromptWithMemory("# Metrobot Memory\nKnown fact", false)
+	prompt, err := testBot().garminSystemPromptWithMemory("# Metrobot Memory\nKnown fact", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1075,17 +1076,21 @@ func TestGarminToolsForRequestFiltersUnavailableCapabilities(t *testing.T) {
 		{"notes database", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.Notes.DB = nil }, []string{"get_note"}},
 		{"memory", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.garminMemory = nil }, []string{"remember"}},
 		{"discord rest", func(_ *Bot, s *bot.Client, _ *discord.Message) { s.Rest = nil }, []string{"react_to_message", "list_discord_emojis", "view_discord_emoji", "get_discord_profile", "search_discord_members", "read_channel_history", "read_community_channel"}},
-		{"discord cache", func(_ *Bot, s *bot.Client, _ *discord.Message) { s.Caches = nil }, []string{"read_channel_history"}},
-		{"guild config", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.Config = nil }, []string{"get_discord_profile", "search_discord_members"}},
-		{"invalid guild config", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.Config.DiscordGuildID = "invalid" }, []string{"get_discord_profile", "search_discord_members"}},
+		{"discord cache", func(_ *Bot, s *bot.Client, _ *discord.Message) { s.Caches = nil }, []string{"read_channel_history", "remember"}},
+		{"guild config", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.Config = nil }, []string{"get_discord_profile", "search_discord_members", "remember", "read_community_channel"}},
+		{"invalid guild config", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.Config.DiscordGuildID = "invalid" }, []string{"get_discord_profile", "search_discord_members", "remember"}},
 		{"no consent", func(_ *Bot, _ *bot.Client, m *discord.Message) { m.Content = "hey" }, []string{"remember"}},
-		{"not an owner", func(_ *Bot, _ *bot.Client, m *discord.Message) { m.Author.ID = snowflakeID("100000000000000056") }, []string{"remember"}},
+		{"no Manage Server", func(_ *Bot, _ *bot.Client, m *discord.Message) { m.Member = &discord.Member{} }, []string{"remember"}},
+		{"legacy owner ID without Manage Server", func(_ *Bot, _ *bot.Client, m *discord.Message) {
+			m.Member, m.Author.ID = &discord.Member{}, snowflakeID(garminNyxID)
+		}, []string{"remember"}},
+		{"no readable channels", func(b *Bot, _ *bot.Client, _ *discord.Message) { b.Config.Discord.AI.ReadableChannels = nil }, []string{"read_community_channel"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			b := garminDiscoveryTestBot(t)
 			session := garminHistoryTestSession(t, func(*http.Request) (string, error) { t.Fatal("discovery fetched history"); return "[]", nil })
 			message := garminHistoryTestMessage()
-			message.Author.ID = snowflakeID(garminNyxID)
+			message.Member = &discord.Member{RoleIDs: []snowflake.ID{snowflakeID(garminTestManagerRoleID)}}
 			message.Content = "for future reference, remember that releases happen on Fridays"
 			messages := []cmd.GarminAIMessage{{Role: "user", Content: message.Content}}
 			test.disable(b, session, message)
@@ -1172,7 +1177,7 @@ func TestReadGarminChannelBacklogIncludesImagesAndHonorsCutoff(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
 	})})
 
-	bot := &Bot{Config: &config.Config{DiscordGuildID: "100000000000000012"}, garminContextCutoffs: map[string]string{"100000000000000005": "150"}}
+	bot := &Bot{Config: testConfig(config.Config{DiscordGuildID: "100000000000000012"}), garminContextCutoffs: map[string]string{"100000000000000005": "150"}}
 	output, err := bot.readGarminChannelMessages(session, "100000000000000005", "200", "", 20)
 	if err != nil {
 		t.Fatal(err)
@@ -1259,7 +1264,7 @@ func TestGarminDiscordContextIncludesChannelRolesAndPronouns(t *testing.T) {
 		Author: discord.User{ID: snowflakeID("123456789012345678"), Username: "speaker"},
 		Member: &discord.Member{RoleIDs: []snowflake.ID{snowflakeID("100000000000000042"), snowflakeID("100000000000000043")}},
 	}
-	context := (&Bot{}).garminDiscordContextForConversation(session, message, []cmd.GarminAIMessage{{Role: "user", Name: "discord_876543210987654321", Content: "earlier conversation"}, {Role: "user", Name: "discord_123456789012345678", Content: "current message"}})
+	context := testBot().garminDiscordContextForConversation(session, message, []cmd.GarminAIMessage{{Role: "user", Name: "discord_876543210987654321", Content: "earlier conversation"}, {Role: "user", Name: "discord_123456789012345678", Content: "current message"}})
 	for _, expected := range []string{`"name":"general"`, `"name":"they/them"`, `"pronouns":["they/them"]`, `"tracked_conversation_users"`, `"discord_876543210987654321"`, `"display_name":"History User"`, "brief, direct, useful", "continued bot chat", "#bots"} {
 		if !strings.Contains(context, expected) {
 			t.Errorf("context missing %q: %s", expected, context)
@@ -1412,19 +1417,32 @@ func TestListNotesToolIncludesDescriptions(t *testing.T) {
 	}
 }
 
-func TestRememberToolRequiresOwner(t *testing.T) {
+func TestRememberToolRequiresNativeManageServer(t *testing.T) {
 	database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer database.Close()
+	if err := database.AddAdmin("discord", "100000000000000056", "owner"); err != nil {
+		t.Fatal(err)
+	}
 	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	const manager = "100000000000000057"
+	authority := testGuildAuthority{guildID: "12", ownerID: "99", roles: []testRole{{id: "80", permissions: discord.PermissionManageGuild, position: 2}}, members: map[string][]string{"100000000000000056": {}, manager: {"80"}}}
+	session := mustTestClient(t)
+	session.Rest = testREST(&http.Client{Transport: garminRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if response, ok := authority.response(r); ok {
+			return response, nil
+		}
+		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		return nil, fmt.Errorf("unexpected request")
+	})})
 	bot := &Bot{
 		DB:           database,
-		Config:       &config.Config{PermaAdminDiscordIDs: []string{"admin"}},
+		Config:       testConfig(config.Config{DiscordGuildID: "12", PermaAdminDiscordIDs: []string{"100000000000000056"}}),
 		garminMemory: memory,
 	}
 	call := cmd.GarminAIToolCall{Function: cmd.GarminAIFunctionCall{
@@ -1433,36 +1451,47 @@ func TestRememberToolRequiresOwner(t *testing.T) {
 	}}
 
 	request := func(userID, content string) *discord.Message {
-		return &discord.Message{Author: discord.User{ID: snowflakeID(userID)}, Content: content}
+		return &discord.Message{GuildID: snowflakePtr("12"), Author: discord.User{ID: snowflakeID(userID)}, Content: content}
 	}
-	output, _, updated := bot.executeGarminAITool(context.Background(), nil, request("100000000000000056", "garmin, remember that durable fact"), call)
-	if updated || !strings.Contains(output, "only Nyx and Lamp") {
-		t.Fatalf("non-owner remember = (%q, %v)", output, updated)
+	// Legacy bot-admin records and permaadmin config grant nothing.
+	output, _, updated := bot.executeGarminAITool(context.Background(), session, request("100000000000000056", "garmin, for future reference, remember that durable fact"), call)
+	if updated || !strings.Contains(output, "Manage Server") {
+		t.Fatalf("legacy admin remember = (%q, %v)", output, updated)
+	}
+	if output, _, updated := bot.executeGarminAITool(context.Background(), nil, request(manager, "garmin, for future reference, remember that durable fact"), call); updated || !strings.Contains(output, "Manage Server") {
+		t.Fatalf("remember without a session = (%q, %v)", output, updated)
 	}
 	content, _ := memory.Read()
 	if strings.Contains(content, "durable fact") {
-		t.Fatal("non-admin updated memory")
+		t.Fatal("unauthorized caller updated memory")
 	}
 
 	for _, content := range []string{"garmin, hello", "garmin, do not remember that durable fact", "garmin, I never asked you to remember that", "garmin, for future reference, do not remember that durable fact"} {
-		output, _, updated = bot.executeGarminAITool(context.Background(), nil, request(garminNyxID, content), call)
+		output, _, updated = bot.executeGarminAITool(context.Background(), session, request(manager, content), call)
 		if updated || !strings.Contains(output, "explicit request") {
-			t.Fatalf("implicit or denied owner consent %q = (%q, %v)", content, output, updated)
+			t.Fatalf("implicit or denied manager consent %q = (%q, %v)", content, output, updated)
 		}
 	}
 
-	output, _, updated = bot.executeGarminAITool(context.Background(), nil, request(garminNyxID, "garmin, remember that I like music"), call)
+	output, _, updated = bot.executeGarminAITool(context.Background(), session, request(manager, "garmin, remember that I like music"), call)
 	if updated || !strings.Contains(output, "non-personal") {
 		t.Fatalf("personal memory = (%q, %v)", output, updated)
 	}
 
-	output, _, updated = bot.executeGarminAITool(context.Background(), nil, request(garminNyxID, "garmin, for future reference, remember that durable fact"), call)
+	output, _, updated = bot.executeGarminAITool(context.Background(), session, request(manager, "garmin, for future reference, remember that durable fact"), call)
 	if !updated || !strings.Contains(output, `"saved":true`) {
-		t.Fatalf("admin remember = (%q, %v)", output, updated)
+		t.Fatalf("manager remember = (%q, %v)", output, updated)
 	}
 	content, _ = memory.Read()
 	if !strings.Contains(content, "durable fact") {
-		t.Fatal("admin memory update was not saved")
+		t.Fatal("manager memory update was not saved")
+	}
+
+	// Revoking the role takes effect on the next write.
+	authority.members[manager] = nil
+	output, _, updated = bot.executeGarminAITool(context.Background(), session, request(manager, "garmin, for future reference, remember that second fact"), call)
+	if updated || !strings.Contains(output, "Manage Server") {
+		t.Fatalf("revoked manager remember = (%q, %v)", output, updated)
 	}
 }
 
@@ -1481,7 +1510,7 @@ func TestGarminChannelDescriptionsUseResolvedIDs(t *testing.T) {
 		garminMinkyID:      "Minky",
 		garminAppSupportID: "verified support-skill answers",
 	} {
-		if got := garminChannelDescription(channelID); !strings.Contains(got, expected) {
+		if got := testBot().garminChannelDescription(channelID); !strings.Contains(got, expected) {
 			t.Errorf("garminChannelDescription(%q) = %q, want substring %q", channelID, got, expected)
 		}
 	}

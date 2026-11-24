@@ -115,23 +115,26 @@ func (c *DecisionsClient) Decide(ctx context.Context, request DecisionRequest) (
 		return nil, errors.New("invalid or oversized Decisions request")
 	}
 	start := int((c.next.Add(1) - 1) % uint64(len(c.keys)))
-	for attempt := 0; attempt < 2; attempt++ {
+	// Fail over across every configured key once; a single key gets one repeat retry.
+	attempts := max(2, len(c.keys))
+	for attempt := 0; attempt < attempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		attemptCtx, cancelAttempt := context.WithTimeout(ctx, attemptTimeout)
-		response, retry, err := c.attempt(attemptCtx, c.keys[(start+attempt)%len(c.keys)], body, request)
+		key := c.keys[(start+attempt)%len(c.keys)]
+		response, retry, err := c.attempt(attemptCtx, key, body, request)
 		cancelAttempt()
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		if err == nil || !retry || attempt == 1 {
+		if err == nil || !retry || attempt == attempts-1 {
 			return response, err
 		}
 		delay := 100 * time.Millisecond
 		var httpErr *chatCompletionHTTPError
 		// Retry-After limits reuse of this key, not failover to another key.
-		if c.keys[start] == c.keys[(start+1)%len(c.keys)] && errors.As(err, &httpErr) && httpErr.retryAfter > delay {
+		if key == c.keys[(start+attempt+1)%len(c.keys)] && errors.As(err, &httpErr) && httpErr.retryAfter > delay {
 			delay = httpErr.retryAfter
 		}
 		if err := waitForChatCompletionRetry(ctx, delay); err != nil {

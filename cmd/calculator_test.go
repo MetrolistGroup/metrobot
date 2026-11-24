@@ -28,3 +28,30 @@ func TestCalculateRejectsUnsafeExpressions(t *testing.T) {
 		}
 	}
 }
+
+func TestCalculateRejectsOversizedIntermediates(t *testing.T) {
+	for _, expression := range []string{
+		"((2^1000)^1000)^10",
+		"(2^1000)^1000",
+		"1e1000000000",
+		"1e-1000000000",
+		"0x1p1000000000",
+		"(2^1000)^16 * (2^1000)^16",
+		"1/(2^1000)^17 + 1",
+	} {
+		if result, err := Calculate(expression); err == nil {
+			t.Errorf("Calculate(%q) = %d chars, want error", expression, len(result))
+		}
+	}
+	for expression, want := range map[string]string{
+		"2^1000 / 2^999": "2",
+		"1.5e3":          "1500",
+		"2.5e-1":         "1/4",
+		"0x10":           "16",
+	} {
+		got, err := Calculate(expression)
+		if err != nil || got != want {
+			t.Errorf("Calculate(%q) = %q, %v; want %q", expression, got, err, want)
+		}
+	}
+}

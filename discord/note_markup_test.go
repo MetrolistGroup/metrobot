@@ -35,15 +35,13 @@ func TestAuthoredLayoutDeliveryPathsAndRawReads(t *testing.T) {
 	}
 	requests := make(chan deliveredNote, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests <- readDeliveredNote(t, r)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"38","channel_id":"5"}`))
+		recordDeliveredNote(t, w, r, requests)
 	}))
 	defer server.Close()
 	client := mustTestClient(t)
 	client.Rest = testREST(server.Client())
 	client.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: client.Rest.HTTPClient().Transport, target: server.URL}
-	b := &Bot{DB: database, Notes: &cmd.NotesHandler{DB: database}, Config: &config.Config{DiscordGuildID: "12"}, Logger: zap.NewNop(), garminProcessor: cmd.NewGarminProcessor()}
+	b := &Bot{DB: database, Notes: &cmd.NotesHandler{DB: database}, Config: testConfig(config.Config{DiscordGuildID: "12"}), Logger: zap.NewNop(), garminProcessor: cmd.NewGarminProcessor()}
 	interaction := testCommandInteraction(t, client, `{"id":"17","application_id":"1","token":"token","type":2,"channel":{"id":"5","type":0},"data":{"name":"note","type":1}}`)
 	option, _ := json.Marshal(longName)
 	readable, err := b.Notes.GetNote(longName)

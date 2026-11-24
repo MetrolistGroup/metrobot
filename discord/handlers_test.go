@@ -2,6 +2,7 @@ package discord
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -37,7 +38,7 @@ func TestApprovedNicknameChangePersistsAndIsConsumedOnlyByNicknameUpdate(t *test
 		t.Fatal(err)
 	}
 	defer database.Close()
-	bot := &Bot{DB: database, Config: &config.Config{DiscordGuildID: "100000000000000012"}, Logger: zap.NewNop()}
+	bot := &Bot{DB: database, Config: testConfig(config.Config{DiscordGuildID: "100000000000000012"}), Logger: zap.NewNop()}
 
 	bot.onGuildMemberUpdate(nil, &events.GuildMemberUpdate{GenericGuildMember: &events.GenericGuildMember{GuildID: snowflakeID("100000000000000012"), Member: discord.Member{GuildID: snowflakeID("100000000000000012"), Nick: ptr("same"), User: discord.User{ID: snowflakeID("100000000000000056")}}}, OldMember: discord.Member{Nick: ptr("same"), User: discord.User{ID: snowflakeID("100000000000000056")}}})
 	approved, err := database.ConsumeNicknameApproval("100000000000000012", "100000000000000056")
@@ -88,7 +89,7 @@ func TestUncachedMemberUpdateStillDehoists(t *testing.T) {
 	defer server.Close()
 	client.Rest = testREST(server.Client())
 	client.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: client.Rest.HTTPClient().Transport, target: server.URL}
-	b := &Bot{Client: client, Config: &config.Config{DiscordGuildID: "300"}, DB: database, Logger: zap.NewNop(), Moderation: &cmd.ModerationHandler{DB: database}}
+	b := &Bot{Client: client, Config: testConfig(config.Config{DiscordGuildID: "300"}), DB: database, Logger: zap.NewNop(), Moderation: &cmd.ModerationHandler{DB: database}}
 	b.onGuildMemberUpdate(client, &events.GuildMemberUpdate{GenericGuildMember: &events.GenericGuildMember{
 		GuildID: 300, Member: discord.Member{GuildID: 300, User: discord.User{ID: 400}, Nick: ptr("!!!alice")},
 	}})
@@ -104,7 +105,7 @@ func TestBlockedGuildTagBansMemberOnJoinAndUpdate(t *testing.T) {
 		if r.Method != http.MethodPut || !strings.HasSuffix(r.URL.Path, "/guilds/100000000000000012/bans/100000000000000056") {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-		if reason := r.Header.Get("X-Audit-Log-Reason"); !strings.Contains(reason, "ROCK") || !strings.Contains(reason, blockedGuildTagID) {
+		if reason := r.Header.Get("X-Audit-Log-Reason"); !strings.Contains(reason, "blocked server tag") || !strings.Contains(reason, blockedGuildTagID) {
 			t.Errorf("ban reason = %q", reason)
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -118,7 +119,7 @@ func TestBlockedGuildTagBansMemberOnJoinAndUpdate(t *testing.T) {
 	}
 	session.Rest = testREST(server.Client())
 	session.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: session.Rest.HTTPClient().Transport, target: server.URL}
-	bot := &Bot{Config: &config.Config{DiscordGuildID: "100000000000000012"}, Logger: zap.NewNop()}
+	bot := &Bot{Config: testConfig(config.Config{DiscordGuildID: "100000000000000012"}), Logger: zap.NewNop()}
 
 	var member discord.Member
 	if err := json.Unmarshal([]byte(`{"guild_id":"100000000000000012","user":{"id":"100000000000000056","primary_guild":{"identity_guild_id":"1469982893056200819","identity_enabled":true,"tag":"ROCK"}}}`), &member); err != nil {
@@ -177,7 +178,7 @@ func TestNewDonorGetsPingingWelcomeNote(t *testing.T) {
 	session.Rest = testREST(server.Client())
 	session.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: session.Rest.HTTPClient().Transport, target: server.URL}
 	bot := &Bot{
-		Config: &config.Config{DiscordGuildID: "100000000000000012"},
+		Config: testConfig(config.Config{DiscordGuildID: "100000000000000012"}),
 		DB:     database, Notes: &cmd.NotesHandler{DB: database}, Logger: zap.NewNop(),
 	}
 
@@ -192,7 +193,27 @@ func TestNewDonorGetsPingingWelcomeNote(t *testing.T) {
 func TestGarminKillRequiresAuthorizedReplyAndUsesUserTimeout(t *testing.T) {
 	var requests []string
 	var timeouts []time.Duration
+	// 49 has Moderate Members; the former moderator and cool-people roles carry no native permission.
+	authority := testGuildAuthority{guildID: "100000000000000012", ownerID: "99", roles: []testRole{
+		{id: "100000000000000049", permissions: discord.PermissionModerateMembers, position: 5},
+		{id: discordModeratorRoleID, position: 4},
+		{id: discordCoolPeopleRoleID, position: 3},
+		{id: "100000000000000003", permissions: discord.PermissionModerateMembers, position: 8},
+	}, members: map[string][]string{
+		"100000000000000049": {"100000000000000049"},
+		"100000000000000024": {discordModeratorRoleID},
+		"100000000000000007": {discordCoolPeopleRoleID},
+		"100000000000000056": {},
+		"100000000000000052": {},
+		"100000000000000002": {"100000000000000003"},
+	}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if response, ok := authority.response(r); ok {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(response.StatusCode)
+			_, _ = io.Copy(w, response.Body)
+			return
+		}
 		requests = append(requests, r.Method+" "+r.URL.Path)
 		switch {
 		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/guilds/100000000000000012/members/100000000000000052"):
@@ -246,7 +267,7 @@ func TestGarminKillRequiresAuthorizedReplyAndUsesUserTimeout(t *testing.T) {
 
 	}
 
-	bot := &Bot{Config: &config.Config{DiscordGuildID: "100000000000000012"}, Logger: zap.NewNop()}
+	bot := &Bot{Config: testConfig(config.Config{DiscordGuildID: "100000000000000012"}), Logger: zap.NewNop()}
 	message := func(author string, reply bool, french bool) *discord.Message {
 		content := "ok garmin kill"
 		if french {
@@ -274,40 +295,35 @@ func TestGarminKillRequiresAuthorizedReplyAndUsesUserTimeout(t *testing.T) {
 		t.Errorf("staff timeout duration = %s, want about 30s", remaining)
 	}
 
+	// Deployment roles without Moderate Members grant nothing, even when the message member still lists them.
 	bot.onMessageCreate(session, message("100000000000000007", true, false))
-	if len(requests) != 6 {
-		t.Fatalf("limited user reply made %d total requests, want 6: %v", len(requests), requests)
-	}
-	if remaining := timeouts[1]; remaining < 4*time.Second || remaining > 6*time.Second {
-		t.Errorf("limited user timeout duration = %s, want about 5s", remaining)
-	}
-
 	bot.onMessageCreate(session, message("100000000000000024", true, false))
-	if len(requests) != 9 {
-		t.Fatalf("moderator reply made %d total requests, want 9: %v", len(requests), requests)
-	}
-	if remaining := timeouts[2]; remaining < 25*time.Second || remaining > 35*time.Second {
-		t.Errorf("moderator timeout duration = %s, want about 30s", remaining)
-	}
-
 	bot.onMessageCreate(session, message("100000000000000056", true, false))
 	bot.onMessageCreate(session, message("100000000000000049", false, false))
-	if len(requests) != 9 {
-		t.Fatalf("unauthorized or non-reply command made requests: %v", requests[9:])
+	if len(requests) != 3 {
+		t.Fatalf("unauthorized or non-reply command made requests: %v", requests[3:])
 	}
+
+	// Revoking Moderate Members takes effect on the next command.
+	authority.members["100000000000000049"] = nil
+	bot.onMessageCreate(session, message("100000000000000049", true, false))
+	if len(requests) != 3 {
+		t.Fatalf("revoked staff made requests: %v", requests[3:])
+	}
+	authority.members["100000000000000049"] = []string{"100000000000000049"}
 	// tests the french variation "France Modération guillotine" with staff permissions
 	// non-reply version
 	bot.onMessageCreate(session, message("100000000000000049", false, true))
-	if len(requests) != 9 {
-		t.Fatalf("unauthorized or non-reply command made requests: %v", requests[9:])
+	if len(requests) != 3 {
+		t.Fatalf("unauthorized or non-reply command made requests: %v", requests[3:])
 	}
 	if remaining := timeouts[0]; remaining < 25*time.Second || remaining > 35*time.Second {
 		t.Errorf("staff timeout duration = %s, want about 30s", remaining)
 	}
 	// reply version
 	bot.onMessageCreate(session, message("100000000000000049", true, true))
-	if len(requests) != 12 {
-		t.Fatalf("unauthorized or non-reply command made requests: %v", requests[12:])
+	if len(requests) != 6 {
+		t.Fatalf("French staff reply made %d total requests, want 6: %v", len(requests), requests)
 	}
 	if remaining := timeouts[0]; remaining < 25*time.Second || remaining > 35*time.Second {
 		t.Errorf("staff timeout duration = %s, want about 30s", remaining)
@@ -398,7 +414,7 @@ func TestYouTubeSourceLinkIsRepostedAsUserThenDeleted(t *testing.T) {
 	cacheTestGuild(session, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: snowflakeID("100000000000000012")}}})
 	session.Caches.AddChannel(testChannel(t, map[string]any{"id": "100000000000000005", "guild_id": "100000000000000012", "type": discord.ChannelTypeGuildText}))
 
-	bot := &Bot{Config: &config.Config{DiscordGuildID: "100000000000000012"}, Logger: zap.NewNop()}
+	bot := &Bot{Config: testConfig(config.Config{DiscordGuildID: "100000000000000012"}), Logger: zap.NewNop()}
 	bot.onMessageCreate(session, &discord.Message{
 		ID: snowflakeID("100000000000000029"), GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID("100000000000000005"), Content: "watch https://youtu.be/video?is=source",
 		Author: discord.User{ID: snowflakeID("100000000000000056"), Username: "account", Avatar: ptr("account-avatar")},
@@ -410,35 +426,23 @@ func TestYouTubeSourceLinkIsRepostedAsUserThenDeleted(t *testing.T) {
 	}
 }
 
-func TestModeratorRoleHasOnlyRequestedModerationActions(t *testing.T) {
-	bot := &Bot{}
-	member := &discord.Member{RoleIDs: []snowflake.ID{snowflakeID(discordModeratorRoleID)}}
-
-	for _, action := range []string{"kill", "ban", "sban", "kick", "mute", "timeout"} {
-		if !bot.canUseModerationAction(member, "100000000000000024", action) {
-			t.Errorf("moderator cannot use %s", action)
-		}
-	}
-	for _, action := range []string{"dban", "tban", "warn", "addadmin", "editnote"} {
-		if bot.canUseModerationAction(member, "100000000000000024", action) {
-			t.Errorf("moderator can unexpectedly use %s", action)
-		}
-	}
-}
-
 func TestBulkRoleRequiresManageRolesAndLowerRole(t *testing.T) {
 	roles := []discord.Role{{ID: snowflakeID("100000000000000055"), Position: 10}, {ID: snowflakeID("100000000000000020"), Position: 9}, {ID: snowflakeID("100000000000000009"), Position: 10}, {ID: snowflakeID("100000000000000021"), Position: 8, Managed: true}}
-	member := &discord.ResolvedMember{Member: discord.Member{RoleIDs: []snowflake.ID{snowflakeID("100000000000000055")}}, Permissions: discord.PermissionManageRoles}
+	member := discordAuthority{permissions: discord.PermissionManageRoles, top: 10}
 
-	if !canAssignRole(member, &roles[1], roles, "100000000000000012") {
+	if !canAssignRole(member, &roles[1], "100000000000000012") {
 		t.Fatal("lower role should be assignable")
 	}
-	if canAssignRole(member, &roles[2], roles, "100000000000000012") || canAssignRole(member, &roles[3], roles, "100000000000000012") {
+	if canAssignRole(member, &roles[2], "100000000000000012") || canAssignRole(member, &roles[3], "100000000000000012") {
 		t.Fatal("equal or managed role should not be assignable")
 	}
-	member.Permissions = 0
-	if canAssignRole(member, &roles[1], roles, "100000000000000012") {
+	member.permissions = 0
+	if canAssignRole(member, &roles[1], "100000000000000012") {
 		t.Fatal("member without Manage Roles could assign a role")
+	}
+
+	if !canAssignRole(discordAuthority{owner: true, permissions: discord.PermissionsAll}, &roles[2], "100000000000000012") {
+		t.Fatal("server owner should be able to assign a role without holding a higher role")
 	}
 
 	users := parseBulkRoleUsers("@birdy.2.0, @dubba_kench, <@234567890123456789> @BIRDY.2.0 missing")

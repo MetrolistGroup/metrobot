@@ -14,18 +14,17 @@ type DB struct {
 }
 
 func Open(path string) (*DB, error) {
-	conn, err := sql.Open("sqlite", path)
+	// Every pooled connection gets these settings. The busy timeout makes
+	// concurrent writers wait instead of failing with SQLITE_BUSY, and
+	// immediate transactions take the write lock up front so a read-then-write
+	// transaction cannot fail when it upgrades its lock.
+	conn, err := sql.Open("sqlite", path+"?_busy_timeout=10000&_journal_mode=WAL&_foreign_keys=1&_txlock=immediate")
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
-
-	if _, err := conn.Exec("PRAGMA journal_mode=WAL"); err != nil {
+	if err := conn.Ping(); err != nil {
 		conn.Close()
-		return nil, fmt.Errorf("setting journal mode: %w", err)
-	}
-	if _, err := conn.Exec("PRAGMA foreign_keys=ON"); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("enabling foreign keys: %w", err)
+		return nil, fmt.Errorf("opening database: %w", err)
 	}
 
 	d := &DB{conn: conn}
@@ -296,29 +295,7 @@ func (d *DB) DeleteNote(name string) error {
 	return nil
 }
 
-// --- Admins ---
-
-func (d *DB) IsPermaAdmin(platform, userID string, cfg PermaAdminProvider) bool {
-	ids := cfg.GetPermaAdminIDs(platform)
-	for _, id := range ids {
-		if id == userID {
-			return true
-		}
-	}
-	return false
-}
-
-func (d *DB) IsAdmin(platform, userID string, cfg PermaAdminProvider) bool {
-	if d.IsPermaAdmin(platform, userID, cfg) {
-		return true
-	}
-	var count int
-	err := d.conn.QueryRow("SELECT COUNT(*) FROM admins WHERE platform = ? AND user_id = ?", platform, userID).Scan(&count)
-	if err != nil {
-		return false
-	}
-	return count > 0
-}
+// Legacy admin rows are retained for migration; authorization never reads them.
 
 func (d *DB) AddAdmin(platform, userID, addedBy string) error {
 	_, err := d.conn.Exec("INSERT OR IGNORE INTO admins (platform, user_id, added_by) VALUES (?, ?, ?)", platform, userID, addedBy)
@@ -792,8 +769,4 @@ func (d *DB) GetAllBoardEntries(board string) ([]*BoardEntry, error) {
 		entries = append(entries, &entry)
 	}
 	return entries, rows.Err()
-}
-
-type PermaAdminProvider interface {
-	GetPermaAdminIDs(platform string) []string
 }

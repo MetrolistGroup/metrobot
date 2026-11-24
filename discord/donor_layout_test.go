@@ -2,6 +2,7 @@ package discord
 
 import (
 	"github.com/MetrolistGroup/metrobot/cmd"
+	"github.com/MetrolistGroup/metrobot/config"
 	"github.com/MetrolistGroup/metrobot/db"
 	"github.com/MetrolistGroup/metrobot/internal/notefmt"
 	"github.com/disgoorg/disgo/discord"
@@ -39,7 +40,7 @@ func TestDonorWelcomeRichRejectionKeepsTargetOnlyFallback(t *testing.T) {
 	client := mustTestClient(t)
 	client.Rest = testREST(server.Client())
 	client.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: client.Rest.HTTPClient().Transport, target: server.URL}
-	(&Bot{Notes: notes, Logger: zap.NewNop()}).sendDonorWelcome(client, "56")
+	(&Bot{Config: testConfig(config.Config{}), Notes: notes, Logger: zap.NewNop()}).sendDonorWelcome(client, "56")
 	if len(requests) != 2 {
 		t.Fatalf("sent %d requests", len(requests))
 	}
@@ -74,7 +75,7 @@ func TestDonorWelcomeThanksWithoutTesterOnboarding(t *testing.T) {
 	client := mustTestClient(t)
 	client.Rest = testREST(server.Client())
 	client.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: client.Rest.HTTPClient().Transport, target: server.URL}
-	(&Bot{Notes: notes, Logger: zap.NewNop()}).sendDonorWelcome(client, "56")
+	(&Bot{Config: testConfig(config.Config{}), Notes: notes, Logger: zap.NewNop()}).sendDonorWelcome(client, "56")
 	if !strings.Contains(got.Message.Content, "Thank you") || !strings.Contains(got.Message.Content, "free and public") || strings.Contains(got.Message.Content, "access") {
 		t.Fatal("old onboarding leaked", got)
 	}

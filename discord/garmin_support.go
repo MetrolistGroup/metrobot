@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
+	"github.com/MetrolistGroup/metrobot/util"
 	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/discord"
 	"go.uber.org/zap"
@@ -131,7 +132,8 @@ func (b *Bot) sendGarminAppSupportReply(s *bot.Client, m *discord.Message, conte
 		reply := b.sendGarminReply(s, m, content)
 		return reply, layout.Text
 	}
-	if noteName != "" {
+	// Text displays cap at 4000 characters; longer checked answers go out as an attachment below.
+	if noteName != "" && util.UTF16Len(content) <= 4000 {
 		message := discord.MessageCreate{
 			Flags:            discord.MessageFlagIsComponentsV2,
 			AllowedMentions:  &discord.AllowedMentions{},

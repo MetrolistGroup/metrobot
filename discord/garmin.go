@@ -53,7 +53,7 @@ func (b *Bot) runGarminAIReply(s *bot.Client, m *discord.Message, messages []cmd
 	if len(messages) == 0 || !garminAIMessageHasInput(messages[len(messages)-1]) || b.garminAI == nil {
 		return
 	}
-	if m.ChannelID.String() == garminAppSupportID && b.garminDecisions != nil {
+	if b.isSupportChannel(m.ChannelID.String()) && b.garminDecisions != nil {
 		if !b.beginSupportDecision(m) {
 			return
 		}
@@ -81,7 +81,7 @@ func (b *Bot) runGarminAIReply(s *bot.Client, m *discord.Message, messages []cmd
 	typingDone := make(chan struct{})
 	defer close(typingDone)
 	b.keepGarminTyping(s, m.ChannelID.String(), typingDone)
-	supportMode := m.ChannelID.String() == garminAppSupportID
+	supportMode := b.isSupportChannel(m.ChannelID.String())
 	messages = boundGarminAIConversation(messages)
 	if requestCtx.Err() != nil {
 		return
@@ -140,10 +140,7 @@ func (b *Bot) runGarminAIReply(s *bot.Client, m *discord.Message, messages []cmd
 	if strings.TrimSpace(result.Answer) == "" {
 		return
 	}
-	if m.ChannelID.String() == garminAppSupportID {
-		if _, layout := garminLayoutReply(result.Answer); !result.VerbatimNote && !layout {
-			result.Answer = truncateGarminAIResponse(result.Answer)
-		}
+	if b.isSupportChannel(m.ChannelID.String()) {
 		conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: result.Answer, Timestamp: time.Now().UTC()})
 		supportCompleted = b.sendGarminAppSupportReplyAndRememberIfVisible(s, m, result.Answer, conversation, result.NoteName) != nil
 		return
@@ -159,7 +156,7 @@ func (b *Bot) runGarminAIReply(s *bot.Client, m *discord.Message, messages []cmd
 		return
 	}
 	answer, embed := cmd.ParseGarminReply(result.Answer)
-	result.Answer = enforceGarminChannelReply(garminRedirectChannelID(s, m.ChannelID.String()), answer, garminUserText(messages))
+	result.Answer = b.enforceGarminChannelReply(b.garminRedirectChannelID(s, m.ChannelID.String()), answer, garminUserText(messages))
 
 	renderedAnswer := renderGarminGuildEmojis(s, snowflakeString(m.GuildID), result.Answer)
 	if strings.TrimSpace(renderedAnswer) == "" && strings.TrimSpace(result.Answer) != "" {

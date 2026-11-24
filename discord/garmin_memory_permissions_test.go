@@ -12,11 +12,14 @@ import (
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/config"
 	"github.com/MetrolistGroup/metrobot/db"
+	"github.com/disgoorg/disgo/discord"
 	"go.uber.org/zap"
 )
 
-func TestSharedMemoryWritesRequireOwnerEvenForAdmins(t *testing.T) {
-	for _, caller := range []string{"100000000000000056", garminNyxID, garminLampID} {
+func TestSharedMemoryRequiresNativeManageServer(t *testing.T) {
+	// 56 is a legacy bot admin without Discord permissions, 57 has Manage Server, 99 owns the server.
+	allowed := map[string]bool{"56": false, "57": true, "99": true, "58": false}
+	for caller, canManage := range allowed {
 		for _, action := range []string{"append", "replace", "clear", "view"} {
 			t.Run(caller+"/"+action, func(t *testing.T) {
 				database, err := db.Open(filepath.Join(t.TempDir(), "bot.db"))
@@ -24,7 +27,7 @@ func TestSharedMemoryWritesRequireOwnerEvenForAdmins(t *testing.T) {
 					t.Fatal(err)
 				}
 				t.Cleanup(func() { database.Close() })
-				if err := database.AddAdmin("discord", caller, garminNyxID); err != nil {
+				if err := database.AddAdmin("discord", "56", "owner"); err != nil {
 					t.Fatal(err)
 				}
 				memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
@@ -38,18 +41,26 @@ func TestSharedMemoryWritesRequireOwnerEvenForAdmins(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				b := &Bot{DB: database, Config: &config.Config{}, garminMemory: memory, Logger: zap.NewNop()}
+				authority := testGuildAuthority{guildID: "12", ownerID: "99", roles: []testRole{{id: "80", permissions: discord.PermissionManageGuild, position: 3}}, members: map[string][]string{"56": {}, "57": {"80"}}}
+				b := &Bot{DB: database, Config: testConfig(config.Config{DiscordGuildID: "12"}), garminMemory: memory, Logger: zap.NewNop()}
 				client := mustTestClient(t)
-				var response struct {
-					Data struct {
-						Content string `json:"content"`
-					}
-				}
+				var response discord.MessageCreate
+				acknowledged := false
 				client.Rest = testREST(&http.Client{Transport: garminRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+					if lookup, ok := authority.response(r); ok {
+						if !acknowledged {
+							t.Error("memory permission lookup ran before acknowledgement")
+						}
+						return lookup, nil
+					}
+					if r.Method == http.MethodPost {
+						acknowledged = true
+						return &http.Response{StatusCode: http.StatusNoContent, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+					}
 					if err := json.NewDecoder(r.Body).Decode(&response); err != nil {
 						t.Fatal(err)
 					}
-					return &http.Response{StatusCode: http.StatusNoContent, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+					return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":"18","channel_id":"5"}`)), Request: r}, nil
 				})})
 				interaction := testCommandInteraction(t, client, fmt.Sprintf(`{"id":"17","application_id":"1","token":"test","type":2,"data":{"name":"memory","type":1,"options":[{"name":%q,"type":1,"options":[{"name":"content","type":3,"value":"new approved fact"}]}]}}`, action))
 				b.handleGarminMemory(client, interaction, interaction.SlashCommandInteractionData(), caller)
@@ -57,16 +68,19 @@ func TestSharedMemoryWritesRequireOwnerEvenForAdmins(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if action == "view" {
-					if after != before || !strings.Contains(response.Data.Content, "existing approved fact") {
-						t.Fatalf("admin read changed: memory=%q response=%q", after, response.Data.Content)
+				switch {
+				case !canManage:
+					if after != before || !strings.Contains(response.Content, "permission") {
+						t.Fatalf("caller without Manage Server used memory: memory=%q response=%q", after, response.Content)
 					}
-				} else if !isGarminOwner(caller) {
-					if after != before || !strings.Contains(response.Data.Content, "Only Nyx and Lamp") {
-						t.Fatalf("non-owner changed memory: %q response=%q", after, response.Data.Content)
+				case action == "view":
+					if after != before || !strings.Contains(response.Content, "existing approved fact") {
+						t.Fatalf("manager read changed: memory=%q response=%q", after, response.Content)
 					}
-				} else if after == before || !strings.Contains(response.Data.Content, "memory updated") {
-					t.Fatalf("authorized owner write failed: memory=%q response=%q", after, response.Data.Content)
+				default:
+					if after == before || !strings.Contains(response.Content, "memory updated") {
+						t.Fatalf("authorized write failed: memory=%q response=%q", after, response.Content)
+					}
 				}
 			})
 		}

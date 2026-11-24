@@ -10,6 +10,10 @@ import (
 const DefaultOpenRouterModel = "z-ai/glm-5.3-flash:floor"
 
 type Config struct {
+	Discord  DiscordConfig  `json:"discord"`
+	Telegram TelegramConfig `json:"telegram"`
+
+	// Legacy connection keys remain accepted; nested settings take precedence.
 	DiscordToken            string   `json:"discord_token"`
 	TelegramToken           string   `json:"telegram_token"`
 	GitHubToken             string   `json:"github_token"`
@@ -23,6 +27,7 @@ type Config struct {
 	DiscordGuildID string `json:"discord_guild_id"`
 	TelegramChatID int64  `json:"telegram_chat_id"`
 
+	// Deprecated and ignored. Platform permissions determine access.
 	PermaAdminDiscordIDs  []string `json:"permaadmin_discord_ids"`
 	PermaAdminTelegramIDs []string `json:"permaadmin_telegram_ids"`
 
@@ -42,6 +47,67 @@ type Config struct {
 	StarboardChannelID string `json:"starboard_channel_id"`
 	StarboardThreshold int    `json:"starboard_threshold"`
 	StarboardEmoji     string `json:"starboard_emoji"`
+
+	defaultsApplied bool
+}
+
+// UnmarshalJSON also honors explicitly empty nested values over legacy keys.
+func (c *Config) UnmarshalJSON(data []byte) error {
+	type plain Config
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var supplied struct {
+		Discord  map[string]json.RawMessage `json:"discord"`
+		Telegram map[string]json.RawMessage `json:"telegram"`
+	}
+	if err := json.Unmarshal(data, &supplied); err != nil {
+		return err
+	}
+	*c = Config(decoded)
+	for _, field := range []struct {
+		name   string
+		legacy *string
+		value  string
+	}{
+		{"token", &c.DiscordToken, c.Discord.Token},
+		{"guild_id", &c.DiscordGuildID, c.Discord.GuildID},
+	} {
+		if _, present := supplied.Discord[field.name]; present {
+			*field.legacy = field.value
+		}
+	}
+	if _, present := supplied.Telegram["token"]; present {
+		c.TelegramToken = c.Telegram.Token
+	}
+	if _, present := supplied.Telegram["chat_id"]; present {
+		c.TelegramChatID = c.Telegram.ChatID
+	}
+	var starboard, logging map[string]json.RawMessage
+	if raw, present := supplied.Discord["starboard"]; present {
+		if err := json.Unmarshal(raw, &starboard); err != nil {
+			return err
+		}
+	}
+	if raw, present := supplied.Discord["logging"]; present {
+		if err := json.Unmarshal(raw, &logging); err != nil {
+			return err
+		}
+	}
+	if _, present := starboard["channel_id"]; present {
+		c.StarboardChannelID = c.Discord.Starboard.ChannelID
+	}
+	if _, present := starboard["threshold"]; present {
+		c.StarboardThreshold = c.Discord.Starboard.Threshold
+	}
+	if _, present := starboard["emoji"]; present {
+		c.StarboardEmoji = c.Discord.Starboard.Emoji
+	}
+	if _, present := logging["case_channel_id"]; present {
+		c.DiscordLogChannel = c.Discord.Logging.CaseChannelID
+	}
+	return nil
 }
 
 // Load reads config.json from the given path and validates all required fields.
@@ -64,6 +130,7 @@ func Load(path string) (*Config, error) {
 }
 
 func (c *Config) validate() error {
+	c.ApplyDefaults()
 	c.OpenRouterModel = strings.TrimSpace(c.OpenRouterModel)
 	if c.OpenRouterModel == "" {
 		c.OpenRouterModel = DefaultOpenRouterModel
@@ -73,10 +140,10 @@ func (c *Config) validate() error {
 		name  string
 		value string
 	}{
-		{"discord_token", c.DiscordToken},
-		{"telegram_token", c.TelegramToken},
+		{"discord.token", c.DiscordToken},
+		{"telegram.token", c.TelegramToken},
 		{"github_token", c.GitHubToken},
-		{"discord_guild_id", c.DiscordGuildID},
+		{"discord.guild_id", c.DiscordGuildID},
 		{"github_owner", c.GitHubOwner},
 		{"github_repo", c.GitHubRepo},
 		{"log_file", c.LogFile},
@@ -89,14 +156,11 @@ func (c *Config) validate() error {
 	}
 
 	if c.TelegramChatID == 0 {
-		return fmt.Errorf("required field %q is zero", "telegram_chat_id")
+		return fmt.Errorf("required field %q is zero", "telegram.chat_id")
 	}
 
-	if len(c.PermaAdminDiscordIDs) == 0 {
-		return fmt.Errorf("permaadmin_discord_ids must contain at least one ID")
-	}
-	if len(c.PermaAdminTelegramIDs) == 0 {
-		return fmt.Errorf("permaadmin_telegram_ids must contain at least one ID")
+	if err := c.Discord.validate(); err != nil {
+		return err
 	}
 	if c.OpenRouterDecisionModel != "" && len(c.OpenRouterAPIKeys) == 0 {
 		return fmt.Errorf("openrouter_decision_model requires openrouter_api_keys")
@@ -118,16 +182,4 @@ func (c *Config) validate() error {
 	}
 
 	return nil
-}
-
-// GetPermaAdminIDs implements db.PermaAdminProvider.
-func (c *Config) GetPermaAdminIDs(platform string) []string {
-	switch platform {
-	case "discord":
-		return c.PermaAdminDiscordIDs
-	case "telegram":
-		return c.PermaAdminTelegramIDs
-	default:
-		return nil
-	}
 }

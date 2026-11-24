@@ -36,7 +36,7 @@ Use problem=none only when no concrete defect remains. A faithful brief answer s
 
 func (b *Bot) supportAnswerGrounded(ctx context.Context, m *discord.Message, messages, conversation []cmd.GarminAIMessage, answer string, referencedNote *string) (bool, string, error) {
 	// Decider is restricted to app-support; an unchecked reference cannot become a button.
-	if m == nil || m.ChannelID.String() != garminAppSupportID || b.garminDecisions == nil {
+	if m == nil || !b.isSupportChannel(m.ChannelID.String()) || b.garminDecisions == nil {
 		if referencedNote != nil {
 			*referencedNote = ""
 		}
