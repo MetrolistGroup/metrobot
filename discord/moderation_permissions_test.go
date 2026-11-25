@@ -174,8 +174,12 @@ func TestDiscordBanAuthorization(t *testing.T) {
 				} else {
 					member := &discord.Member{GuildID: 12, User: discord.User{ID: snowflakeID(caller)}, RoleIDs: []snowflake.ID{snowflakeID(testBanRoleID)}}
 					if route == "cached prefix" {
-						client.Caches.AddMember(*member)
-						member = nil
+						// The gateway keeps cached members current; the message's member payload is stale on purpose.
+						cached := discord.Member{GuildID: 12, User: discord.User{ID: snowflakeID(caller)}}
+						for _, role := range authority.members[caller] {
+							cached.RoleIDs = append(cached.RoleIDs, snowflakeID(role))
+						}
+						client.Caches.AddMember(cached)
 					}
 					b.onMessageCreate(client, &discord.Message{ID: 17, GuildID: snowflakePtr("12"), ChannelID: 5, Author: discord.User{ID: snowflakeID(caller)}, Member: member, Content: "!ban <@56> test"})
 				}
@@ -228,5 +232,29 @@ func TestDiscordActionPermissionMapping(t *testing.T) {
 	banner := &DiscordBanner{guildID: "12"}
 	if err := banner.HasPermission("42", "addadmin"); err == nil {
 		t.Fatal("unknown action was allowed")
+	}
+}
+
+func TestCanManageMemberUsesGatewayCache(t *testing.T) {
+	client := mustTestClient(t)
+	client.Rest = testREST(&http.Client{Transport: garminRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("unexpected REST request: %s %s", r.Method, r.URL.Path)
+		return &http.Response{StatusCode: http.StatusInternalServerError, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`)), Request: r}, nil
+	})})
+	client.Caches.SetSelfUser(discord.OAuth2User{User: discord.User{ID: snowflakeID(testBotUserID)}})
+	member := func(id, role string) discord.Member {
+		return discord.Member{User: discord.User{ID: snowflakeID(id)}, RoleIDs: []snowflake.ID{snowflakeID(role)}}
+	}
+	cacheTestGuild(client, discord.GatewayGuild{RestGuild: discord.RestGuild{
+		Guild: discord.Guild{ID: 12, OwnerID: 99},
+		Roles: []discord.Role{{ID: 12}, {ID: snowflakeID(testBanRoleID), Permissions: discord.PermissionBanMembers, Position: 5}, {ID: snowflakeID(testPlainRoleID), Position: 1}, {ID: snowflakeID(testBotRoleID), Permissions: discord.PermissionBanMembers, Position: 8}},
+	}, Members: []discord.Member{member("42", testBanRoleID), member("56", testPlainRoleID), member(testBotUserID, testBotRoleID)}})
+
+	banner := &DiscordBanner{session: client, guildID: "12", logger: zap.NewNop()}
+	if err := banner.CanManageMember("42", "56", "ban"); err != nil {
+		t.Fatalf("cached ban check = %v", err)
+	}
+	if err := banner.CanManageMember("56", "42", "ban"); err == nil {
+		t.Fatal("cached plain member may ban")
 	}
 }

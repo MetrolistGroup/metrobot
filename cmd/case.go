@@ -59,21 +59,3 @@ func (h *CaseHandler) FormatCase(c *db.Case, targetName, moderatorName string) s
 		ts,
 	)
 }
-
-// CreateCaseAndLog creates a case and logs it to Discord if a logger is configured
-func (h *CaseHandler) CreateCaseAndLog(platform, actionType, targetID, moderatorID, reason, targetName, moderatorName string) (*db.Case, error) {
-	c, err := h.CreateCase(platform, actionType, targetID, moderatorID, reason)
-	if err != nil {
-		return nil, err
-	}
-
-	// Log to Discord if logger is available
-	if h.CaseLogger != nil {
-		if err := h.CaseLogger.LogCaseToDiscord(c, targetName, moderatorName); err != nil {
-			// Don't fail if logging fails, just continue
-			return c, nil
-		}
-	}
-
-	return c, nil
-}

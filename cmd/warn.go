@@ -45,7 +45,7 @@ func (h *WarnHandler) Warn(banner PlatformBanner, callerID, targetID, reason str
 		reasonText = "no reason provided"
 	}
 
-	banner.DMUser(targetID, fmt.Sprintf(
+	go banner.DMUser(targetID, fmt.Sprintf(
 		"You have been warned in Metrolist for: %s. This is warning %d.",
 		reasonText, count,
 	))

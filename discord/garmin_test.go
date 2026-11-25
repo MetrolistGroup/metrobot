@@ -621,11 +621,12 @@ func TestHandleGarminAIDetailedGeneralReplyRetainsDeliveredText(t *testing.T) {
 		t.Fatalf("detailed reply was not properly truncated: %q", delivered)
 	}
 	history, ok := b.garminAIHistory(message, "150", false)
-	if !ok || history[len(history)-1].Content != delivered {
+	answered := strings.TrimPrefix(delivered, "-# thought briefly\n")
+	if !ok || history[len(history)-1].Content != answered {
 		t.Fatalf("history differs from delivered reply: %#v; delivered %q", history, delivered)
 	}
 	continued := b.garminAITriggeredConversation(message, "what did we decide?")
-	if continued[len(continued)-2].Content != delivered {
+	if continued[len(continued)-2].Content != answered {
 		t.Fatal("next turn retained text the user did not receive")
 	}
 }

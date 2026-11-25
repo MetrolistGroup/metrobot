@@ -109,7 +109,8 @@ func TestHandleGarminAIEmbedReply(t *testing.T) {
 				t.Fatal("reply lost mention suppression or reference")
 			}
 			history, ok := b.garminAIHistory(message, "150", false)
-			want := strings.TrimSpace(delivered.Content + "\n" + embed.PlainText())
+			// Usage lines are shown to users but kept out of history so the model does not copy them.
+			want := strings.TrimSpace(strings.TrimPrefix(delivered.Content, "-# thought briefly") + "\n" + embed.PlainText())
 			if !ok || history[len(history)-1].Content != want {
 				t.Fatalf("history did not retain delivered text: %#v, want %q", history, want)
 			}

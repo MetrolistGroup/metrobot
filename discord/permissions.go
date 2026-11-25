@@ -109,6 +109,15 @@ func (d *DiscordBanner) guild() (*discord.RestGuild, error) {
 	if d == nil || d.session == nil || d.session.Rest == nil || snowflakeID(d.guildID) == 0 {
 		return nil, fmt.Errorf("discord session is unavailable")
 	}
+	// The gateway keeps guild, roles and members current. disgo queues REST
+	// calls per route and guild, so REST lookups here made moderation slow.
+	if caches := d.session.Caches; caches != nil {
+		if guild, ok := caches.Guild(snowflakeID(d.guildID)); ok {
+			if roles := slices.Collect(caches.Roles(guild.ID)); len(roles) > 0 {
+				return &discord.RestGuild{Guild: guild, Roles: roles}, nil
+			}
+		}
+	}
 	guild, err := d.session.Rest.GetGuild(snowflakeID(d.guildID), false)
 	if err != nil {
 		return nil, fmt.Errorf("loading guild permissions: %w", err)
@@ -126,6 +135,12 @@ func (d *DiscordBanner) authority(guild *discord.RestGuild, userID string) (disc
 	if id == guild.OwnerID {
 		return discordAuthority{permissions: discord.PermissionsAll, top: math.MaxInt, owner: true}, true, nil
 	}
+	caches := d.session.Caches
+	if caches != nil {
+		if member, ok := caches.Member(guild.ID, id); ok {
+			return memberAuthority(guild, &member), true, nil
+		}
+	}
 	member, err := d.session.Rest.GetMember(guild.ID, id)
 	if rest.IsJSONErrorCode(err, rest.JSONErrorCodeUnknownMember) {
 		return discordAuthority{}, false, nil
@@ -135,6 +150,10 @@ func (d *DiscordBanner) authority(guild *discord.RestGuild, userID string) (disc
 	}
 	if member == nil || member.User.ID != id {
 		return discordAuthority{}, false, fmt.Errorf("member %s lookup returned another user", userID)
+	}
+	if caches != nil {
+		// Member update and remove events keep this entry current from now on.
+		caches.AddMember(*member)
 	}
 	return memberAuthority(guild, member), true, nil
 }

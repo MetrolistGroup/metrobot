@@ -1487,8 +1487,9 @@ func TestRememberToolRequiresNativeManageServer(t *testing.T) {
 		t.Fatal("manager memory update was not saved")
 	}
 
-	// Revoking the role takes effect on the next write.
+	// Revoking the role takes effect once the gateway delivers the member update.
 	authority.members[manager] = nil
+	session.Caches.AddMember(discord.Member{GuildID: 12, User: discord.User{ID: snowflakeID(manager)}})
 	output, _, updated = bot.executeGarminAITool(context.Background(), session, request(manager, "garmin, for future reference, remember that second fact"), call)
 	if updated || !strings.Contains(output, "Manage Server") {
 		t.Fatalf("revoked manager remember = (%q, %v)", output, updated)

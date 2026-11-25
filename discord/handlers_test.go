@@ -259,13 +259,7 @@ func TestGarminKillRequiresAuthorizedReplyAndUsesUserTimeout(t *testing.T) {
 	session.Rest = testREST(server.Client())
 	session.Rest.HTTPClient().Transport = rewriteDiscordTransport{base: session.Rest.HTTPClient().Transport, target: server.URL}
 	session.Caches.SetSelfUser(discord.OAuth2User{User: discord.User{ID: snowflakeID("100000000000000002")}})
-	cacheTestGuild(session, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: snowflakeID("100000000000000012")}, Roles: []discord.Role{{ID: snowflakeID("100000000000000012")}, {ID: snowflakeID("100000000000000049"), Permissions: discord.PermissionModerateMembers}, {ID: snowflakeID(discordModeratorRoleID)}}}})
 	session.Caches.AddChannel(testChannel(t, map[string]any{"id": "100000000000000005", "guild_id": "100000000000000012"}))
-
-	for _, member := range []*discord.Member{{GuildID: snowflakeID("100000000000000012"), User: discord.User{ID: snowflakeID("100000000000000049")}, RoleIDs: []snowflake.ID{snowflakeID("100000000000000049")}}, {GuildID: snowflakeID("100000000000000012"), User: discord.User{ID: snowflakeID("100000000000000024")}, RoleIDs: []snowflake.ID{snowflakeID(discordModeratorRoleID)}}, {GuildID: snowflakeID("100000000000000012"), User: discord.User{ID: snowflakeID("100000000000000007")}, RoleIDs: []snowflake.ID{snowflakeID(discordCoolPeopleRoleID)}}, {GuildID: snowflakeID("100000000000000012"), User: discord.User{ID: snowflakeID("100000000000000056")}}} {
-		session.Caches.AddMember(*member)
-
-	}
 
 	bot := &Bot{Config: testConfig(config.Config{DiscordGuildID: "100000000000000012"}), Logger: zap.NewNop()}
 	message := func(author string, reply bool, french bool) *discord.Message {
@@ -304,13 +298,15 @@ func TestGarminKillRequiresAuthorizedReplyAndUsesUserTimeout(t *testing.T) {
 		t.Fatalf("unauthorized or non-reply command made requests: %v", requests[3:])
 	}
 
-	// Revoking Moderate Members takes effect on the next command.
+	// Revoking Moderate Members takes effect once the gateway delivers the member update.
 	authority.members["100000000000000049"] = nil
+	session.Caches.AddMember(discord.Member{GuildID: snowflakeID("100000000000000012"), User: discord.User{ID: snowflakeID("100000000000000049")}})
 	bot.onMessageCreate(session, message("100000000000000049", true, false))
 	if len(requests) != 3 {
 		t.Fatalf("revoked staff made requests: %v", requests[3:])
 	}
 	authority.members["100000000000000049"] = []string{"100000000000000049"}
+	session.Caches.AddMember(discord.Member{GuildID: snowflakeID("100000000000000012"), User: discord.User{ID: snowflakeID("100000000000000049")}, RoleIDs: []snowflake.ID{snowflakeID("100000000000000049")}})
 	// tests the french variation "France Modération guillotine" with staff permissions
 	// non-reply version
 	bot.onMessageCreate(session, message("100000000000000049", false, true))

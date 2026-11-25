@@ -783,8 +783,18 @@ func (d *DiscordBanner) DMUser(userID, message string) error {
 	return dmUser(d.session, userID, message)
 }
 
+// member reads the gateway cache before REST, which queues per route.
+func (d *DiscordBanner) member(userID string) (*discord.Member, error) {
+	if d.session.Caches != nil {
+		if member, ok := d.session.Caches.Member(snowflakeID(d.guildID), snowflakeID(userID)); ok {
+			return &member, nil
+		}
+	}
+	return d.session.Rest.GetMember(snowflakeID(d.guildID), snowflakeID(userID))
+}
+
 func (d *DiscordBanner) GetDisplayName(userID string) (string, error) {
-	member, err := d.session.Rest.GetMember(snowflakeID(d.guildID), snowflakeID(userID))
+	member, err := d.member(userID)
 	if err != nil {
 		// If the user is not found (left the guild, etc.), treat it as
 		// "no display name" instead of a hard error so moderation flows
@@ -810,7 +820,7 @@ func (d *DiscordBanner) GetDisplayName(userID string) (string, error) {
 }
 
 func (d *DiscordBanner) GetUsername(userID string) (string, error) {
-	member, err := d.session.Rest.GetMember(snowflakeID(d.guildID), snowflakeID(userID))
+	member, err := d.member(userID)
 	if err != nil {
 		if restErr, ok := err.(*rest.Error); ok && restErr.Response != nil && restErr.Response.StatusCode == 404 {
 			return "", nil

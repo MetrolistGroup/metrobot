@@ -163,8 +163,11 @@ func (b *Bot) runGarminAIReply(s *bot.Client, m *discord.Message, messages []cmd
 		return
 	}
 	result.Answer = renderedAnswer
-	formatted := cmd.FormatGarminReply(formatAndTruncateGarminAIResult(result), embed)
-	conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: cmd.GarminReplyPlainText(formatted), Timestamp: time.Now().UTC()})
+	text := formatAndTruncateGarminAIResult(result)
+	formatted := cmd.FormatGarminReply(text, embed)
+	// Remember the delivered answer without the "-# thought ..." usage lines; the model copied them into later replies.
+	remembered := cmd.FormatGarminReply(strings.TrimPrefix(text, formatGarminAIUsage(result)), embed)
+	conversation := append(copyGarminAIMessages(messages), cmd.GarminAIMessage{Role: "assistant", Content: cmd.GarminReplyPlainText(remembered), Timestamp: time.Now().UTC()})
 	if ambient {
 		b.sendGarminAmbientReply(s, m, formatted, conversation, ambientToken)
 	} else {

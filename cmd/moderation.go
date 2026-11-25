@@ -98,12 +98,18 @@ func recordModeration(database *db.DB, cases *CaseHandler, banner PlatformBanner
 	if cases == nil {
 		return nil, note
 	}
-	targetName, _ := banner.GetDisplayName(targetID)
-	moderatorName, _ := banner.GetDisplayName(callerID)
-	c, err := cases.CreateCaseAndLog(banner.Platform(), action, targetID, callerID, reason, targetName, moderatorName)
+	c, err := cases.CreateCase(banner.Platform(), action, targetID, callerID, reason)
 	if err != nil {
 		zap.L().Error("saving moderation case", zap.String("action", action), zap.String("target", targetID), zap.Error(err))
 		return nil, note + " The case record could not be saved."
+	}
+	if cases.CaseLogger != nil {
+		// The log post needs two name lookups and a send; the moderator's reply should not wait for them.
+		go func() {
+			targetName, _ := banner.GetDisplayName(targetID)
+			moderatorName, _ := banner.GetDisplayName(callerID)
+			_ = cases.CaseLogger.LogCaseToDiscord(c, targetName, moderatorName)
+		}()
 	}
 	return c, note
 }
