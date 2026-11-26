@@ -2,6 +2,7 @@ package discord
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -98,5 +99,40 @@ func TestV14ProjectDetailsLoadOnDemand(t *testing.T) {
 	}
 	if strings.Contains(core, "SHA256SUMS") || strings.Contains(core, "F-Cast") || !strings.Contains(core, "public") {
 		t.Fatal("static prefix includes rare details or omits public status")
+	}
+}
+
+func TestGarminKnowsBuiltInKudGamesOnFollowup(t *testing.T) {
+	content, err := os.ReadFile("../garmin-memory.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	memory, err := cmd.NewGarminMemory(filepath.Join(t.TempDir(), "memory.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := memory.Replace(string(content)); err != nil {
+		t.Fatal(err)
+	}
+	b := &Bot{garminMemory: memory}
+	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+		for _, fact := range []string{"playable Kud games built into this Discord server", ">>plinko 500", "Every 50 Kud buys one independent ball", ">>kud", ">>mines", ">>highlow", ">>fight", ">>loan @lender", "20%"} {
+			if !strings.Contains(request.Context, fact) {
+				t.Errorf("AI follow-up is missing economy fact %q", fact)
+			}
+		}
+		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: "yes, send `>>plinko` for one ball or `>>plinko 500` for ten."}}, nil
+	})
+	m := supportTestMessage(40)
+	m.ChannelID = snowflakeID(garminBotsID)
+	m.Content = "garmin, can i try?"
+	messages := []cmd.GarminAIMessage{
+		{Role: "user", Content: "Plinko?"},
+		{Role: "assistant", Content: "no plinko board built in"},
+		{Role: "user", Content: "can i try?"},
+	}
+	result, err := b.runGarminAI(context.Background(), nil, m, messages)
+	if err != nil || result == nil || result.Silent || !strings.Contains(result.Answer, ">>plinko") {
+		t.Fatalf("game follow-up failed: %+v, %v", result, err)
 	}
 }

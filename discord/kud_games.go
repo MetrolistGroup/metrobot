@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"math/bits"
 	"math/rand/v2"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 
 const kudEmoji = "⚜️"
 const kudIdle = 5 * time.Minute
+const plinkoBallCost int64 = 50
 
 type kudEntrant struct {
 	userID, name string
@@ -43,6 +45,7 @@ type kudGame struct {
 	settlement              map[string]int64
 	settlementText          string
 	plinkoBalls             []kudplinko.Ball
+	plinkoPayouts           map[string]int64
 }
 
 func kudMoney(n int64) string { return fmt.Sprintf("%s %d Kud", kudEmoji, n) }
@@ -119,6 +122,9 @@ func (b *Bot) handleKudGame(s *bot.Client, m *discord.Message, kind, args string
 	if len(fields) > 0 {
 		betArg = fields[0]
 	}
+	if kind == "plinko" && betArg == "" {
+		betArg = strconv.FormatInt(plinkoBallCost, 10)
+	}
 	if kind == "loan" {
 		if len(fields) != 2 || len(m.Mentions) != 1 || strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(fields[0], "<@"), "!"), ">") != m.Mentions[0].ID.String() || m.Mentions[0].Bot || m.Mentions[0].ID == m.Author.ID {
 			b.kudosText(s, m, "Usage: `>>loan @lender <amount>`. Choose another person.")
@@ -141,6 +147,15 @@ func (b *Bot) handleKudGame(s *bot.Client, m *discord.Message, kind, args string
 	if g.bet, err = b.kudBet(userID, betArg); err != nil {
 		b.kudosText(s, m, err.Error())
 		return
+	}
+	if kind == "plinko" {
+		if strings.EqualFold(betArg, "all") || strings.EqualFold(betArg, "max") {
+			g.bet -= g.bet % plinkoBallCost
+		}
+		if g.bet < plinkoBallCost || g.bet%plinkoBallCost != 0 {
+			b.kudosText(s, m, "Each Plinko ball costs "+kudMoney(plinkoBallCost)+". Choose a multiple of 50, e.g. `>>plinko 500` for 10 balls.")
+			return
+		}
 	}
 	b.kudMu.Lock()
 	defer b.kudMu.Unlock()
@@ -255,7 +270,7 @@ func (g *kudGame) render() []discord.LayoutComponent {
 			rows = append(rows, discord.NewActionRow(g.button("join", "Join fight · "+kudMoney(g.bet), discord.ButtonStylePrimary, false), g.button("cancel", "Cancel", discord.ButtonStyleSecondary, false)))
 		}
 	case "plinko":
-		body += fmt.Sprintf("\nPlayers **%d/32** · Drops <t:%d:R>\n", len(g.entrants), g.expires.Unix())
+		body += fmt.Sprintf("\n**%d balls each** · **%d balls total** · Players **%d/32**\nDrops <t:%d:R>\n", g.bet/plinkoBallCost, int64(len(g.entrants))*(g.bet/plinkoBallCost), len(g.entrants), g.expires.Unix())
 		if !g.done {
 			for index, entrant := range g.entrants {
 				if index > 0 {
@@ -264,9 +279,9 @@ func (g *kudGame) render() []discord.LayoutComponent {
 				body += "<@" + entrant.userID + ">"
 			}
 		}
-		body += "\n-# One entry each at the same stake. 12 fair bounces. Each 50x edge has a 1 in 4096 chance. No loan luck applies."
+		body += "\n-# Each 50 Kud buys one independent ball. Join once at the same stake. Each 50x edge has a 1 in 4096 chance per ball. No loan luck applies."
 		if !g.done {
-			rows = append(rows, discord.NewActionRow(g.button("join", "Join · "+kudMoney(g.bet), discord.ButtonStylePrimary, len(g.entrants) >= 32)))
+			rows = append(rows, discord.NewActionRow(g.button("join", fmt.Sprintf("Join · %d balls · %s", g.bet/plinkoBallCost, kudMoney(g.bet)), discord.ButtonStylePrimary, len(g.entrants) >= 32)))
 		}
 	case "loan":
 		body = fmt.Sprintf("<@%s> asked <@%s> for **%s**.\n20%% of incoming rewards, including daily claims and game payouts, go to the lender until repaid. Refunds, new loans, and repayments received are excluded. No interest or fixed repayment date.\n-# Debt gives Mines and High-Low a 2%% chance to rescue one losing pick per round. Lending risks delayed repayment if the borrower stops playing. Expires <t:%d:R>.", g.owner, g.lender, kudMoney(g.bet), g.expires.Unix())
@@ -564,23 +579,36 @@ func (b *Bot) expireKudGame(s *bot.Client, g *kudGame) {
 	}
 }
 
-func (b *Bot) finishPlinko(s *bot.Client, g *kudGame) {
-	if g.plinkoBalls == nil {
-		g.plinkoBalls = make([]kudplinko.Ball, len(g.entrants))
-		for index, entrant := range g.entrants {
-			steps := make([]bool, kudplinko.Rows)
-			for row := range steps {
-				steps[row] = rand.IntN(2) == 1
+func (g *kudGame) rollPlinko(draw func() uint64) {
+	if g.plinkoPayouts != nil {
+		return
+	}
+	g.plinkoPayouts = make(map[string]int64, len(g.entrants))
+	perPlayer := g.bet / plinkoBallCost
+	var prizes [kudplinko.Bins]int64
+	for bin, factor := range kudplinko.Payouts {
+		prizes[bin] = int64(float64(plinkoBallCost) * factor)
+	}
+	for index, entrant := range g.entrants {
+		visible := int64((kudplinko.MaxBalls + len(g.entrants) - 1 - index) / len(g.entrants))
+		for ball := int64(0); ball < perPlayer; ball++ {
+			path := draw() & ((1 << kudplinko.Rows) - 1)
+			bin := bits.OnesCount64(path)
+			g.plinkoPayouts[entrant.userID] += prizes[bin]
+			if ball < visible {
+				steps := make([]bool, kudplinko.Rows)
+				for row := range steps {
+					steps[row] = path&(1<<row) != 0
+				}
+				g.plinkoBalls = append(g.plinkoBalls, kudplinko.Ball{Name: fmt.Sprintf("%s #%d", entrant.name, ball+1), Steps: steps, Multiplier: kudplinko.Payouts[bin]})
 			}
-			factor := kudplinko.Payouts[kudplinko.Bin(steps)]
-			g.plinkoBalls[index] = kudplinko.Ball{Name: entrant.name, Steps: steps, Multiplier: factor}
 		}
 	}
-	balls := g.plinkoBalls
-	payouts := make(map[string]int64, len(g.entrants))
-	for index, entrant := range g.entrants {
-		payouts[entrant.userID] = int64(float64(g.bet) * balls[index].Multiplier)
-	}
+}
+
+func (b *Bot) finishPlinko(s *bot.Client, g *kudGame) {
+	g.rollPlinko(rand.Uint64)
+	balls, payouts := g.plinkoBalls, g.plinkoPayouts
 	gif, err := kudplinko.Render(balls)
 	if err != nil {
 		b.Logger.Error("failed to render Plinko", zap.Error(err))
@@ -597,9 +625,10 @@ func (b *Bot) finishPlinko(s *bot.Client, g *kudGame) {
 			return
 		}
 		g.result = "**Results**\n"
-		for index, entrant := range g.entrants {
-			g.result += fmt.Sprintf("<@%s> · %.1fx · %s · balance %s\n", entrant.userID, balls[index].Multiplier, kudMoney(payouts[entrant.userID]), kudMoney(balances[entrant.userID]))
+		for _, entrant := range g.entrants {
+			g.result += fmt.Sprintf("<@%s> · %s · balance %s\n", entrant.userID, kudMoney(payouts[entrant.userID]), kudMoney(balances[entrant.userID]))
 		}
+		g.result += fmt.Sprintf("-# Showing %d of %d balls. Payouts sum every ball's result.\n", len(balls), int64(len(g.entrants))*(g.bet/plinkoBallCost))
 		g.result += "-# Payouts include the stake. Active loan repayments apply automatically."
 	}
 	g.done = true
