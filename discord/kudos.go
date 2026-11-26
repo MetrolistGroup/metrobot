@@ -3,7 +3,6 @@ package discord
 import (
 	"fmt"
 	"math/rand/v2"
-	"strconv"
 	"strings"
 	"time"
 
@@ -62,6 +61,13 @@ func (b *Bot) handleSigmaCommand(s *bot.Client, m *discord.Message, content stri
 		b.handleSlots(s, m, userID, args)
 	case "bj":
 		b.handleBlackjack(s, m, userID, args)
+	case "kud", "balance":
+		b.handleKudAccount(s, m)
+	case "mines", "highlow", "hl", "fight", "plinko", "loan":
+		if strings.EqualFold(name, "hl") {
+			name = "highlow"
+		}
+		b.handleKudGame(s, m, strings.ToLower(name), args)
 	case "rmme":
 		b.handleRemind(s, m, args)
 	default:
@@ -109,11 +115,11 @@ func (b *Bot) handleDaily(s *bot.Client, m *discord.Message, userID string) {
 	switch {
 	case err != nil:
 		b.Logger.Error("failed to claim daily kudos", zap.Error(err))
-		b.kudosText(s, m, "The kudos bank is down, try again in a bit.")
+		b.kudosText(s, m, "The Kud bank is down. Try again in a bit.")
 	case !ok:
-		b.kudosText(s, m, fmt.Sprintf("🕙 Your next daily is <t:%d:R>. Balance: **%d** kudos.", next.Unix(), balance))
+		b.kudosText(s, m, fmt.Sprintf("Your next daily is <t:%d:R>. Balance: **%s**.", next.Unix(), kudMoney(balance)))
 	default:
-		b.kudosText(s, m, fmt.Sprintf("🎉 You got **%d** kudos for a %d/10 streak. Balance: **%d**. Next daily <t:%d:R>.", amount, min(int(streak), 10), balance, next.Unix()))
+		b.kudosText(s, m, fmt.Sprintf("You got **%s** for a %d/10 streak. Balance: **%s**. Next daily <t:%d:R>. Active loan repayments apply automatically.", kudMoney(amount), min(int(streak), 10), kudMoney(balance), next.Unix()))
 	}
 }
 
@@ -121,21 +127,21 @@ func (b *Bot) handleKudosLeaderboard(s *bot.Client, m *discord.Message, userID s
 	entries, err := b.DB.KudosLeaderboard(10)
 	if err != nil {
 		b.Logger.Error("failed to load kudos leaderboard", zap.Error(err))
-		b.kudosText(s, m, "The kudos bank is down, try again in a bit.")
+		b.kudosText(s, m, "The Kud bank is down. Try again in a bit.")
 		return
 	}
 	var out strings.Builder
-	out.WriteString("**Kudos leaderboard**\n")
+	out.WriteString("**" + kudEmoji + " Kud leaderboard**\n")
 	if len(entries) == 0 {
-		out.WriteString("Nobody has kudos yet. Start with `>>daily`.\n")
+		out.WriteString("Nobody has " + kudEmoji + " Kud yet. Start with `>>daily`.\n")
 	}
 	for index, entry := range entries {
-		fmt.Fprintf(&out, "%d. <@%s> · %d\n", index+1, entry.UserID, entry.Balance)
+		fmt.Fprintf(&out, "%d. <@%s> · %s\n", index+1, entry.UserID, kudMoney(entry.Balance))
 	}
 	balance, balanceErr := b.DB.Kudos(userID)
 	rank, rankErr := b.DB.KudosRank(userID)
 	if balanceErr == nil && rankErr == nil && rank > 0 {
-		fmt.Fprintf(&out, "-# You: #%d · %d kudos", rank, balance)
+		fmt.Fprintf(&out, "-# You: #%d · %s", rank, kudMoney(balance))
 	}
 	b.kudosText(s, m, out.String())
 }
@@ -162,55 +168,26 @@ func (b *Bot) handleStarLeaderboard(s *bot.Client, m *discord.Message) {
 	b.kudosText(s, m, out.String())
 }
 
-// parseBet reads a bet ("100", "all"/"max", or empty) and deducts it. Like Sigma, a missing or unparseable
-// amount falls back to defaultBet. ok=false means the user was already told why the bet could not be placed.
-func (b *Bot) parseBet(s *bot.Client, m *discord.Message, userID, arg string) (int64, bool) {
-	var bet int64 = defaultBet
-	switch arg = strings.ToLower(arg); {
-	case arg == "all" || arg == "max":
-		balance, err := b.DB.Kudos(userID)
-		if err != nil {
-			b.Logger.Error("failed to read kudos", zap.Error(err))
-			b.kudosText(s, m, "The kudos bank is down, try again in a bit.")
-			return 0, false
-		}
-		if balance == 0 {
-			b.kudosText(s, m, "You have no kudos. Grab some with `>>daily`.")
-			return 0, false
-		}
-		bet = balance
-	case arg != "":
-		if parsed, err := strconv.ParseInt(arg, 10, 64); err == nil && parsed > 0 {
-			bet = parsed
-		}
-	}
-	_, ok, err := b.DB.SpendKudos(userID, bet)
+func (b *Bot) parseBet(s *bot.Client, m *discord.Message, userID, arg, game string) (int64, bool) {
+	bet, err := b.kudBet(userID, arg)
 	if err != nil {
-		b.Logger.Error("failed to spend kudos", zap.Error(err))
-		b.kudosText(s, m, "The kudos bank is down, try again in a bit.")
+		b.kudosText(s, m, err.Error())
 		return 0, false
 	}
-	if !ok {
-		balance, _ := b.DB.Kudos(userID)
-		b.kudosText(s, m, fmt.Sprintf("💸 You don't have **%d** kudos (balance: %d). Grab more with `>>daily`.", bet, balance))
+	if err := b.DB.HoldKud(game+":"+m.ID.String(), game, userID, bet); err != nil {
+		b.kudosText(s, m, "Couldn't reserve "+kudMoney(bet)+". Check `>>kud` and try again.")
+		return 0, false
 	}
-	return bet, ok
+	return bet, true
 }
 
-func (b *Bot) payKudos(userID string, amount int64) (int64, string) {
-	if amount <= 0 {
-		balance, err := b.DB.Kudos(userID)
-		if err != nil {
-			return 0, " Balance lookup failed, ping an admin."
-		}
-		return balance, ""
-	}
-	balance, err := b.DB.AddKudos(userID, amount)
+func (b *Bot) payKudos(gameID, userID string, amount int64) (int64, string) {
+	balances, err := b.DB.SettleKud(gameID, map[string]int64{userID: amount})
 	if err != nil {
 		b.Logger.Error("failed to pay kudos", zap.String("user", userID), zap.Int64("amount", amount), zap.Error(err))
-		return 0, " Payout failed, ping an admin."
+		return 0, " Settlement failed. Your stake remains held for recovery; contact staff."
 	}
-	return balance, ""
+	return balances[userID], ""
 }
 
 // --- Slots ---
@@ -243,11 +220,13 @@ func slotWinnings(row [3]int, bet int64) int64 {
 }
 
 func (b *Bot) handleSlots(s *bot.Client, m *discord.Message, userID, arg string) {
+	b.kudMu.Lock()
+	defer b.kudMu.Unlock()
 	if wait, on := b.onCooldown("slots", userID); on {
 		b.kudosText(s, m, fmt.Sprintf("🕙 You can spin again in %s.", wait))
 		return
 	}
-	bet, ok := b.parseBet(s, m, userID, arg)
+	bet, ok := b.parseBet(s, m, userID, arg, "slots")
 	if !ok {
 		return
 	}
@@ -259,13 +238,13 @@ func (b *Bot) handleSlots(s *bot.Client, m *discord.Message, userID, arg string)
 		}
 	}
 	winnings := slotWinnings(grid[1], bet)
-	balance, failure := b.payKudos(userID, winnings)
+	balance, failure := b.payKudos("slots:"+m.ID.String(), userID, winnings)
 	display := fmt.Sprintf("⏸%s⏸\n▶%s◀\n⏸%s⏸", slotRow(grid[0]), slotRow(grid[1]), slotRow(grid[2]))
-	outcome, accent := fmt.Sprintf("💣 You lost **%d** kudos.", bet), 0x232323
+	outcome, accent := "You lost **"+kudMoney(bet)+"**.", 0x232323
 	if winnings > 0 {
-		outcome, accent = fmt.Sprintf("💎 You won **%d** kudos!", winnings), 0x5dadec
+		outcome, accent = "Payout **"+kudMoney(winnings)+"**.", 0x5dadec
 	}
-	body := fmt.Sprintf("### 🎰 Slots\n%s\n%s Balance: **%d**.%s", display, outcome, balance, failure)
+	body := fmt.Sprintf("### Slots\n%s\n%s Balance: **%s**.%s\n-# Payouts include the stake. Active loan repayments apply automatically.", display, outcome, kudMoney(balance), failure)
 	b.kudosReply(s, m, discord.MessageCreate{
 		Flags: discord.MessageFlagIsComponentsV2,
 		Components: []discord.LayoutComponent{discord.ContainerComponent{
@@ -281,9 +260,9 @@ func slotRow(row [3]int) string {
 
 // --- Blackjack ---
 
-// shortcut: games live in memory, so a restart forfeits bets on open hands; persist them if restarts mid-game become common.
 type blackjackGame struct {
 	userID               string
+	id                   string
 	bet                  int64
 	deck, player, dealer []int
 	channelID, messageID snowflake.ID
@@ -371,8 +350,8 @@ func (g *blackjackGame) render(done bool, footer string) string {
 	if done {
 		dealer = fmt.Sprintf("%s (%d)", formatCards(g.dealer), handTotal(g.dealer))
 	}
-	return fmt.Sprintf("**Blackjack** · <@%s> bet %d kudos\nDealer: %s\nYou: %s (%d)%s",
-		g.userID, g.bet, dealer, formatCards(g.player), handTotal(g.player), footer)
+	return fmt.Sprintf("**Blackjack** · <@%s> bet %s\nDealer: %s\nYou: %s (%d)%s",
+		g.userID, kudMoney(g.bet), dealer, formatCards(g.player), handTotal(g.player), footer)
 }
 
 // finishBlackjack plays the dealer, pays out and forgets the game. Callers hold blackjackMu.
@@ -387,8 +366,8 @@ func (b *Bot) finishBlackjack(g *blackjackGame) string {
 		}
 	}
 	payout, outcome := blackjackPayout(g.player, g.dealer, g.bet)
-	balance, failure := b.payKudos(g.userID, payout)
-	return g.render(true, fmt.Sprintf("\n**%s** Balance: **%d**.%s", outcome, balance, failure))
+	balance, failure := b.payKudos(g.id, g.userID, payout)
+	return g.render(true, fmt.Sprintf("\n**%s** Payout **%s**. Balance: **%s**.%s\n-# Active loan repayments apply automatically.", outcome, kudMoney(payout), kudMoney(balance), failure))
 }
 
 func blackjackButtons(userID string, canDouble bool) []discord.LayoutComponent {
@@ -421,7 +400,7 @@ func (b *Bot) handleBlackjack(s *bot.Client, m *discord.Message, userID, arg str
 	b.blackjackGames[userID] = &blackjackGame{userID: userID}
 	b.blackjackMu.Unlock()
 
-	bet, ok := b.parseBet(s, m, userID, arg)
+	bet, ok := b.parseBet(s, m, userID, arg, "bj")
 	b.blackjackMu.Lock()
 	defer b.blackjackMu.Unlock()
 	if !ok {
@@ -430,6 +409,7 @@ func (b *Bot) handleBlackjack(s *bot.Client, m *discord.Message, userID, arg str
 	}
 	b.setCooldown("bj", userID, blackjackCooldown)
 	g := newBlackjackGame(userID, bet, rand.Perm(52))
+	g.id = "bj:" + m.ID.String()
 	b.blackjackGames[userID] = g
 	if isBlackjack(g.player) || isBlackjack(g.dealer) {
 		b.kudosText(s, m, b.finishBlackjack(g))
@@ -438,7 +418,9 @@ func (b *Bot) handleBlackjack(s *bot.Client, m *discord.Message, userID, arg str
 	msg, err := b.kudosReply(s, m, discord.MessageCreate{Content: g.render(false, ""), Components: blackjackButtons(userID, true)})
 	if err != nil {
 		delete(b.blackjackGames, userID)
-		b.payKudos(userID, bet)
+		if err := b.DB.RefundKud(g.id); err != nil {
+			b.Logger.Error("failed to refund unpublished blackjack", zap.Error(err))
+		}
 		return
 	}
 	g.channelID, g.messageID = msg.ChannelID, msg.ID
@@ -486,9 +468,9 @@ func (b *Bot) handleBlackjackComponent(s *bot.Client, i *events.ComponentInterac
 			respondEphemeral(s, i, "You can only double down on your first turn.")
 			return true
 		}
-		if _, ok, err := b.DB.SpendKudos(owner, g.bet); err != nil || !ok {
+		if err := b.DB.DoubleKudHold(g.id, owner); err != nil {
 			b.blackjackMu.Unlock()
-			respondEphemeral(s, i, "You don't have enough kudos to double down.")
+			respondEphemeral(s, i, "You need more "+kudEmoji+" Kud to double down, within the stake limit.")
 			return true
 		}
 		g.bet *= 2

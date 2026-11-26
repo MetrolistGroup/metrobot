@@ -151,6 +151,20 @@ func (d *DB) migrate() error {
 			due_at     INTEGER NOT NULL,
 			content    TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS kud_escrow (
+			game_id TEXT NOT NULL, game TEXT NOT NULL, user_id TEXT NOT NULL,
+			stake INTEGER NOT NULL CHECK(stake > 0), PRIMARY KEY(game_id, user_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS kud_stats (
+			user_id TEXT PRIMARY KEY, played INTEGER NOT NULL DEFAULT 0,
+			wins INTEGER NOT NULL DEFAULT 0, draws INTEGER NOT NULL DEFAULT 0,
+			wagered INTEGER NOT NULL DEFAULT 0, paid INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS kud_loans (
+			borrower TEXT PRIMARY KEY, lender TEXT NOT NULL,
+			principal INTEGER NOT NULL CHECK(principal > 0),
+			remaining INTEGER NOT NULL CHECK(remaining > 0), carry INTEGER NOT NULL DEFAULT 0
+		)`,
 		`DROP TABLE IF EXISTS garmin_memory_consent`,
 		`DROP TABLE IF EXISTS garmin_user_memory`,
 	}

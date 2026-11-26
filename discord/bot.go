@@ -63,6 +63,8 @@ type Bot struct {
 	nukeBusy             atomic.Bool
 	blackjackMu          sync.Mutex
 	blackjackGames       map[string]*blackjackGame
+	kudMu                sync.Mutex
+	kudGames             map[string]*kudGame
 	cooldownMu           sync.Mutex
 	cooldowns            map[string]time.Time
 	reminderMu           sync.Mutex
@@ -182,6 +184,11 @@ func New(cfg *config.Config, database *db.DB, logger *zap.Logger,
 }
 
 func (b *Bot) Start() error {
+	if b.DB != nil {
+		if err := b.DB.RecoverKud(); err != nil {
+			return fmt.Errorf("recovering Kud escrow: %w", err)
+		}
+	}
 	ctx, cancel := context.WithTimeout(b.lifecycle, 30*time.Second)
 	defer cancel()
 	if err := b.Client.OpenGateway(ctx); err != nil {
@@ -207,6 +214,21 @@ func (b *Bot) Stop() {
 	b.stopOnce.Do(func() {
 		b.Logger.Info("shutting down discord bot")
 		b.cancelLifecycle()
+		b.kudMu.Lock()
+		for _, game := range b.kudGames {
+			if game.timer != nil {
+				game.timer.Stop()
+			}
+		}
+		b.kudGames = nil
+		b.kudMu.Unlock()
+		b.blackjackMu.Lock()
+		for _, game := range b.blackjackGames {
+			if game.timer != nil {
+				game.timer.Stop()
+			}
+		}
+		b.blackjackMu.Unlock()
 		// Stopped timers leave their rows in the database; they are restored on the next start.
 		b.reminderMu.Lock()
 		for _, timer := range b.reminderTimers {

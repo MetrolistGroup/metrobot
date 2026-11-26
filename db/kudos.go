@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -46,9 +47,10 @@ func (d *DB) ClaimDaily(userID string, randomPart int64, now time.Time) (amount,
 	}
 	streak++
 	amount = DailyAmount(streak, randomPart)
-	if err = tx.QueryRow(`INSERT INTO kudos (user_id, balance, last_daily, streak) VALUES (?, ?, ?, ?)
-		ON CONFLICT(user_id) DO UPDATE SET balance = balance + excluded.balance, last_daily = excluded.last_daily, streak = excluded.streak
-		RETURNING balance`, userID, amount, now.Unix(), streak).Scan(&balance); err != nil {
+	if balance, err = creditKudTx(tx, userID, amount); err != nil {
+		return 0, 0, 0, time.Time{}, false, err
+	}
+	if _, err = tx.Exec(`UPDATE kudos SET last_daily=?,streak=? WHERE user_id=?`, now.Unix(), streak, userID); err != nil {
 		return 0, 0, 0, time.Time{}, false, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -68,6 +70,9 @@ func (d *DB) Kudos(userID string) (int64, error) {
 
 // SpendKudos deducts amount atomically; ok is false when the balance is too low.
 func (d *DB) SpendKudos(userID string, amount int64) (balance int64, ok bool, err error) {
+	if amount <= 0 || amount > MaxKudBet {
+		return 0, false, fmt.Errorf("invalid Kud stake")
+	}
 	err = d.conn.QueryRow(`UPDATE kudos SET balance = balance - ? WHERE user_id = ? AND balance >= ? RETURNING balance`, amount, userID, amount).Scan(&balance)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
@@ -76,11 +81,16 @@ func (d *DB) SpendKudos(userID string, amount int64) (balance int64, ok bool, er
 }
 
 func (d *DB) AddKudos(userID string, amount int64) (int64, error) {
-	var balance int64
-	err := d.conn.QueryRow(`INSERT INTO kudos (user_id, balance) VALUES (?, ?)
-		ON CONFLICT(user_id) DO UPDATE SET balance = balance + excluded.balance
-		RETURNING balance`, userID, amount).Scan(&balance)
-	return balance, err
+	tx, err := d.conn.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	balance, err := creditKudTx(tx, userID, amount)
+	if err != nil {
+		return 0, err
+	}
+	return balance, tx.Commit()
 }
 
 func (d *DB) KudosLeaderboard(limit int) ([]KudosEntry, error) {
