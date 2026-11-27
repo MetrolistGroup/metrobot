@@ -137,7 +137,8 @@ func (g *kudGame) escrowID(userID string) string {
 }
 
 func (g *kudGame) crashEnd() time.Time {
-	return g.expires.Add(time.Duration(math.Log(math.Min(float64(g.crash.point), float64(crashCap))/100) / crashGrowth * float64(time.Second)))
+	duration := time.Duration(math.Log(math.Min(float64(g.crash.point), float64(crashCap))/100) / crashGrowth * float64(time.Second))
+	return g.expires.Add((duration + crashTick - 1) / crashTick * crashTick)
 }
 
 func (g *kudGame) advanceCrash(now time.Time) {
@@ -159,7 +160,8 @@ func (g *kudGame) advanceCrash(now time.Time) {
 		}
 		return
 	}
-	c.multiplier = int64(math.Min(float64(crashCap), 100*math.Exp(now.Sub(g.expires).Seconds()*crashGrowth)))
+	elapsed := now.Sub(g.expires).Truncate(crashTick)
+	c.multiplier = int64(math.Min(float64(crashCap), 100*math.Exp(elapsed.Seconds()*crashGrowth)))
 }
 
 func (b *Bot) settleCrash(g *kudGame) error {
@@ -296,6 +298,6 @@ func (g *kudGame) renderCrash() []discord.LayoutComponent {
 			body.WriteString("joined")
 		}
 	}
-	body.WriteString("\n\n-# 3% house edge before rounding. Crashes can happen at 1x. Cash-outs use arrival time at the bot; the display refreshes every 2s. Limit 100x. Payouts include the stake; loan repayments apply. No loan luck. Restarts refund held stakes.")
+	body.WriteString("\n\n-# 3% house edge before rounding. Crashes can happen at 1x. Multipliers and crashes advance together in 2s steps. Cash-outs pay the current step. Limit 100x. Payouts include the stake; loan repayments apply. No loan luck. Restarts refund held stakes.")
 	return kudLayout("Coins Crash", body.String(), rows...)
 }

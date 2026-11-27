@@ -85,6 +85,32 @@ func TestCrashSharedRoundCashoutAndLoss(t *testing.T) {
 	}
 }
 
+func TestCrashCashoutMatchesVisibleStep(t *testing.T) {
+	b, client, _ := kudTestBot(t)
+	b.handleSigmaCommand(client, kudTestMessage(87), ">>crash 1000")
+	g := b.kudGames["crash:87"]
+	g.timer.Stop()
+	g.crash.point = 170
+	g.advanceCrash(g.expires.Add(4 * time.Second))
+	if g.crash.multiplier != 161 {
+		t.Fatalf("expected the visible 1.61x step, got %d", g.crash.multiplier)
+	}
+	if err := b.playCrashAction(g, "cash", "1", "host", g.expires.Add(4600*time.Millisecond)); err != nil {
+		t.Fatalf("visible step rejected cash-out: %v", err)
+	}
+	g.advanceCrash(g.expires.Add(6 * time.Second))
+	if err := b.settleCrash(g); err != nil {
+		t.Fatal(err)
+	}
+	a, err := b.DB.KudAccount("1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !g.done || a.Balance != 10_610 || a.Paid != 1610 || a.Played != 1 || a.Held != 0 {
+		t.Fatalf("cash-out was overwritten by the next crash step: %+v", a)
+	}
+}
+
 func TestCrashInstantLossCapAndRestartRefund(t *testing.T) {
 	for _, point := range []int64{100, crashCap, crashCap + 1} {
 		t.Run(fmt.Sprint(point), func(t *testing.T) {
@@ -233,7 +259,7 @@ func TestCrashQueuedCashoutSurvivesAcknowledgementDelay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if input.err != nil || !g.done || a.Played != 1 || a.Paid != 182 || a.Balance != 10_082 || a.Held != 0 {
+	if input.err != nil || !g.done || a.Played != 1 || a.Paid != 161 || a.Balance != 10_061 || a.Held != 0 {
 		t.Fatalf("delayed acknowledgement changed timely cash-out: err=%v account=%+v", input.err, a)
 	}
 }
