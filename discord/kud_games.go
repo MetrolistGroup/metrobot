@@ -46,6 +46,7 @@ type kudGame struct {
 	settlementText          string
 	plinkoBalls             []kudplinko.Ball
 	plinkoPayouts           map[string]int64
+	crash                   *kudCrash
 }
 
 func kudMoney(n int64) string { return fmt.Sprintf("%s %d Kud", kudEmoji, n) }
@@ -171,8 +172,8 @@ func (b *Bot) handleKudGame(s *bot.Client, m *discord.Message, kind, args string
 			b.kudosText(s, m, "Finish your current "+kind+" round first.")
 			return
 		}
-		if kind == "plinko" && current.kind == kind && current.channelID == m.ChannelID {
-			b.kudosText(s, m, "A Plinko lobby is already open in this channel. Join that one.")
+		if (kind == "plinko" || kind == "crash") && current.kind == kind && current.channelID == m.ChannelID {
+			b.kudosText(s, m, "A "+kind+" round is already open in this channel. Join that one.")
 			return
 		}
 	}
@@ -186,8 +187,11 @@ func (b *Bot) handleKudGame(s *bot.Client, m *discord.Message, kind, args string
 		b.kudosText(s, m, "Repay your current loan before requesting another.")
 		return
 	}
+	if kind == "crash" {
+		g.crash = newKudCrash(userID)
+	}
 	if kind != "loan" {
-		if err := b.DB.HoldKud(g.id, kind, userID, g.bet); err != nil {
+		if err := b.DB.HoldKud(g.escrowID(userID), kind, userID, g.bet); err != nil {
 			b.kudosText(s, m, "Couldn't reserve "+kudMoney(g.bet)+". Check `>>kud` and try again.")
 			return
 		}
@@ -197,10 +201,13 @@ func (b *Bot) handleKudGame(s *bot.Client, m *discord.Message, kind, args string
 	if kind == "plinko" {
 		g.expires = time.Now().Add(30 * time.Second)
 	}
+	if kind == "crash" {
+		g.expires = time.Now().Add(crashLobby)
+	}
 	msg, err := b.kudosReply(s, m, discord.MessageCreate{Flags: discord.MessageFlagIsComponentsV2, Components: g.render()})
 	if err != nil {
 		if kind != "loan" {
-			if refundErr := b.DB.RefundKud(g.id); refundErr != nil {
+			if refundErr := b.DB.RefundKud(g.escrowID(userID)); refundErr != nil {
 				b.Logger.Error("failed to refund unpublished Kud round", zap.Error(refundErr))
 			}
 		}
@@ -225,6 +232,9 @@ func (g *kudGame) button(action, label string, style discord.ButtonStyle, disabl
 func (g *kudGame) payout() int64 { return int64(math.Floor(float64(g.bet) * g.multiplier)) }
 
 func (g *kudGame) render() []discord.LayoutComponent {
+	if g.kind == "crash" {
+		return g.renderCrash()
+	}
 	title := map[string]string{"mines": "Mines", "highlow": "High-Low", "fight": "Fight", "plinko": "Plinko", "loan": "Loan request"}[g.kind]
 	body := fmt.Sprintf("<@%s> · Stake **%s**", g.owner, kudMoney(g.bet))
 	var rows []discord.ContainerSubComponent
@@ -368,6 +378,10 @@ func (b *Bot) settleKudGame(g *kudGame, payouts map[string]int64, result string)
 }
 
 func (b *Bot) handleKudComponent(s *bot.Client, i *events.ComponentInteractionCreate) bool {
+	if input := b.queueCrashInput(i); input != nil {
+		b.handleCrashComponent(s, i, input)
+		return true
+	}
 	customID, found := strings.CutPrefix(i.Data.CustomID(), "kud:")
 	if !found {
 		return false
@@ -433,6 +447,9 @@ func (b *Bot) handleKudComponent(s *bot.Client, i *events.ComponentInteractionCr
 }
 
 func (b *Bot) playKudAction(g *kudGame, action, userID, name string) error {
+	if g.kind == "crash" {
+		return b.playCrashAction(g, action, userID, name, time.Now())
+	}
 	if g.settlement != nil {
 		return fmt.Errorf("this round is waiting for settlement. The outcome is fixed")
 	}
@@ -541,6 +558,10 @@ func (b *Bot) playKudAction(g *kudGame, action, userID, name string) error {
 }
 
 func (b *Bot) expireKudGame(s *bot.Client, g *kudGame) {
+	if g.kind == "crash" {
+		b.tickCrash(s, g)
+		return
+	}
 	b.kudMu.Lock()
 	defer b.kudMu.Unlock()
 	if b.kudGames[g.id] != g || g.done {

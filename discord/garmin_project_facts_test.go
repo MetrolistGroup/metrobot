@@ -116,7 +116,7 @@ func TestGarminKnowsBuiltInKudGamesOnFollowup(t *testing.T) {
 	}
 	b := &Bot{garminMemory: memory}
 	b.garminAI = garminAITestFunc(func(_ context.Context, request cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-		for _, fact := range []string{"playable Kud games built into this Discord server", ">>plinko 500", "Every 50 Kud buys one independent ball", ">>kud", ">>mines", ">>highlow", ">>fight", ">>loan @lender", "20%"} {
+		for _, fact := range []string{"playable Kud games built into this Discord server", ">>plinko 500", "Every 50 Kud buys one independent ball", ">>kud", ">>mines", ">>highlow", ">>fight", ">>crash [bet]", ">>coins-crash [bet]", "15-second lobby", ">>loan @lender", "20%"} {
 			if !strings.Contains(request.Context, fact) {
 				t.Errorf("AI follow-up is missing economy fact %q", fact)
 			}

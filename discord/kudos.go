@@ -63,9 +63,12 @@ func (b *Bot) handleSigmaCommand(s *bot.Client, m *discord.Message, content stri
 		b.handleBlackjack(s, m, userID, args)
 	case "kud", "balance":
 		b.handleKudAccount(s, m)
-	case "mines", "highlow", "hl", "fight", "plinko", "loan":
+	case "mines", "highlow", "hl", "fight", "plinko", "loan", "crash", "coins-crash":
 		if strings.EqualFold(name, "hl") {
 			name = "highlow"
+		}
+		if strings.EqualFold(name, "coins-crash") {
+			name = "crash"
 		}
 		b.handleKudGame(s, m, strings.ToLower(name), args)
 	case "rmme":

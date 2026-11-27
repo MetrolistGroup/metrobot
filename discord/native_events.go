@@ -42,6 +42,10 @@ func (b *Bot) installListeners() {
 			if snowflakeString(e.GuildID()) != b.Config.DiscordGuildID {
 				return
 			}
+			if input := b.queueCrashInput(e); input != nil {
+				go b.handleCrashComponent(s, e, input)
+				return
+			}
 			go func() {
 				if b.handleHelpComponent(s, e) || b.handleNoteComponent(s, e) || b.handleKudComponent(s, e) || b.handleBlackjackComponent(s, e) || e.Data.Type() != discord.ComponentTypeStringSelectMenu {
 					return

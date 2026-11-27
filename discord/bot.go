@@ -65,6 +65,8 @@ type Bot struct {
 	blackjackGames       map[string]*blackjackGame
 	kudMu                sync.Mutex
 	kudGames             map[string]*kudGame
+	crashInputMu         sync.Mutex
+	crashInputs          []*crashInput
 	cooldownMu           sync.Mutex
 	cooldowns            map[string]time.Time
 	reminderMu           sync.Mutex

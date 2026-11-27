@@ -10,7 +10,7 @@ Metrobot is Metrolist's Discord and Telegram bot for moderation, logging, dehois
 - **Releases and nightlies.** `/version` and `/latest` show GitHub releases. `/actions` reads uploaded Android, Windows x64, and Linux x64 assets from the `nightly` prerelease with a backup and instability warning. Startup accepts legacy `actions_workflow_file` and `actions_artifact_names` config keys and logs that it ignores them.
 - **Hardware specs.** `/gsm`, `/nanoreview`, `/technicalcity`, and the `*compare` commands search and compare phones, CPUs, GPUs, laptops, and SoCs.
 - **Media and Discord utilities.** `/quote`, the `Clip` message command, and `ogc` render quote images. `/nuke` renders avatar GIFs locally. `OCR Translate` translates image or message text in place via OpenRouter vision without chat history or shared memory. YouTube links have `?si` and `?is` tracking parameters stripped, and starboard plus sobboard track starred messages.
-- **Fun, kudos, and reminders.** Discord supports `>>wa`, `>>daily`, `>>lb`, `>>starlb`, `>>slots`, `>>bj`, `>>kud`, `>>mines`, `>>highlow`, `>>fight`, `>>plinko`, `>>loan`, and `>>rmme` with DM fallback. Wrap `>>` commands inside `{{...}}` blocks to run them inline within a message in order. Run `/help` for the full command list.
+- **Fun, kudos, and reminders.** Discord supports `>>wa`, `>>daily`, `>>lb`, `>>starlb`, `>>slots`, `>>bj`, `>>kud`, `>>mines`, `>>highlow`, `>>fight`, `>>plinko`, `>>crash` or `>>coins-crash`, `>>loan`, and `>>rmme` with DM fallback. Wrap `>>` commands inside `{{...}}` blocks to run them inline within a message in order. Run `/help` for the full command list.
 
 ## Configuration and running
 
