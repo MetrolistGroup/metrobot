@@ -282,14 +282,14 @@ func TestKudFullPlinkoResultsFitDiscord(t *testing.T) {
 
 func TestKudPlinkoBallsPayIndependentlyAndKeepResults(t *testing.T) {
 	g := &kudGame{bet: 100, entrants: []kudEntrant{{userID: "1", name: "one"}, {userID: "2", name: "two"}}}
-	paths := []uint64{0, 63, 4095, 1}
+	paths := []uint64{0, ^uint64(0), 1, 9 << 1}
 	calls := 0
 	g.rollPlinko(func() uint64 {
 		path := paths[calls]
 		calls++
 		return path
 	})
-	if calls != 4 || len(g.plinkoBalls) != 4 || g.plinkoPayouts["1"] != 2510 || g.plinkoPayouts["2"] != 3000 {
+	if calls != 4 || len(g.plinkoBalls) != 4 || g.plinkoPayouts["1"] != 1275 || g.plinkoPayouts["2"] != 1600 {
 		t.Fatalf("wrong per-ball payouts: calls=%d balls=%d payouts=%v", calls, len(g.plinkoBalls), g.plinkoPayouts)
 	}
 	for _, ball := range g.plinkoBalls {
@@ -308,7 +308,7 @@ func TestKudPlinkoPaysUnrenderedBalls(t *testing.T) {
 		t.Fatalf("wrong counts: draws=%d visible=%d", calls, len(g.plinkoBalls))
 	}
 	for _, entrant := range g.entrants {
-		if g.plinkoPayouts[entrant.userID] != 2000*50 {
+		if g.plinkoPayouts[entrant.userID] != 2000*25 {
 			t.Fatalf("unrendered balls were not paid for %s", entrant.userID)
 		}
 		found := false

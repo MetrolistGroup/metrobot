@@ -289,7 +289,7 @@ func (g *kudGame) render() []discord.LayoutComponent {
 				body += "<@" + entrant.userID + ">"
 			}
 		}
-		body += "\n-# Each 50 Kud buys one independent ball. Join once at the same stake. Each 50x edge has a 1 in 4096 chance per ball. No loan luck applies."
+		body += "\n-# Each 50 Kud buys one independent ball. Join once at the same stake. Slight bounce momentum favors the outer bins; each 25x edge is about 1 in 1121 per ball. No loan luck applies."
 		if !g.done {
 			rows = append(rows, discord.NewActionRow(g.button("join", fmt.Sprintf("Join · %d balls · %s", g.bet/plinkoBallCost, kudMoney(g.bet)), discord.ButtonStylePrimary, len(g.entrants) >= 32)))
 		}
@@ -608,13 +608,13 @@ func (g *kudGame) rollPlinko(draw func() uint64) {
 	perPlayer := g.bet / plinkoBallCost
 	var prizes [kudplinko.Bins]int64
 	for bin, factor := range kudplinko.Payouts {
-		prizes[bin] = int64(float64(plinkoBallCost) * factor)
+		prizes[bin] = int64(math.Round(float64(plinkoBallCost) * factor))
 	}
 	for index, entrant := range g.entrants {
 		visible := int64((kudplinko.MaxBalls + len(g.entrants) - 1 - index) / len(g.entrants))
 		for ball := int64(0); ball < perPlayer; ball++ {
-			path := draw() & ((1 << kudplinko.Rows) - 1)
-			bin := bits.OnesCount64(path)
+			path := kudplinko.Path(draw())
+			bin := bits.OnesCount16(path)
 			g.plinkoPayouts[entrant.userID] += prizes[bin]
 			if ball < visible {
 				steps := make([]bool, kudplinko.Rows)

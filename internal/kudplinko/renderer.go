@@ -30,7 +30,22 @@ const (
 )
 
 // Payouts maps a bin (number of right steps) to its multiplier.
-var Payouts = [Bins]float64{50, 10, 3, 1.5, 0.5, 0.3, 0.2, 0.3, 0.5, 1.5, 3, 10, 50}
+var Payouts = [Bins]float64{25, 7, 2.5, 1.5, 1, 0.6, 0.5, 0.6, 1, 1.5, 2.5, 7, 25}
+
+// Path turns a 64-bit random draw into a Rows-bit path (bit r = right on row r).
+// Row 0 is 50/50; each later bounce keeps its previous direction with probability 9/16
+// so balls spread further toward the outer bins than a pure binomial drop.
+func Path(sample uint64) uint16 {
+	dir := sample & 1
+	path := uint16(dir)
+	for row := 1; row < Rows; row++ {
+		if (sample>>(1+4*(row-1)))&0xf >= 9 {
+			dir ^= 1
+		}
+		path |= uint16(dir) << row
+	}
+	return path
+}
 
 type Ball struct {
 	Name       string

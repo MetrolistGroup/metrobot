@@ -7,6 +7,8 @@ import (
 	"image/draw"
 	"image/gif"
 	"math"
+	"math/bits"
+	"math/rand/v2"
 	"os"
 	"strings"
 	"testing"
@@ -171,5 +173,57 @@ func TestFitName(t *testing.T) {
 	got := fitName(fs.legend, "\x00名"+strings.Repeat("w", 80), 100)
 	if strings.ContainsAny(got, "\x00名") || textWidth(fs.legend, got) > 100 || !strings.HasSuffix(got, "…") {
 		t.Fatalf("fitName = %q", got)
+	}
+}
+
+func TestPathMomentumAndRTP(t *testing.T) {
+	if got := bits.OnesCount16(Path(0)); got != 0 {
+		t.Fatalf("Path(0) landed in bin %d, want 0", got)
+	}
+	if got := bits.OnesCount16(Path(1)); got != Rows {
+		t.Fatalf("Path(1) landed in bin %d, want %d", got, Rows)
+	}
+	if got := bits.OnesCount16(Path(^uint64(0))); got != Rows/2 {
+		t.Fatalf("Path(all 1s) landed in bin %d, want %d", got, Rows/2)
+	}
+
+	// Exact distribution for 9/16 directional momentum.
+	var dp [Bins][2]float64
+	dp[0][0], dp[1][1] = 0.5, 0.5
+	const keep = 9.0 / 16.0
+	for range Rows - 1 {
+		var next [Bins][2]float64
+		for b := 0; b < Bins; b++ {
+			for d := 0; d < 2; d++ {
+				p := dp[b][d]
+				if p == 0 {
+					continue
+				}
+				next[b+d][d] += p * keep
+				next[b+(d^1)][d^1] += p * (1 - keep)
+			}
+		}
+		dp = next
+	}
+	var exactEV float64
+	for b := 0; b < Bins; b++ {
+		if Payouts[b] != Payouts[Bins-1-b] {
+			t.Fatalf("Payouts not symmetric at bin %d", b)
+		}
+		exactEV += (dp[b][0] + dp[b][1]) * Payouts[b]
+	}
+	if exactEV < 1.0 || exactEV > 1.05 {
+		t.Fatalf("exact RTP = %.4f, want in [1.00, 1.05]", exactEV)
+	}
+
+	// Verify Path sampling matches the exact model.
+	rng := rand.New(rand.NewPCG(7, 42))
+	const samples = 200_000
+	var total float64
+	for range samples {
+		total += Payouts[bits.OnesCount16(Path(rng.Uint64()))]
+	}
+	if got := total / samples; math.Abs(got-exactEV) > 0.02 {
+		t.Fatalf("sampled RTP = %.4f, exact = %.4f", got, exactEV)
 	}
 }
