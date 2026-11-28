@@ -7,16 +7,28 @@ import (
 )
 
 var ErrKudMaxed = errors.New("upgrade is already maxed")
+var ErrKudQuoteChanged = errors.New("upgrade level or price changed")
 
-// KudUpgrade is one shop item. Level n+1 costs Base*(n+1) Kud, up to Max levels.
+// KudUpgrade is one shop item. Level n costs Base*n*n Kud, up to Max levels.
 type KudUpgrade struct {
 	Key, Title, Detail string
 	Base, Max          int64
 }
 
 var KudUpgrades = []KudUpgrade{
-	{Key: "swift", Title: "Swift hands", Detail: "Every Kud cooldown is 5% shorter per level.", Base: 2_000, Max: 6},
-	{Key: "luck", Title: "Lucky charm", Detail: "+1% rescue chance per level in Mines and High-Low.", Base: 3_000, Max: 5},
+	{Key: "swift", Title: "Swift hands", Detail: "Cooldowns are 0.5% shorter per level, up to 10%.", Base: 10_000, Max: 20},
+	{Key: "luck", Title: "Lucky charm", Detail: "+0.1% rescue chance per level in Mines and High-Low, up to +2%.", Base: 15_000, Max: 20},
+}
+
+func (up KudUpgrade) Cost(level int64) int64 { return up.Base * level * level }
+
+func KudUpgradeByKey(key string) (KudUpgrade, bool) {
+	for _, up := range KudUpgrades {
+		if up.Key == key {
+			return up, true
+		}
+	}
+	return KudUpgrade{}, false
 }
 
 func (d *DB) KudUpgradeLevels(userID string) (map[string]int64, error) {
@@ -37,15 +49,9 @@ func (d *DB) KudUpgradeLevels(userID string) (map[string]int64, error) {
 	return levels, rows.Err()
 }
 
-// BuyKudUpgrade spends the next level's price and returns the new level and the cost paid.
-func (d *DB) BuyKudUpgrade(userID, key string) (level, cost int64, err error) {
-	var up KudUpgrade
-	found := false
-	for _, candidate := range KudUpgrades {
-		if candidate.Key == key {
-			up, found = candidate, true
-		}
-	}
+// BuyKudUpgrade charges only the confirmed level and price, so repeated confirmations cannot buy extra levels.
+func (d *DB) BuyKudUpgrade(userID, key string, expectedLevel, expectedCost int64) (level, cost int64, err error) {
+	up, found := KudUpgradeByKey(key)
 	if !found {
 		return 0, 0, fmt.Errorf("unknown upgrade")
 	}
@@ -62,7 +68,10 @@ func (d *DB) BuyKudUpgrade(userID, key string) (level, cost int64, err error) {
 	if current >= up.Max {
 		return 0, 0, ErrKudMaxed
 	}
-	cost = up.Base * (current + 1)
+	cost = up.Cost(current + 1)
+	if expectedLevel != current+1 || expectedCost != cost {
+		return 0, 0, ErrKudQuoteChanged
+	}
 	if err := spendKudTx(tx, userID, cost); err != nil {
 		return 0, 0, err
 	}

@@ -47,7 +47,7 @@ func (b *Bot) installListeners() {
 				return
 			}
 			go func() {
-				if b.handleHelpComponent(s, e) || b.handleNoteComponent(s, e) || b.handleKudComponent(s, e) || b.handleBlackjackComponent(s, e) || e.Data.Type() != discord.ComponentTypeStringSelectMenu {
+				if b.handleHelpComponent(s, e) || b.handleNoteComponent(s, e) || b.handleKudShopComponent(s, e) || b.handleKudComponent(s, e) || b.handleBlackjackComponent(s, e) || e.Data.Type() != discord.ComponentTypeStringSelectMenu {
 					return
 				}
 				if !b.handleGSMArenaComponent(s, e) && !b.handleHardwareComponent(s, e) {

@@ -37,7 +37,7 @@ type kudGame struct {
 	board, revealed         [16]bool
 	picks, card, streak     int
 	multiplier              float64
-	luck                    int
+	luck                    int // Rescue chance in basis points.
 	rescued                 bool
 	entrants                []kudEntrant
 	result                  string
@@ -313,7 +313,7 @@ func (g *kudGame) render() []discord.LayoutComponent {
 		}
 	}
 	if g.luck > 0 && (g.kind == "mines" || g.kind == "highlow") {
-		body += fmt.Sprintf("\n-# Luck: %d%% chance to rescue one losing pick this round.", g.luck)
+		body += fmt.Sprintf("\n-# Luck: %.1f%% chance to rescue one losing pick this round.", float64(g.luck)/100)
 	}
 	if g.result != "" {
 		body += "\n\n" + g.result
@@ -343,7 +343,7 @@ func (g *kudGame) pickMine(index int) bool {
 			g.board[cell] = true
 		}
 	}
-	if g.board[index] && !g.rescued && rand.IntN(100) < g.luck {
+	if g.board[index] && !g.rescued && rand.IntN(10_000) < g.luck {
 		for cell := range 16 {
 			if cell != index && !g.revealed[cell] && !g.board[cell] {
 				g.board[cell], g.board[index], g.rescued = true, false, true
@@ -495,7 +495,7 @@ func (b *Bot) playKudAction(g *kudGame, action, userID, name string) error {
 		}
 		previous, next := g.card, rand.IntN(13)+2
 		correct := (higher && next > previous) || (!higher && next < previous)
-		if next != previous && !correct && !g.rescued && rand.IntN(100) < g.luck {
+		if next != previous && !correct && !g.rescued && rand.IntN(10_000) < g.luck {
 			if higher {
 				next = previous + 1 + rand.IntN(14-previous)
 			} else {
