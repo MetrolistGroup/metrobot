@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/internal/notefmt"
@@ -13,26 +11,6 @@ import (
 	"github.com/disgoorg/disgo/discord"
 	"go.uber.org/zap"
 )
-
-func (b *Bot) enforceGarminChannelReply(channelID, answer, prompt string) string {
-	if b.isGeneralChannel(channelID) && !garminAIRequestsDetail(prompt) {
-		return leadingGarminSentences(answer, 2)
-	}
-	return answer
-}
-
-func garminAIRequestsDetail(prompt string) bool {
-	words := strings.FieldsFunc(strings.ToLower(prompt), func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
-	})
-	for _, word := range words {
-		switch word {
-		case "summarize", "summarise", "summary", "recap", "details", "detailed", "elaborate":
-			return true
-		}
-	}
-	return containsAnyGarminPhrase(strings.Join(words, " "), "more detail", "in detail", "break down", "conversation history", "who said what", "what did we talk", "what did i miss", "catch me up")
-}
 
 // garminRedirectChannelID maps threads under the configured general channel,
 // except the configured chat thread, to general.
@@ -44,28 +22,6 @@ func (b *Bot) garminRedirectChannelID(s *bot.Client, channelID string) string {
 		return snowflakeString(channel.ParentID())
 	}
 	return channelID
-}
-
-// leadingGarminSentences keeps #general short while leaving room for a setup and punchline.
-func leadingGarminSentences(answer string, limit int) string {
-	answer = strings.Join(strings.Fields(strings.TrimSpace(answer)), " ")
-	for index, r := range answer {
-		if r != '.' && r != '!' && r != '?' {
-			continue
-		}
-		next := index + utf8.RuneLen(r)
-		if next == len(answer) || (next < len(answer) && answer[next] == ' ') {
-			if limit--; limit == 0 {
-				answer = answer[:next]
-				break
-			}
-		}
-	}
-	runes := []rune(answer)
-	if len(runes) > 240 {
-		answer = strings.TrimSpace(string(runes[:237])) + "..."
-	}
-	return answer
 }
 
 // garminLayoutReply accepts a reply built from a note components-v2 block. FAQ selectors need a saved note, so they stay text.
@@ -144,15 +100,15 @@ func (b *Bot) sendGarminReply(s *bot.Client, m *discord.Message, content string)
 		}
 		components = []discord.LayoutComponent{discord.NewActionRow(buttons...)}
 	}
-	reply, err := s.Rest.CreateMessage(m.ChannelID, discord.MessageCreate{
-		Content:    truncateGarminAIResponse(content),
-		Embeds:     embeds,
-		Components: components,
-		MessageReference: &discord.MessageReference{
-			MessageID: snowflakePtr(m.ID.String()),
-		},
-		AllowedMentions: &discord.AllowedMentions{},
-	})
+	message := newDiscordNoteMessage(content, "")
+	if len(message.Files) > 0 {
+		message.Files[0].Name = "reply.md"
+	}
+	message.Embeds = embeds
+	message.Components = components
+	message.MessageReference = &discord.MessageReference{MessageID: snowflakePtr(m.ID.String())}
+	message.AllowedMentions = &discord.AllowedMentions{}
+	reply, err := s.Rest.CreateMessage(m.ChannelID, message)
 	if err != nil {
 		b.Logger.Error("failed to send Garmin AI reply", zap.Error(err))
 		return nil
@@ -182,38 +138,10 @@ func (b *Bot) sendGarminReplyIfVisible(s *bot.Client, m *discord.Message, conten
 	return b.sendGarminReply(s, m, content)
 }
 
-func truncateGarminAIResponse(content string) string {
-	return truncateGarminAIResponseTo(content, garminAIMaxContent)
+func formatGarminAIResult(result *garminAIResult) string {
+	return formatGarminAIUsage(result) + result.Answer
 }
 
-func formatAndTruncateGarminAIResult(result *garminAIResult) string {
-	prefix := formatGarminAIUsage(result)
-	available := garminAIMaxContent - len(prefix)
-	if available < 4 {
-		return truncateGarminAIResponse(prefix)
-	}
-	return prefix + truncateGarminAIResponseTo(result.Answer, available)
-}
-
-func truncateGarminAIResponseTo(content string, limit int) string {
-	content = strings.TrimSpace(content)
-	if len(content) <= limit {
-		return content
-	}
-	if limit <= 3 {
-		return strings.Repeat(".", max(0, limit))
-	}
-
-	content = content[:limit-3]
-	for !utf8.ValidString(content) {
-		content = content[:len(content)-1]
-	}
-	// Prefer a nearby word boundary without discarding most of a short answer.
-	if end := strings.LastIndexFunc(content, unicode.IsSpace); end >= len(content)*3/4 {
-		content = content[:end]
-	}
-	return strings.TrimSpace(content) + "..."
-}
 func sanitizeGarminInternalToolDisclosure(prompt, answer string) string {
 	lowerAnswer := strings.ToLower(answer)
 	dnrQuestion := garminDNRPattern.MatchString(prompt)

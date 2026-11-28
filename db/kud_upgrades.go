@@ -16,8 +16,8 @@ type KudUpgrade struct {
 }
 
 var KudUpgrades = []KudUpgrade{
-	{Key: "swift", Title: "Swift hands", Detail: "Cooldowns are 0.5% shorter per level, up to 10%.", Base: 10_000, Max: 20},
-	{Key: "luck", Title: "Lucky charm", Detail: "+0.1% rescue chance per level in Mines and High-Low, up to +2%.", Base: 15_000, Max: 20},
+	{Key: "swift", Title: "Swift hands", Detail: "Cooldowns are 0.2% shorter per level, up to 10%.", Base: 10_000, Max: 50},
+	{Key: "luck", Title: "Lucky charm", Detail: "+0.04% rescue chance per level in Mines and High-Low, up to +2%.", Base: 15_000, Max: 50},
 }
 
 func (up KudUpgrade) Cost(level int64) int64 { return up.Base * level * level }

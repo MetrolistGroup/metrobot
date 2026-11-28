@@ -12,12 +12,12 @@ func TestKudUpgradePricesCapsAndFunds(t *testing.T) {
 	if _, _, err := d.BuyKudUpgrade("poor", "swift", 1, 10_000); !errors.Is(err, ErrKudFunds) {
 		t.Fatalf("broke buy err = %v", err)
 	}
-	if _, err := d.AddKudos("a", 100_000_000); err != nil {
+	if _, err := d.AddKudos("a", 2_000_000_000); err != nil {
 		t.Fatal(err)
 	}
 	var spent int64
 	for key, base := range map[string]int64{"swift": 10_000, "luck": 15_000} {
-		for want := int64(1); want <= 20; want++ {
+		for want := int64(1); want <= 50; want++ {
 			price := base * want * want
 			level, cost, err := d.BuyKudUpgrade("a", key, want, price)
 			if err != nil || level != want || cost != price {
@@ -25,19 +25,19 @@ func TestKudUpgradePricesCapsAndFunds(t *testing.T) {
 			}
 			spent += cost
 		}
-		if _, _, err := d.BuyKudUpgrade("a", key, 21, base*21*21); !errors.Is(err, ErrKudMaxed) {
-			t.Fatalf("%s twenty-first level err = %v", key, err)
+		if _, _, err := d.BuyKudUpgrade("a", key, 51, base*51*51); !errors.Is(err, ErrKudMaxed) {
+			t.Fatalf("%s fifty-first level err = %v", key, err)
 		}
 	}
 	if _, _, err := d.BuyKudUpgrade("a", "nope", 1, 10_000); err == nil {
 		t.Fatal("unknown upgrade accepted")
 	}
 	levels, err := d.KudUpgradeLevels("a")
-	if err != nil || levels["swift"] != 20 || levels["luck"] != 20 {
+	if err != nil || levels["swift"] != 50 || levels["luck"] != 50 {
 		t.Fatalf("levels = %v err=%v", levels, err)
 	}
-	if a, _ := d.KudAccount("a"); a.Balance != 100_000_000-spent {
-		t.Fatalf("balance = %d, want %d", a.Balance, 100_000_000-spent)
+	if a, _ := d.KudAccount("a"); a.Balance != 2_000_000_000-spent {
+		t.Fatalf("balance = %d, want %d", a.Balance, 2_000_000_000-spent)
 	}
 }
 

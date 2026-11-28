@@ -12,7 +12,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/MetrolistGroup/metrobot/cmd"
 	"github.com/MetrolistGroup/metrobot/db"
@@ -33,25 +32,6 @@ func TestExtractGarminPromptFromBotMention(t *testing.T) {
 		if prompt, triggered := extractGarminPrompt(session, content); !triggered || !strings.Contains(prompt, "hello") && !strings.Contains(prompt, "hey") {
 			t.Errorf("extractGarminPrompt(%q) = (%q, %v)", content, prompt, triggered)
 		}
-	}
-}
-
-func TestTruncateGarminAIResponse(t *testing.T) {
-	input := strings.Repeat("a", garminAIMaxContent+1)
-	got := truncateGarminAIResponse(input)
-	if len(got) > garminAIMaxContent {
-		t.Fatalf("response length = %d, max %d", len(got), garminAIMaxContent)
-	}
-	if !strings.HasSuffix(got, "...") {
-		t.Fatalf("truncated response = %q, want ellipsis", got)
-	}
-}
-
-func TestTruncateGarminAIResponsePreservesUTF8(t *testing.T) {
-	input := strings.Repeat("é", garminAIMaxContent)
-	got := truncateGarminAIResponse(input)
-	if !utf8.ValidString(got) {
-		t.Fatalf("truncated response is invalid UTF-8: %q", got)
 	}
 }
 
@@ -454,42 +434,15 @@ func TestGarminEmojiToolsListAndViewLiveGuildEmojis(t *testing.T) {
 	}
 }
 
-func TestEnforceGarminGeneralReplyIsShortWithoutRedirect(t *testing.T) {
-	got := testBot().enforceGarminChannelReply(garminGeneralID, "the setting is under Settings > Playback. it's been there forever! here's some extra detail.", "where is the setting?")
-	want := "the setting is under Settings > Playback. it's been there forever!"
-	if got != want {
-		t.Fatalf("testBot().enforceGarminChannelReply() = %q, want %q", got, want)
-	}
-	if strings.Contains(got, "#bots") || strings.Contains(got, garminBotsID) {
-		t.Fatalf("general reply redirected to #bots: %q", got)
-	}
-	if got := testBot().enforceGarminChannelReply("another-channel", "yeah, sure. what's on your mind?", "hello"); got != "yeah, sure. what's on your mind?" {
-		t.Fatalf("non-general reply changed to %q", got)
-	}
-}
-
-func TestEnforceGarminGeneralReplyAllowsRequestedDetail(t *testing.T) {
-	answer := "we chose option B.\n- Lamp corrected the date.\n- the release is still undecided.\n- nobody objected."
-	for _, prompt := range []string{"Summarize this conversation", "give me a recap", "more details please", "explain in detail", "what did we talk about?", "who said what?", "show our conversation history"} {
-		if got := testBot().enforceGarminChannelReply(garminGeneralID, answer, prompt); got != answer {
-			t.Errorf("requested detail %q was truncated: %q", prompt, got)
-		}
-	}
-	if got := testBot().enforceGarminChannelReply(garminGeneralID, answer, "hello"); got != "we chose option B. - Lamp corrected the date." {
-		t.Fatalf("ordinary general policy changed: %q", got)
-	}
-}
-
-func TestEnforceGarminThreadUnderGeneralStaysShort(t *testing.T) {
+func TestGarminThreadUnderGeneralUsesGeneralPrompt(t *testing.T) {
 	state := mustTestClient(t)
 	cacheTestGuild(state, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: snowflakeID("100000000000000012")}}})
 	state.Caches.AddChannel(testChannel(t, map[string]any{"id": garminGeneralID, "guild_id": "100000000000000012", "name": "general"}))
 	state.Caches.AddChannel(testChannel(t, map[string]any{"id": "100000000000000011", "guild_id": "100000000000000012", "parent_id": garminGeneralID, "name": "thread", "type": discord.ChannelTypeGuildPublicThread}))
 
 	session := state
-	got := testBot().enforceGarminChannelReply(testBot().garminRedirectChannelID(session, "100000000000000011"), "the answer is 42. obviously. here's some extra detail.", "what is the answer?")
-	if got != "the answer is 42. obviously." {
-		t.Fatalf("thread reply = %q", got)
+	if got := testBot().garminRedirectChannelID(session, "100000000000000011"); got != garminGeneralID {
+		t.Fatalf("thread prompt channel = %q", got)
 	}
 }
 
@@ -500,9 +453,8 @@ func TestGarminChatThreadUnderGeneralAllowsNormalReplies(t *testing.T) {
 	state.Caches.AddChannel(testChannel(t, map[string]any{"id": garminChatThreadID, "guild_id": "100000000000000012", "parent_id": garminGeneralID, "name": "thread", "type": discord.ChannelTypeGuildPublicThread}))
 
 	session := state
-	answer := "yeah, sure. what's on your mind?"
-	if got := testBot().enforceGarminChannelReply(testBot().garminRedirectChannelID(session, garminChatThreadID), answer, "hello"); got != answer {
-		t.Fatalf("allowed thread reply = %q, want %q", got, answer)
+	if got := testBot().garminRedirectChannelID(session, garminChatThreadID); got != garminChatThreadID {
+		t.Fatalf("allowed thread prompt channel = %q", got)
 	}
 	message := &discord.Message{
 		GuildID: snowflakePtr("100000000000000012"), ChannelID: snowflakeID(garminChatThreadID), Author: discord.User{ID: snowflakeID("100000000000000056"), Username: "speaker"}, Member: &discord.Member{},
@@ -586,48 +538,62 @@ func TestGarminAIUserMessageDefaultsImageOnlyPrompt(t *testing.T) {
 	}
 }
 
-func TestHandleGarminAIDetailedGeneralReplyRetainsDeliveredText(t *testing.T) {
-	session := mustTestClient(t)
-	cacheTestGuild(session, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: snowflakeID("12")}, Roles: []discord.Role{{ID: snowflakeID("13"), Name: "member"}}}})
-	session.Caches.AddChannel(testChannel(t, map[string]any{"id": garminGeneralID, "guild_id": "12", "name": "general"}))
-	var delivered string
-	session.Rest = testREST(&http.Client{Transport: garminRoundTripFunc(func(r *http.Request) (*http.Response, error) {
-		body := ""
-		switch {
-		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages"):
-			body = `[]`
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/messages"):
-			var payload struct {
-				Content string `json:"content"`
+func TestHandleGarminAIGeneralReplyPreservesCompleteAnswer(t *testing.T) {
+	for _, test := range []struct {
+		name, prompt, answer string
+		attachment           bool
+	}{
+		{"ordinary", "explain this setup", strings.Repeat("a complete sentence. ", 20) + "the final condition matters.", false},
+		{"detailed", "give a detailed recap", strings.Repeat("we discussed the options. ", 100) + "the final decision matters.", true},
+		{"unicode inline", "explain this setup", strings.Repeat("é", 1900), false},
+		{"surrogate pairs inline", "explain this setup", strings.Repeat("😀", 975) + " end", false},
+		{"surrogate pairs attachment", "explain this setup", strings.Repeat("😀", 1000) + " end", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			session := mustTestClient(t)
+			cacheTestGuild(session, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: 12}, Roles: []discord.Role{{ID: 13, Name: "member"}}}})
+			session.Caches.AddChannel(testChannel(t, map[string]any{"id": garminGeneralID, "guild_id": "12", "name": "general"}))
+			var delivered deliveredNote
+			session.Rest = testREST(&http.Client{Transport: garminRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+				body := ""
+				switch {
+				case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages"):
+					body = `[]`
+				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/messages"):
+					delivered = readDeliveredNote(t, r)
+					body = `{"id":"150","channel_id":"` + garminGeneralID + `"}`
+				case strings.HasSuffix(r.URL.Path, "/typing"):
+				default:
+					t.Errorf("unexpected REST request: %s %s", r.Method, r.URL)
+				}
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+			})})
+			b := &Bot{Logger: zap.NewNop(), garminAISlots: make(chan struct{}, 1), garminAILastUsed: make(map[string]time.Time), garminAI: garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
+				return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: test.answer}}, nil
+			})}
+			message := &discord.Message{ID: 100, GuildID: snowflakePtr("12"), ChannelID: snowflakeID(garminGeneralID), Content: "garmin, " + test.prompt, Author: discord.User{ID: 56, Username: "speaker"}, Member: &discord.Member{}}
+			b.handleGarminAI(session, message, []cmd.GarminAIMessage{garminAIUserMessage(message, test.prompt)})
+			text := delivered.Message.Content
+			if test.attachment {
+				if delivered.Filename != "reply.md" || text != "" {
+					t.Fatalf("long answer was not attached whole: %#v", delivered)
+				}
+				text = delivered.FileContent
+			} else if delivered.Filename != "" {
+				t.Fatal("answer that fits Discord was unnecessarily attached")
 			}
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				t.Fatal(err)
+			if got := strings.TrimPrefix(text, "-# thought briefly\n"); got != test.answer {
+				t.Fatalf("answer was cut or changed: %q", got)
 			}
-			delivered = payload.Content
-			body = `{"id":"150","channel_id":"` + garminGeneralID + `"}`
-		case strings.HasSuffix(r.URL.Path, "/typing"):
-		default:
-			t.Errorf("unexpected REST request: %s %s", r.Method, r.URL)
-		}
-		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
-	})})
-	answer := strings.Repeat("we discussed the options. ", 100) + "an unseen decision to deploy"
-	b := &Bot{Logger: zap.NewNop(), garminAISlots: make(chan struct{}, 1), garminAILastUsed: make(map[string]time.Time), garminAI: garminAITestFunc(func(context.Context, cmd.GarminAIRequest) (*cmd.GarminAICompletion, error) {
-		return &cmd.GarminAICompletion{Message: cmd.GarminAIMessage{Role: "assistant", Content: answer}}, nil
-	})}
-	message := &discord.Message{ID: snowflakeID("100"), GuildID: snowflakePtr("12"), ChannelID: snowflakeID(garminGeneralID), Content: "garmin, give a detailed recap", Author: discord.User{ID: snowflakeID("56"), Username: "speaker"}, Member: &discord.Member{}}
-	b.handleGarminAI(session, message, []cmd.GarminAIMessage{garminAIUserMessage(message, "give a detailed recap")})
-	if len(delivered) > garminAIMaxContent || !strings.HasSuffix(delivered, "...") || strings.Contains(delivered, "unseen decision") {
-		t.Fatalf("detailed reply was not properly truncated: %q", delivered)
-	}
-	history, ok := b.garminAIHistory(message, "150", false)
-	answered := strings.TrimPrefix(delivered, "-# thought briefly\n")
-	if !ok || history[len(history)-1].Content != answered {
-		t.Fatalf("history differs from delivered reply: %#v; delivered %q", history, delivered)
-	}
-	continued := b.garminAITriggeredConversation(message, "what did we decide?")
-	if continued[len(continued)-2].Content != answered {
-		t.Fatal("next turn retained text the user did not receive")
+			history, ok := b.garminAIHistory(message, "150", false)
+			if !ok || history[len(history)-1].Content != test.answer {
+				t.Fatalf("history did not retain the complete delivered answer: %#v", history)
+			}
+			continued := b.garminAITriggeredConversation(message, "what did we decide?")
+			if continued[len(continued)-2].Content != test.answer {
+				t.Fatal("next turn lost part of the delivered answer")
+			}
+		})
 	}
 }
 

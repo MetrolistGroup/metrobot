@@ -313,7 +313,7 @@ func (g *kudGame) render() []discord.LayoutComponent {
 		}
 	}
 	if g.luck > 0 && (g.kind == "mines" || g.kind == "highlow") {
-		body += fmt.Sprintf("\n-# Luck: %.1f%% chance to rescue one losing pick this round.", float64(g.luck)/100)
+		body += fmt.Sprintf("\n-# Luck: %.2f%% chance to rescue one losing pick this round.", float64(g.luck)/100)
 	}
 	if g.result != "" {
 		body += "\n\n" + g.result

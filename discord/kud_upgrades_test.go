@@ -29,19 +29,19 @@ func TestKudRateLimitLayers(t *testing.T) {
 
 func TestSwiftShortensBothLayers(t *testing.T) {
 	b, _, _ := kudTestBot(t)
-	if _, err := b.DB.AddKudos("1", 100_000_000); err != nil {
+	if _, err := b.DB.AddKudos("1", 2_000_000_000); err != nil {
 		t.Fatal(err)
 	}
 	if got := b.kudCooldownFor("1", 10*time.Second); got != 10*time.Second {
 		t.Fatalf("no upgrade cooldown = %s", got)
 	}
-	for level := int64(1); level <= 20; level++ {
+	for level := int64(1); level <= 50; level++ {
 		if _, _, err := b.DB.BuyKudUpgrade("1", "swift", level, 10_000*level*level); err != nil {
 			t.Fatal(err)
 		}
 		if level == 1 {
-			if got := b.kudCooldownFor("1", 10*time.Second); got != 9950*time.Millisecond {
-				t.Fatalf("first swift level cooldown = %s, want 9.95s", got)
+			if got := b.kudCooldownFor("1", 10*time.Second); got != 9980*time.Millisecond {
+				t.Fatalf("first swift level cooldown = %s, want 9.98s", got)
 			}
 		}
 	}
@@ -59,8 +59,8 @@ func TestLuckPreservesFractionalPercentages(t *testing.T) {
 		level int64
 		want  int
 	}{
-		{false, 0, 0}, {false, 1, 10}, {false, 20, 200},
-		{true, 0, 200}, {true, 5, 250}, {true, 20, 400},
+		{false, 0, 0}, {false, 1, 4}, {false, 20, 80}, {false, 50, 200},
+		{true, 0, 200}, {true, 5, 220}, {true, 20, 280}, {true, 50, 400},
 	} {
 		if got := kudLuck(test.debt, test.level); got != test.want {
 			t.Fatalf("debt=%v level=%d luck=%d basis points, want %d", test.debt, test.level, got, test.want)

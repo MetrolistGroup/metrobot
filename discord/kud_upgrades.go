@@ -17,8 +17,11 @@ import (
 // kudBlanketCooldown is the layer shared by every Kud game; kudGameCooldowns is each game's own layer.
 const kudBlanketCooldown = 5 * time.Second
 const kudShopPrefix = "kudshop:"
-const kudSwiftStep = 50
-const kudLuckStep = 10
+
+// Reject confirmations that quoted the previous per-level effects.
+const kudShopConfirmAction = "confirm-v2"
+const kudSwiftStep = 20
+const kudLuckStep = 4
 
 var kudGameCooldowns = map[string]time.Duration{
 	"slots": slotsCooldown, "bj": blackjackCooldown, "mines": 10 * time.Second, "highlow": 10 * time.Second,
@@ -34,7 +37,7 @@ func kudLuck(debt bool, level int64) int {
 	return luck
 }
 
-// kudCooldownFor shortens a base cooldown by 0.5% per Swift hands level.
+// kudCooldownFor shortens a base cooldown by 0.2% per Swift hands level.
 func (b *Bot) kudCooldownFor(userID string, base time.Duration) time.Duration {
 	levels, err := b.DB.KudUpgradeLevels(userID)
 	if err != nil {
@@ -70,7 +73,7 @@ func kudUpgradeEffect(key string, level int64) string {
 	if key == "swift" {
 		return fmt.Sprintf("%.1f%% shorter cooldowns", float64(level*kudSwiftStep)/100)
 	}
-	return fmt.Sprintf("+%.1f%% rescue chance", float64(level*kudLuckStep)/100)
+	return fmt.Sprintf("+%.2f%% rescue chance", float64(level*kudLuckStep)/100)
 }
 
 func (b *Bot) kudShopComponents(userID, selected, notice string) ([]discord.LayoutComponent, error) {
@@ -93,7 +96,7 @@ func (b *Bot) kudShopComponents(userID, selected, notice string) ([]discord.Layo
 		default:
 			body := fmt.Sprintf("### Confirm upgrade\n<@%s> · %s\n\n**%s** · Level %d → %d\n%s → **%s**\n\nPrice **%s**\nBalance after purchase **%s**\n\nThis spends Kud permanently. Confirm to buy this level.",
 				userID, kudMoney(balance), up.Title, level, level+1, kudUpgradeEffect(up.Key, level), kudUpgradeEffect(up.Key, level+1), kudMoney(cost), kudMoney(balance-cost))
-			confirmID := fmt.Sprintf("%s%s:confirm:%s:%d:%d:%d", kudShopPrefix, userID, up.Key, level+1, cost, time.Now().Add(5*time.Minute).Unix())
+			confirmID := fmt.Sprintf("%s%s:%s:%s:%d:%d:%d", kudShopPrefix, userID, kudShopConfirmAction, up.Key, level+1, cost, time.Now().Add(5*time.Minute).Unix())
 			return []discord.LayoutComponent{discord.ContainerComponent{Components: []discord.ContainerSubComponent{
 				discord.TextDisplayComponent{Content: body},
 				discord.NewActionRow(
@@ -169,9 +172,9 @@ func (b *Bot) handleKudShopComponent(s *bot.Client, i *events.ComponentInteracti
 	var up db.KudUpgrade
 	var level, cost, expires int64
 	valid := (action == "view" || action == "cancel") && len(parts) == 2
-	if (action == "select" && len(parts) == 3) || (action == "confirm" && len(parts) == 6) {
+	if (action == "select" && len(parts) == 3) || (action == kudShopConfirmAction && len(parts) == 6) {
 		up, valid = db.KudUpgradeByKey(parts[2])
-		if valid && action == "confirm" {
+		if valid && action == kudShopConfirmAction {
 			var levelErr, costErr, expiryErr error
 			level, levelErr = strconv.ParseInt(parts[3], 10, 64)
 			cost, costErr = strconv.ParseInt(parts[4], 10, 64)
@@ -193,7 +196,7 @@ func (b *Bot) handleKudShopComponent(s *bot.Client, i *events.ComponentInteracti
 		selected = up.Key
 	case "cancel":
 		notice = "Purchase cancelled. No Kud spent."
-	case "confirm":
+	case kudShopConfirmAction:
 		if !time.Now().Before(time.Unix(expires, 0)) {
 			notice = "This confirmation expired. Select the upgrade again. No Kud spent."
 			break

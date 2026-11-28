@@ -156,14 +156,14 @@ func (b *Bot) runGarminAIReply(s *bot.Client, m *discord.Message, messages []cmd
 		return
 	}
 	answer, embed := cmd.ParseGarminReply(result.Answer)
-	result.Answer = b.enforceGarminChannelReply(b.garminRedirectChannelID(s, m.ChannelID.String()), answer, garminUserText(messages))
+	result.Answer = answer
 
 	renderedAnswer := renderGarminGuildEmojis(s, snowflakeString(m.GuildID), result.Answer)
 	if strings.TrimSpace(renderedAnswer) == "" && strings.TrimSpace(result.Answer) != "" {
 		return
 	}
 	result.Answer = renderedAnswer
-	text := formatAndTruncateGarminAIResult(result)
+	text := formatGarminAIResult(result)
 	formatted := cmd.FormatGarminReply(text, embed)
 	// Remember the delivered answer without the "-# thought ..." usage lines; the model copied them into later replies.
 	remembered := cmd.FormatGarminReply(strings.TrimPrefix(text, formatGarminAIUsage(result)), embed)

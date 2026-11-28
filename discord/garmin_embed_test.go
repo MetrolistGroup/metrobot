@@ -2,7 +2,6 @@ package discord
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,7 +34,7 @@ func TestHandleGarminAIEmbedReply(t *testing.T) {
 		embed         *cmd.GarminEmbed
 	}{
 		{"embed only", "", richEmbed},
-		{"clipped text and embed", strings.Repeat("a short answer. ", 200), richEmbed},
+		{"complete long text and embed", strings.Repeat("a short answer. ", 200), richEmbed},
 		{"buttons only", "", buttonsOnly},
 		{"text and buttons", "here you go.", buttonsOnly},
 	} {
@@ -45,6 +44,7 @@ func TestHandleGarminAIEmbedReply(t *testing.T) {
 			cacheTestGuild(session, discord.GatewayGuild{RestGuild: discord.RestGuild{Guild: discord.Guild{ID: 12}, Roles: []discord.Role{{ID: 13, Name: "member"}}}})
 			session.Caches.AddChannel(testChannel(t, map[string]any{"id": "200", "guild_id": "12", "name": "bots"}))
 			var delivered discord.MessageCreate
+			var deliveredText string
 			sent := 0
 			session.Rest = testREST(&http.Client{Transport: garminRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 				body := "{}"
@@ -52,8 +52,14 @@ func TestHandleGarminAIEmbedReply(t *testing.T) {
 				case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages"):
 					body = "[]"
 				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/messages"):
-					if err := json.NewDecoder(r.Body).Decode(&delivered); err != nil {
-						t.Error(err)
+					record := readDeliveredNote(t, r)
+					delivered = record.Message
+					deliveredText = delivered.Content
+					if record.Filename != "" {
+						if record.Filename != "reply.md" {
+							t.Errorf("unexpected attachment: %q", record.Filename)
+						}
+						deliveredText = record.FileContent
 					}
 					sent++
 					body = `{"id":"150","channel_id":"200"}`
@@ -102,30 +108,19 @@ func TestHandleGarminAIEmbedReply(t *testing.T) {
 					t.Fatalf("link button = %#v", component)
 				}
 			}
-			if len(delivered.Content) > garminAIMaxContent || !utf8.ValidString(delivered.Content) || strings.Contains(delivered.Content, "```embed") || len(content) > garminAIMaxContent && !strings.HasSuffix(delivered.Content, "...") {
-				t.Fatalf("bad reply text: %q", delivered.Content)
+			if !utf8.ValidString(deliveredText) || strings.Contains(deliveredText, "```embed") || strings.TrimSpace(strings.TrimPrefix(deliveredText, "-# thought briefly")) != strings.TrimSpace(content) {
+				t.Fatalf("reply text changed: %q", deliveredText)
 			}
 			if delivered.AllowedMentions == nil || len(delivered.AllowedMentions.Parse) != 0 || delivered.MessageReference == nil {
 				t.Fatal("reply lost mention suppression or reference")
 			}
 			history, ok := b.garminAIHistory(message, "150", false)
 			// Usage lines are shown to users but kept out of history so the model does not copy them.
-			want := strings.TrimSpace(strings.TrimPrefix(delivered.Content, "-# thought briefly") + "\n" + embed.PlainText())
+			want := strings.TrimSpace(strings.TrimPrefix(deliveredText, "-# thought briefly") + "\n" + embed.PlainText())
 			if !ok || history[len(history)-1].Content != want {
 				t.Fatalf("history did not retain delivered text: %#v, want %q", history, want)
 			}
 		})
-	}
-}
-
-func TestGarminClipUsesWordBoundary(t *testing.T) {
-	if got := truncateGarminAIResponseTo("hello world, how are you today?", 25); got != "hello world, how are..." {
-		t.Fatalf("clip = %q", got)
-	}
-	for _, limit := range []int{-1, 0, 1, 3, 4} {
-		if got := truncateGarminAIResponseTo("😀 long answer", limit); len(got) > max(0, limit) || !utf8.ValidString(got) {
-			t.Fatalf("clip at %d = %q", limit, got)
-		}
 	}
 }
 

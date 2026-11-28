@@ -52,18 +52,15 @@ func TestFormatGarminAIUsage(t *testing.T) {
 	}
 }
 
-func TestFormatAndTruncateGarminAIResultPreservesUsage(t *testing.T) {
+func TestFormatGarminAIResultPreservesUsageAndAnswer(t *testing.T) {
 	result := &garminAIResult{
 		Answer:           strings.Repeat("é", garminAIMaxContent),
 		ToolCalls:        1,
 		Skills:           map[string]struct{}{},
 		ThinkingDuration: 1500 * time.Millisecond,
 	}
-	got := formatAndTruncateGarminAIResult(result)
-	if len(got) > garminAIMaxContent {
-		t.Fatalf("response length = %d", len(got))
-	}
-	if !strings.HasPrefix(got, "-# thought briefly\n-# used 1 tools\n") || !strings.HasSuffix(got, "...") {
+	got := formatGarminAIResult(result)
+	if got != "-# thought briefly\n-# used 1 tools\n"+result.Answer {
 		t.Fatalf("formatted response = %q", got)
 	}
 	if got := formatGarminAIUsage(&garminAIResult{ThinkingDuration: 2500 * time.Millisecond}); got != "-# thought for 3s\n" {
