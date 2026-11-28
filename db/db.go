@@ -165,6 +165,13 @@ func (d *DB) migrate() error {
 			principal INTEGER NOT NULL CHECK(principal > 0),
 			remaining INTEGER NOT NULL CHECK(remaining > 0), carry INTEGER NOT NULL DEFAULT 0
 		)`,
+		`CREATE TABLE IF NOT EXISTS kud_upgrades (
+			user_id TEXT NOT NULL, upgrade TEXT NOT NULL, level INTEGER NOT NULL CHECK(level >= 0),
+			PRIMARY KEY(user_id, upgrade)
+		)`,
+		`CREATE TABLE IF NOT EXISTS cookies (
+			user_id TEXT PRIMARY KEY, received INTEGER NOT NULL DEFAULT 0, last_given INTEGER NOT NULL DEFAULT 0
+		)`,
 		`DROP TABLE IF EXISTS garmin_memory_consent`,
 		`DROP TABLE IF EXISTS garmin_user_memory`,
 	}
