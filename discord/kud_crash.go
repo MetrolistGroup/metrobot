@@ -205,9 +205,13 @@ func (b *Bot) playCrashAction(g *kudGame, action, userID, name string, now time.
 		if len(c.players) >= 32 {
 			return fmt.Errorf("this Crash lobby is full")
 		}
+		if err := b.checkKudRateLimit(userID, g.kind); err != nil {
+			return err
+		}
 		if err := b.DB.HoldKud(g.escrowID(userID), g.kind, userID, g.bet); err != nil {
 			return fmt.Errorf("couldn't reserve %s. Check `>>kud`", kudMoney(g.bet))
 		}
+		b.armKudRateLimit(userID, g.kind)
 		c.players[userID] = &crashPlayer{}
 		g.entrants = append(g.entrants, kudEntrant{userID: userID, name: name})
 	case "cash":

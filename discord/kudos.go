@@ -63,6 +63,12 @@ func (b *Bot) handleSigmaCommand(s *bot.Client, m *discord.Message, content stri
 		b.handleBlackjack(s, m, userID, args)
 	case "kud", "balance":
 		b.handleKudAccount(s, m)
+	case "shop":
+		b.handleKudShop(s, m, userID)
+	case "buy":
+		b.handleKudBuy(s, m, userID, args)
+	case "gc":
+		b.handleCookie(s, m, userID)
 	case "mines", "highlow", "hl", "fight", "plinko", "loan", "crash", "coins-crash":
 		if strings.EqualFold(name, "hl") {
 			name = "highlow"
@@ -225,15 +231,15 @@ func slotWinnings(row [3]int, bet int64) int64 {
 func (b *Bot) handleSlots(s *bot.Client, m *discord.Message, userID, arg string) {
 	b.kudMu.Lock()
 	defer b.kudMu.Unlock()
-	if wait, on := b.onCooldown("slots", userID); on {
-		b.kudosText(s, m, fmt.Sprintf("🕙 You can spin again in %s.", wait))
+	if err := b.checkKudRateLimit(userID, "slots"); err != nil {
+		b.kudosText(s, m, err.Error())
 		return
 	}
 	bet, ok := b.parseBet(s, m, userID, arg, "slots")
 	if !ok {
 		return
 	}
-	b.setCooldown("slots", userID, slotsCooldown)
+	b.armKudRateLimit(userID, "slots")
 	var grid [3][3]int
 	for row := range grid {
 		for col := range grid[row] {
@@ -395,9 +401,9 @@ func (b *Bot) handleBlackjack(s *bot.Client, m *discord.Message, userID, arg str
 		b.kudosText(s, m, "Finish your current hand first.")
 		return
 	}
-	if wait, on := b.onCooldown("bj", userID); on {
+	if err := b.checkKudRateLimit(userID, "bj"); err != nil {
 		b.blackjackMu.Unlock()
-		b.kudosText(s, m, fmt.Sprintf("🕙 You can play again in %s.", wait))
+		b.kudosText(s, m, err.Error())
 		return
 	}
 	b.blackjackGames[userID] = &blackjackGame{userID: userID}
@@ -410,7 +416,7 @@ func (b *Bot) handleBlackjack(s *bot.Client, m *discord.Message, userID, arg str
 		delete(b.blackjackGames, userID)
 		return
 	}
-	b.setCooldown("bj", userID, blackjackCooldown)
+	b.armKudRateLimit(userID, "bj")
 	g := newBlackjackGame(userID, bet, rand.Perm(52))
 	g.id = "bj:" + m.ID.String()
 	b.blackjackGames[userID] = g

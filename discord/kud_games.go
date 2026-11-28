@@ -37,7 +37,8 @@ type kudGame struct {
 	board, revealed         [16]bool
 	picks, card, streak     int
 	multiplier              float64
-	lucky, rescued          bool
+	luck                    int
+	rescued                 bool
 	entrants                []kudEntrant
 	result                  string
 	done                    bool
@@ -177,12 +178,23 @@ func (b *Bot) handleKudGame(s *bot.Client, m *discord.Message, kind, args string
 			return
 		}
 	}
+	if kind != "loan" {
+		if err := b.checkKudRateLimit(userID, kind); err != nil {
+			b.kudosText(s, m, err.Error())
+			return
+		}
+	}
 	a, err := b.DB.KudAccount(userID)
 	if err != nil {
 		b.kudosText(s, m, "The Kud bank is down. Try again in a bit.")
 		return
 	}
-	g.lucky = a.Debt > 0
+	levels, err := b.DB.KudUpgradeLevels(userID)
+	if err != nil {
+		b.kudosText(s, m, "The Kud bank is down. Try again in a bit.")
+		return
+	}
+	g.luck = kudLuck(a.Debt > 0, levels["luck"])
 	if kind == "loan" && a.Debt > 0 {
 		b.kudosText(s, m, "Repay your current loan before requesting another.")
 		return
@@ -195,6 +207,7 @@ func (b *Bot) handleKudGame(s *bot.Client, m *discord.Message, kind, args string
 			b.kudosText(s, m, "Couldn't reserve "+kudMoney(g.bet)+". Check `>>kud` and try again.")
 			return
 		}
+		b.armKudRateLimit(userID, kind)
 	}
 	g.entrants = []kudEntrant{{userID: userID, name: discordMemberDisplayName(&discord.Member{User: m.Author, Nick: memberNick(m.Member)})}}
 	g.expires = time.Now().Add(kudIdle)
@@ -299,8 +312,8 @@ func (g *kudGame) render() []discord.LayoutComponent {
 			rows = append(rows, discord.NewActionRow(g.button("fund", "Fund · "+kudMoney(g.bet), discord.ButtonStyleSuccess, false), g.button("cancel", "Decline / cancel", discord.ButtonStyleSecondary, false)))
 		}
 	}
-	if g.lucky && (g.kind == "mines" || g.kind == "highlow") {
-		body += "\n-# Loan luck: 2% chance to rescue one losing pick this round."
+	if g.luck > 0 && (g.kind == "mines" || g.kind == "highlow") {
+		body += fmt.Sprintf("\n-# Luck: %d%% chance to rescue one losing pick this round.", g.luck)
 	}
 	if g.result != "" {
 		body += "\n\n" + g.result
@@ -330,7 +343,7 @@ func (g *kudGame) pickMine(index int) bool {
 			g.board[cell] = true
 		}
 	}
-	if g.board[index] && g.lucky && !g.rescued && rand.IntN(100) < 2 {
+	if g.board[index] && !g.rescued && rand.IntN(100) < g.luck {
 		for cell := range 16 {
 			if cell != index && !g.revealed[cell] && !g.board[cell] {
 				g.board[cell], g.board[index], g.rescued = true, false, true
@@ -482,7 +495,7 @@ func (b *Bot) playKudAction(g *kudGame, action, userID, name string) error {
 		}
 		previous, next := g.card, rand.IntN(13)+2
 		correct := (higher && next > previous) || (!higher && next < previous)
-		if next != previous && !correct && g.lucky && !g.rescued && rand.IntN(100) < 2 {
+		if next != previous && !correct && !g.rescued && rand.IntN(100) < g.luck {
 			if higher {
 				next = previous + 1 + rand.IntN(14-previous)
 			} else {
@@ -528,9 +541,13 @@ func (b *Bot) playKudAction(g *kudGame, action, userID, name string) error {
 		if len(g.entrants) >= 32 {
 			return fmt.Errorf("this Plinko lobby is full")
 		}
+		if err := b.checkKudRateLimit(userID, g.kind); err != nil {
+			return err
+		}
 		if err := b.DB.HoldKud(g.id, g.kind, userID, g.bet); err != nil {
 			return fmt.Errorf("couldn't reserve %s. Check `>>kud`", kudMoney(g.bet))
 		}
+		b.armKudRateLimit(userID, g.kind)
 		g.entrants = append(g.entrants, kudEntrant{userID: userID, name: name})
 		if g.kind == "fight" {
 			winner := g.entrants[rand.IntN(2)].userID
